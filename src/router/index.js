@@ -1,0 +1,47 @@
+import { createRouter, createWebHashHistory } from 'vue-router'
+const routes=[
+    {
+        path:'/',
+        component:()=>import('@/components/MainLayout.vue'),
+        meta: { title: '首页' },
+        children: [
+            {
+                path:'/',
+                redirect:'/sensor-realtime'
+            },{
+                path:'/sensor-realtime',
+                component:()=>import('@/views/SensorRealtime.vue'),
+                meta: { title: '传感器数据/实时数据' }
+            },{
+                path:'/sensor-history',
+                component:()=>import('@/views/SensorHistory.vue'),
+                meta: { title: '传感器数据/历史数据' }
+            },{
+                path:'/behavior-realtime',
+                component:()=>import('@/views/BehaviorRealtime.vue'),
+                meta: { title: '行为数据/实时数据' }
+            },{
+                path:'/behavior-history',
+                component:()=>import('@/views/BehaviorHistory.vue'),
+                meta: { title: '行为数据/历史数据' }
+            },{
+                path:'/device-management',
+                component:()=>import('@/views/DeviceManagement.vue'),
+                meta: { title: '设备管理/设备管理' }
+            },{
+                path:'/device-setting',
+                component:()=>import('@/views/DeviceSetting.vue'),
+                meta: { title: '设备管理/设备设置' }
+            },{
+                path:'/error-info',
+                component:()=>import('@/views/ErrorInfo.vue'),
+                meta: { title: '错误信息' }
+            }
+        ]
+    }
+]
+const router = createRouter({
+    history:createWebHashHistory(),
+    routes
+})
+export default router

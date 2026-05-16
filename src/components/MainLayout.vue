@@ -1,0 +1,82 @@
+<template>
+    <div class="container">
+        <div class="main-row">
+            <div class="sidebar">
+                <SideBar />
+            </div>
+            <div class="right-content">
+                <div class="top-nav">
+                    <TopNav />
+                </div>
+                <div class="content">
+                    <router-view />
+                </div>
+            </div>
+        </div>
+    </div>
+</template>
+
+<script setup>
+import SideBar from '@/components/SideBar.vue'
+import TopNav from '@/components/TopNav.vue'
+
+import { ref } from 'vue'
+const activeIndex = ref('2')
+</script>
+
+<style scoped>
+.container {
+    height: 100%;
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    flex-wrap: wrap;
+}
+
+.sidebar {
+    width: 240px;
+    flex-shrink: 0;
+    background-color: #f5f5f5;
+}
+
+.top-nav {
+    height: 70px;
+}
+
+.main-row {
+    display: flex;
+    flex: 1;
+}
+
+.right-content {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    background-color: #e2e2e2;
+}
+
+.content {
+    flex: 1;
+    overflow: hidden;
+    padding: 20px;
+    box-sizing: border-box;
+    display: flex;
+    height: 100%;
+    margin-left: 20px;
+    margin-top: 20px;
+    background-color: rgb(255, 255, 255);
+    height: 100vh;
+}
+
+.content :deep(> *) {
+    background-color: #fff;
+    border-radius: 8px;
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.1);
+    height: 100%;
+    width: 100%;
+    padding: 20px;
+    box-sizing: border-box;
+    overflow: auto;
+}
+</style>
