@@ -1,0 +1,187 @@
+/* Element Plus 主题定制 */
+
+/* 亮色主题 */
+:root {
+  /* 主色 - 深蓝色系 */
+  --el-color-primary: #2d4b8c;
+  --el-color-primary-light-3: #4a67a6;
+  --el-color-primary-light-5: #6783c0;
+  --el-color-primary-light-7: #849fda;
+  --el-color-primary-light-8: #93ade3;
+  --el-color-primary-light-9: #a2bbed;
+  --el-color-primary-dark-2: #243c70;
+
+  /* 辅助色 */
+  --el-color-success: #67c23a;
+  --el-color-warning: #e6a23c;
+  --el-color-danger: #f56c6c;
+  --el-color-error: #f56c6c;
+  --el-color-info: #909399;
+
+  /* 文字颜色 */
+  --el-text-color-primary: #303133;
+  --el-text-color-regular: #606266;
+  --el-text-color-secondary: #909399;
+  --el-text-color-placeholder: #a8abb2;
+  --el-text-color-disabled: #c0c4cc;
+
+  /* 边框颜色 */
+  --el-border-color: #dcdfe6;
+  --el-border-color-light: #e4e7ed;
+  --el-border-color-lighter: #ebeef5;
+  --el-border-color-extra-light: #f2f6fc;
+  --el-border-color-dark: #d4d7de;
+  --el-border-color-darker: #cdd0d6;
+
+  /* 填充色 */
+  --el-fill-color: #f0f2f5;
+  --el-fill-color-light: #f5f7fa;
+  --el-fill-color-lighter: #fafbfc;
+  --el-fill-color-blank: #ffffff;
+}
+
+/* 暗色主题 */
+@media (prefers-color-scheme: dark) {
+  :root {
+    /* 主色 - 深蓝色系 */
+    --el-color-primary: #4a67a6;
+    --el-color-primary-light-3: #5d77b3;
+    --el-color-primary-light-5: #7087c0;
+    --el-color-primary-light-7: #8397cd;
+    --el-color-primary-light-8: #8d9fd4;
+    --el-color-primary-light-9: #97a7db;
+    --el-color-primary-dark-2: #3b5485;
+
+    /* 辅助色 */
+    --el-color-success: #67c23a;
+    --el-color-warning: #e6a23c;
+    --el-color-danger: #f56c6c;
+    --el-color-error: #f56c6c;
+    --el-color-info: #909399;
+
+    /* 文字颜色 */
+    --el-text-color-primary: #e5eaf3;
+    --el-text-color-regular: #cfd3dc;
+    --el-text-color-secondary: #a3a6ad;
+    --el-text-color-placeholder: #8d9095;
+    --el-text-color-disabled: #6c6e72;
+
+    /* 边框颜色 */
+    --el-border-color: #4c4d4f;
+    --el-border-color-light: #414243;
+    --el-border-color-lighter: #363637;
+    --el-border-color-extra-light: #2b2b2c;
+    --el-border-color-dark: #58585b;
+    --el-border-color-darker: #636466;
+
+    /* 填充色 */
+    --el-fill-color: #2b2b2c;
+    --el-fill-color-light: #262727;
+    --el-fill-color-lighter: #212121;
+    --el-fill-color-blank: #161617;
+  }
+}
+
+/* 按钮颜色覆盖 */
+.el-button--primary {
+  --el-button-bg-color: var(--el-color-primary);
+  --el-button-border-color: var(--el-color-primary);
+  --el-button-hover-bg-color: var(--el-color-primary-light-3);
+  --el-button-hover-border-color: var(--el-color-primary-light-3);
+  --el-button-active-bg-color: var(--el-color-primary-dark-2);
+  --el-button-active-border-color: var(--el-color-primary-dark-2);
+}
+
+/* 输入框聚焦颜色 */
+.el-input__wrapper.is-focus {
+  box-shadow: 0 0 0 1px var(--el-color-primary) inset;
+}
+
+/* 下拉菜单选中颜色 */
+.el-select-dropdown__item.selected {
+  color: var(--el-color-primary);
+}
+
+/* 日期选择器选中颜色 */
+.el-date-table td.today .el-date-table-cell__text {
+  color: var(--el-color-primary);
+}
+.el-date-table td.current:not(.disabled) .el-date-table-cell__text {
+  background-color: var(--el-color-primary);
+}
+
+/* 菜单激活颜色 */
+.el-menu-item.is-active {
+  color: var(--el-color-primary-dark-2);
+  background-color: rgba(45, 75, 140, 0.1) !important;
+  border-left: 3px solid var(--el-color-primary) !important;
+}
+.el-menu-item:hover {
+  background-color: rgba(45, 75, 140, 0.05) !important;
+}
+.el-sub-menu__title:hover {
+  background-color: rgba(45, 75, 140, 0.05) !important;
+}
+
+/* 分页激活颜色 */
+.el-pager li.is-active {
+  background-color: var(--el-color-primary);
+}
+
+/* 表格选中颜色 */
+.el-table__body tr.current-row > td {
+  background-color: var(--el-color-primary-light-9) !important;
+}
+.el-table--enable-row-hover .el-table__body tr:hover > td {
+  background-color: var(--el-color-primary-light-9) !important;
+}
+
+/* 复选框和单选框颜色 */
+.el-checkbox__input.is-checked .el-checkbox__inner,
+.el-checkbox__input.is-indeterminate .el-checkbox__inner {
+  background-color: var(--el-color-primary);
+  border-color: var(--el-color-primary);
+}
+.el-radio__input.is-checked .el-radio__inner {
+  background-color: var(--el-color-primary);
+  border-color: var(--el-color-primary);
+}
+.el-radio__input.is-checked + .el-radio__label {
+  color: var(--el-color-primary);
+}
+
+/* 开关颜色 */
+.el-switch.is-checked .el-switch__core {
+  background-color: var(--el-color-primary);
+  border-color: var(--el-color-primary);
+}
+
+/* 滑块颜色 */
+.el-slider__bar {
+  background-color: var(--el-color-primary);
+}
+.el-slider__button {
+  border-color: var(--el-color-primary);
+}
+
+/* 消息提示颜色 */
+.el-message--success {
+  --el-message-bg-color: #f0f9eb;
+  --el-message-border-color: #e1f3d8;
+  --el-message-text-color: #67c23a;
+}
+.el-message--warning {
+  --el-message-bg-color: #fdf6ec;
+  --el-message-border-color: #faecd8;
+  --el-message-text-color: #e6a23c;
+}
+.el-message--error {
+  --el-message-bg-color: #fef0f0;
+  --el-message-border-color: #fde2e2;
+  --el-message-text-color: #f56c6c;
+}
+.el-message--info {
+  --el-message-bg-color: #f4f4f5;
+  --el-message-border-color: #e9e9eb;
+  --el-message-text-color: #909399;
+}

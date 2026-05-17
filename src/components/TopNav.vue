@@ -35,8 +35,9 @@ const getBreadcrumb = (route) => {
         if (record.meta && record.meta.title) {
             const titles = record.meta.title.split('/')
             titles.forEach((title, index) => {
+                const uniquePath = index > 0 ? `${record.path}-${index}` : record.path
                 items.push({
-                    path: record.path,
+                    path: uniquePath,
                     label: title
                 })
             })

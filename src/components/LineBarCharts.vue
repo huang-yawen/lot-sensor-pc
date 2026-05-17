@@ -1,6 +1,6 @@
 <template>
   <div>
-    <h3>{{ props.title }}</h3>
+    <h3 style="text-align:left;margin-left:60px;color:black;">折线图与柱状图</h3>
     <div class="chart-container" ref="linechart"></div>
   </div>
 </template>
@@ -27,8 +27,7 @@ let mychart = null
  */
 const props = defineProps({
   data: { type: Array, default: () => [] },
-  pageSize: { type: Number, default: 5 },
-  title: { type: String, default: '折线图与柱状图' }
+  pageSize: { type: Number, default: 5 }
 })
 
 /**
@@ -152,7 +151,7 @@ const updateChart = (source) => {
       },
       legend: { 
         data: fields,
-        bottom:  '-5px'  // 图例距离底部的距离
+        top:  '-2px'  // 图例距离顶部的距离
       },
       toolbox: {
         feature: {
@@ -216,5 +215,6 @@ onBeforeUnmount(() => {
   width: 100%;
   height: 320px;
   border-radius: 4px;
+  margin-top:60px;
 }
 </style>

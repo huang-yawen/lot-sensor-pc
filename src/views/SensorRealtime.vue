@@ -1,23 +1,23 @@
 <template>
-    <div>
-        <div class="card-chart-wrapper">
-            <div class="card-container-wrapper">
-                <!-- <CardContainer :data="store.sensorData?.proccessData || []" /> -->
-            </div>
+  <div>
+    <div class="card-chart-wrapper">
+      <div class="card-container-wrapper">
+        <CardContainer :data="store.sensorData?.proccessData || []" />
+      </div>
 
-            <div class="chart-wrapper">
-                <LineBarCharts :data="data" title="传感器实时数据" />
-            </div>
-        </div>
+      <div class="chart-wrapper">
+        <LineBarCharts :data="data" />
+      </div>
     </div>
+  </div>
 </template>
 <script setup>
 import LineBarCharts from '@/components/LineBarCharts.vue'
-import { sensorStore } from '@/stores/SensorStore'
+import { SensorStore } from '@/stores/SensorStore'
 import { computed, onMounted } from 'vue'
-// import CardContainer from '@/components/CardContainer.vue'
+import CardContainer from '@/components/CardContainer.vue'
 
-const store = sensorStore()
+const store = SensorStore()
 const data = computed(() => {
   const result = store.sensorData?.proccessData
   console.log('computed data:', result)

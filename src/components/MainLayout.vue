@@ -63,8 +63,8 @@ const activeIndex = ref('2')
     box-sizing: border-box;
     display: flex;
     height: 100%;
-    margin-left: 20px;
-    margin-top: 20px;
+    margin-left: 10px;
+    margin-top: 10px;
     background-color: rgb(255, 255, 255);
     height: 100vh;
 }
@@ -72,11 +72,16 @@ const activeIndex = ref('2')
 .content :deep(> *) {
     background-color: #fff;
     border-radius: 8px;
-    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.1);
     height: 100%;
     width: 100%;
     padding: 20px;
     box-sizing: border-box;
     overflow: auto;
+}
+.el-menu-item-group__title{
+    padding:0px;
+}
+.el-menu-item-group__title{
+    padding:0px;
 }
 </style>

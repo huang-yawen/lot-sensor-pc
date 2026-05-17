@@ -7,44 +7,56 @@
                     <el-sub-menu index="1">
                         <template #title>
                             <el-icon>
-                                <DataLine />
+                                <Odometer />
                             </el-icon>
                             <span>传感器数据</span>
                         </template>
-                        <el-menu-item-group>
-                            <el-menu-item index="/sensor-realtime" to="/sensor-realtime">实时数据</el-menu-item>
-                            <el-menu-item index="/sensor-history" to="/sensor-history">历史数据</el-menu-item>
-                        </el-menu-item-group>
+                        <el-menu-item index="/sensor-realtime" to="/sensor-realtime">
+                            <el-icon><Promotion /></el-icon>
+                            <span>实时数据</span>
+                        </el-menu-item>
+                        <el-menu-item index="/sensor-history" to="/sensor-history">
+                            <el-icon><Histogram /></el-icon>
+                            <span>历史数据</span>
+                        </el-menu-item>
                     </el-sub-menu>
                     <el-sub-menu index="2">
                         <template #title>
                             <el-icon>
-                                <Film />
+                                <Location />
                             </el-icon>
                             <span>行为数据</span>
                         </template>
-                        <el-menu-item-group>
-                            <el-menu-item index="/behavior-realtime" to="/behavior-realtime">实时数据</el-menu-item>
-                            <el-menu-item index="/behavior-history" to="/behavior-history">历史数据</el-menu-item>
-                        </el-menu-item-group>
+                        <el-menu-item index="/behavior-realtime" to="/behavior-realtime">
+                            <el-icon><Promotion /></el-icon>
+                            <span>实时数据</span>
+                        </el-menu-item>
+                        <el-menu-item index="/behavior-history" to="/behavior-history">
+                            <el-icon><Histogram /></el-icon>
+                            <span>历史数据</span>
+                        </el-menu-item>
                     </el-sub-menu>
                     <el-sub-menu index="3">
                         <template #title>
                             <el-icon>
-                                <Film />
+                                <View />
                             </el-icon>
-                            <span>设备管理</span>
+                            <span>设备数据</span>
                         </template>
-                        <el-menu-item-group>
-                            <el-menu-item index="/device-management" to="/device-management">设备管理</el-menu-item>
-                            <el-menu-item index="/device-setting" to="/device-setting">设备设置</el-menu-item>
-                        </el-menu-item-group>
+                        <el-menu-item index="/device-management">
+                            <el-icon><Grid /></el-icon>
+                            <span>设备管理</span>
+                        </el-menu-item>
+                        <el-menu-item index="/device-setting">
+                            <el-icon><Setting /></el-icon>
+                            <span>设备设置</span>
+                        </el-menu-item>
                     </el-sub-menu>
                     <el-menu-item index="/error-info" to="/error-info">
                         <el-icon>
-                            <setting />
+                            <Document />
                         </el-icon>
-                        <span>错误信息</span>
+                        <span>故障记录</span>
                     </el-menu-item>
                 </el-menu>
             </el-col>
@@ -53,13 +65,6 @@
 </template>
 
 <script setup>
-import {
-    Document,
-    Menu as IconMenu,
-    Location,
-    Setting,
-} from '@element-plus/icons-vue'
-
 const handleOpen = (key, keyPath) => {
     console.log(key, keyPath)
 }
@@ -84,8 +89,5 @@ const handleClose = (key, keyPath) => {
 }
 :deep(.el-menu) {
     text-align: left;
-}
-:deep(.el-menu-item-group) {
-    padding-left: 0 !important;
 }
 </style>

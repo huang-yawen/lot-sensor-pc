@@ -1,4 +1,5 @@
 import { defineStore } from 'pinia'
-const pageStore = defineStore('page', {
+const PageStore = defineStore('page', {
   currentPage: ref('home'),
 })
+export default PageStore

@@ -1,12 +1,12 @@
 <template>
-  <div class="error-info-container">
+  <div class="table-container">
     <!-- 搜索表单区域 -->
     <div class="search-form">
       <div class="search-form-inner">
         <el-input
           v-model="keyword"
           style="width: 240px; flex-shrink: 0;"
-          placeholder="输入设备编号"
+          :placeholder="searchPlaceholder"
           :suffix-icon="Search"
           clearable
         />
@@ -37,24 +37,24 @@
 
     <!-- 表格区域 -->
     <div class="table-wrapper">
-      <table v-if="store.errData.length > 0">
+      <table v-if="data.length > 0">
         <thead>
           <tr>
-            <th v-for="col in headers" :key="col">
-              {{ col }}
+            <th v-for="key in computedColumns" :key="key">
+              {{ key }}
             </th>
           </tr>
         </thead>
         <tbody>
-          <tr v-for="(row, idx) in store.errData" :key="idx">
-            <td v-for="col in headers" :key="col">
-              {{ row[col] }}
+          <tr v-for="(item, rowIndex) in data" :key="rowIndex">
+            <td v-for="key in computedColumns" :key="key">
+              {{ item[key] }}
             </td>
           </tr>
         </tbody>
       </table>
       <div v-else class="empty-state">
-        {{ loading ? '加载中...' : '暂无错误数据' }}
+        {{ loading ? '加载中...' : '暂无数据' }}
       </div>
     </div>
 
@@ -62,12 +62,12 @@
     <div class="pagination-wrapper">
       <el-pagination
         v-model:current-page="currentPage"
-        v-model:page-size="pageSize"
+        v-model:page-size="localPageSize"
         :page-sizes="[5, 10, 15, 20]"
         :background="true"
         layout="sizes, prev, pager, next"
-        :total="store.total || 0"
-        @size-change="handlePageSizeChange"
+        :total="total"
+        @size-change="handleSizeChange"
         @current-change="handlePageChange"
       />
     </div>
@@ -75,61 +75,91 @@
 </template>
 
 <script setup>
-import { ref, onMounted, computed } from "vue";
-import { ErrorStore } from "../stores/ErrorStore";
-import { Search } from "@element-plus/icons-vue";
+import { ref, watch, computed } from 'vue'
+import { Search } from '@element-plus/icons-vue'
 
-const store = ErrorStore();
-
-// 本地分页参数
-const currentPage = ref(1);
-const pageSize = ref(5);
-const keyword = ref("");
-const dateRange = ref(null);
-const loading = ref(false);
-
-// 表头动态生成
-const headers = computed(() => {
-  const data = store.errData;
-  return data.length ? Object.keys(data[0]) : [];
-});
-
-// 搜索函数
-const handleSearch = async (page = 1) => {
-  loading.value = true;
-  try {
-    await store.fetchErrData({
-      currentPage: page,
-      pageSize: pageSize.value,
-      keyword: keyword.value,
-      startTime: dateRange.value?.[0] || null,
-      endTime: dateRange.value?.[1] || null
-    });
-  } finally {
-    loading.value = false;
+const props = defineProps({
+  data: {
+    type: Array,
+    default: () => []
+  },
+  loading: {
+    type: Boolean,
+    default: false
+  },
+  total: {
+    type: Number,
+    default: 0
+  },
+  pageSize: {
+    type: Number,
+    default: 5
+  },
+  online: {
+    type: String,
+    default: ''
+  },
+  type: {
+    type: String,
+    default: 'sensor'
+  },
+  searchPlaceholder: {
+    type: String,
+    default: '输入关键词搜索'
   }
-};
+})
 
-// 分页变化
+const emit = defineEmits(['search', 'pageChange', 'sizeChange'])
+
+const keyword = ref('')
+const dateRange = ref(null)
+const currentPage = ref(1)
+const localPageSize = ref(props.pageSize)
+
+// 从数据中自动提取列
+const computedColumns = computed(() => {
+  if (props.data && props.data.length > 0) {
+    const firstItem = props.data[0]
+    return Object.keys(firstItem)
+  }
+  return []
+})
+
+watch(() => props.pageSize, (newVal) => {
+  localPageSize.value = newVal
+})
+
+const handleSearch = (page = 1) => {
+  currentPage.value = page
+  emit('search', {
+    keyword: keyword.value,
+    startTime: dateRange.value?.[0] || null,
+    endTime: dateRange.value?.[1] || null,
+    online: props.online,
+    type: props.type,
+    currentPage: page,
+    pageSize: localPageSize.value
+  })
+}
+
 const handlePageChange = (page) => {
-  currentPage.value = page;
-  handleSearch(page);
-};
+  emit('pageChange', page)
+  handleSearch(page)
+}
 
-const handlePageSizeChange = (size) => {
-  pageSize.value = size;
-  currentPage.value = 1;
-  handleSearch(1);
-};
+const handleSizeChange = (size) => {
+  localPageSize.value = size
+  emit('sizeChange', size)
+  handleSearch(1)
+}
 
-// 页面加载默认获取
-onMounted(async () => {
-  await handleSearch();
-});
+defineExpose({
+  handleSearch
+})
 </script>
 
 <style scoped>
-.error-info-container {
+.table-container {
   width: 100%;
 }
 

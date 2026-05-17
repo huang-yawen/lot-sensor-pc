@@ -27,15 +27,15 @@ const routes=[
             },{
                 path:'/device-management',
                 component:()=>import('@/views/DeviceManagement.vue'),
-                meta: { title: '设备管理/设备管理' }
+                meta: { title: '设备数据/设备管理' }
             },{
                 path:'/device-setting',
-                component:()=>import('@/views/DeviceSetting.vue'),
-                meta: { title: '设备管理/设备设置' }
+                component:()=>import('@/views/DirectSetting.vue'),
+                meta: { title: '设备数据/设备设置' }
             },{
                 path:'/error-info',
                 component:()=>import('@/views/ErrorInfo.vue'),
-                meta: { title: '错误信息' }
+                meta: { title: '故障记录' }
             }
         ]
     }
