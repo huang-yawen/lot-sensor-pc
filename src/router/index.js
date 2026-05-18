@@ -35,7 +35,7 @@ const routes=[
             },{
                 path:'/error-info',
                 component:()=>import('@/views/ErrorInfo.vue'),
-                meta: { title: '故障记录' }
+                meta: { title: '故障记录' }         
             }
         ]
     }
