@@ -30,46 +30,39 @@ const buildWhere = (query) => {
 
 module.exports = async (req, res) => {
     try {
-        const page = parseInt(req.query.page) || 1;
-        const pageSize = parseInt(req.query.pageSize) || 5;
-        const offset = (page - 1) * pageSize;
         const { whereClause, params } = buildWhere(req.query);
 
         const [rows] = await promisePool.query(
-            `   SELECT id, d_no AS '设备编号', e_msg AS '故障信息', c_time AS '报错时间',type as '故障类型'
-                FROM t_error_msg
-                ${whereClause}
-                ORDER BY c_time desc
-                LIMIT ? OFFSET ?
+            `   SELECT 
+                    faultType AS type,
+                    COUNT(*) AS count
+                FROM (
+                    SELECT
+                        CASE
+                            WHEN type IS NULL THEN '未知故障'
+                            WHEN TRIM(CAST(type AS CHAR)) = '' THEN '未知故障'
+                            WHEN LOWER(TRIM(CAST(type AS CHAR))) IN ('undefined', 'null', 'nan') THEN '未知故障'
+                            ELSE TRIM(CAST(type AS CHAR))
+                        END AS faultType
+                    FROM t_error_msg
+                    ${whereClause}
+                ) AS normalized
+                GROUP BY faultType
+                ORDER BY count DESC
                 `,
-            [...params, pageSize, offset]
-        );
-
-        const countSql = `
-      SELECT COUNT(*) AS total
-      FROM t_error_msg
-      ${whereClause}
-    `;
-        const [countResult] = await promisePool.query(
-            countSql,
             params
         );
-        const total = countResult[0].total;
 
         res.json({
             success: true,
-            data: {
-                list: rows,
-                total,
-                page,
-                size: pageSize,
-            },
+            data: rows,
+            total: rows.reduce((sum, item) => sum + Number(item.count || 0), 0)
         });
     } catch (err) {
-        console.error("err表查询出错：", err);
+        console.error("故障类型统计查询出错：", err);
         res.status(500).json({
             success: false,
-            message: "错误数据查询失败",
+            message: "故障类型统计查询失败",
         });
     }
 };

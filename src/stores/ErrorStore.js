@@ -6,6 +6,20 @@ export const ErrorStore = defineStore("ErrorStore", () => {
   const errData = ref([]);
   const total = ref(0);
   const loading = ref(false);
+  const errTypeStats = ref([]);
+
+  const formatDateTime = (value) => {
+    if (!value) return "";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return "";
+
+    const pad = (num) => String(num).padStart(2, "0");
+    return [
+      date.getFullYear(),
+      pad(date.getMonth() + 1),
+      pad(date.getDate()),
+    ].join("-") + ` ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+  };
 
   // 异步获取数据
   const fetchErrData = async (params = {}) => {
@@ -17,6 +31,8 @@ export const ErrorStore = defineStore("ErrorStore", () => {
           page: params.currentPage || 1,
           keyword: params.keyword || "",
           pageSize: params.pageSize || 5,
+          startTime: formatDateTime(params.startTime),
+          endTime: formatDateTime(params.endTime),
         },
         headers: {
           "Cache-Control": "no-cache",
@@ -52,9 +68,34 @@ export const ErrorStore = defineStore("ErrorStore", () => {
     }
   };
 
+  const fetchErrTypeStats = async (params = {}) => {
+    try {
+      const response = await axios.get("http://localhost:3000/errTypeStats", {
+        params: {
+          keyword: params.keyword || "",
+          startTime: formatDateTime(params.startTime),
+          endTime: formatDateTime(params.endTime),
+        },
+        headers: {
+          "Cache-Control": "no-cache",
+          "Pragma": "no-cache",
+        },
+      });
+
+      const res = response.data;
+      if (res.success) {
+        errTypeStats.value = res.data || [];
+      }
+    } catch (error) {
+      console.error("errTypeStats 请求失败:", error);
+    }
+  };
+
   return {
     fetchErrData,
+    fetchErrTypeStats,
     errData,
+    errTypeStats,
     total,
     loading,
   };

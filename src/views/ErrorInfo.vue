@@ -1,116 +1,100 @@
 <template>
-  <div class="error-info-container">
-    <!-- 搜索表单区域 -->
-    <div class="search-form">
-      <div class="search-form-inner">
-        <el-input
-          v-model="keyword"
-          style="width: 240px; flex-shrink: 0;"
-          placeholder="输入设备编号"
-          :suffix-icon="Search"
-          clearable
-        />
-        <div class="block" style="flex-shrink: 0;">
-          <el-date-picker
-            v-model="dateRange"
-            type="datetimerange"
-            start-placeholder="开始时间"
-            end-placeholder="结束时间"
-            format="YYYY-MM-DD HH:mm:ss"
-            date-format="YYYY/MM/DD ddd"
-            time-format="A hh:mm:ss"
-            style="margin-left: 30px;"
-            :clearable="true"
-          />
-        </div>
-        <div class="button-wrapper">
-          <el-button
-            type="primary"
-            @click="handleSearch(1)"
-            :loading="loading"
-          >
-            开始查找
-          </el-button>
+  <div class="error-info-page">
+    <div class="error-info-container">
+      <div class="search-form">
+        <div class="search-form-inner">
+          <el-input v-model="keyword" style="width: 240px; flex-shrink: 0;" placeholder="输入设备编号" :suffix-icon="Search"
+            clearable />
+          <div class="block" style="flex-shrink: 0;">
+            <el-date-picker v-model="dateRange" type="datetimerange" start-placeholder="开始时间" end-placeholder="结束时间"
+              format="YYYY-MM-DD HH:mm:ss" date-format="YYYY/MM/DD ddd" time-format="A hh:mm:ss"
+              style="margin-left: 30px;" :clearable="true" />
+          </div>
+          <div class="button-wrapper">
+            <el-button type="primary" @click="handleSearch(1)" :loading="loading">
+              开始查找
+            </el-button>
+          </div>
         </div>
       </div>
-    </div>
+      <div class="table-wrapper">
+        <table v-if="store.errData.length > 0">
+          <thead>
+            <tr>
+              <th v-for="col in headers" :key="col">
+                {{ col }}
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="(row, idx) in store.errData" :key="idx">
+              <td v-for="col in headers" :key="col">
+                {{ row[col] }}
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        <div v-else class="empty-state">
+          {{ loading ? '加载中...' : '暂无错误数据' }}
+        </div>
+      </div>
 
-    <!-- 表格区域 -->
-    <div class="table-wrapper">
-      <table v-if="store.errData.length > 0">
-        <thead>
-          <tr>
-            <th v-for="col in headers" :key="col">
-              {{ col }}
-            </th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="(row, idx) in store.errData" :key="idx">
-            <td v-for="col in headers" :key="col">
-              {{ row[col] }}
-            </td>
-          </tr>
-        </tbody>
-      </table>
-      <div v-else class="empty-state">
-        {{ loading ? '加载中...' : '暂无错误数据' }}
+      <div class="pagination-wrapper">
+        <el-pagination v-model:current-page="currentPage" v-model:page-size="pageSize" :page-sizes="[5, 10, 15, 20]"
+          :background="true" layout="sizes, prev, pager, next" :total="store.total || 0"
+          @size-change="handlePageSizeChange" @current-change="handlePageChange" />
       </div>
     </div>
-
-    <!-- 分页器 -->
-    <div class="pagination-wrapper">
-      <el-pagination
-        v-model:current-page="currentPage"
-        v-model:page-size="pageSize"
-        :page-sizes="[5, 10, 15, 20]"
-        :background="true"
-        layout="sizes, prev, pager, next"
-        :total="store.total || 0"
-        @size-change="handlePageSizeChange"
-        @current-change="handlePageChange"
-      />
+    <div class="chart-container">
+      <div class="chart-panel">
+        <PieChart :data="store.errTypeStats" />
+      </div>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted, computed } from "vue";
-import { ErrorStore } from "../stores/ErrorStore";
+import { computed, onMounted, ref } from "vue";
 import { Search } from "@element-plus/icons-vue";
+import PieChart from "../components/PieChart.vue";
+import { ErrorStore } from "../stores/ErrorStore";
 
 const store = ErrorStore();
 
-// 本地分页参数
 const currentPage = ref(1);
 const pageSize = ref(5);
 const keyword = ref("");
 const dateRange = ref(null);
 const loading = ref(false);
 
-// 表头动态生成
 const headers = computed(() => {
   const data = store.errData;
   return data.length ? Object.keys(data[0]) : [];
 });
 
-// 搜索函数
+const getSearchParams = () => ({
+  keyword: keyword.value,
+  startTime: dateRange.value?.[0] || null,
+  endTime: dateRange.value?.[1] || null,
+});
+
 const handleSearch = async (page = 1) => {
   loading.value = true;
   try {
-    await store.fetchErrData({
-      currentPage: page,
-      pageSize: pageSize.value,
-      keyword: keyword.value,
-      startTime: dateRange.value?.[0] || null,
-      endTime: dateRange.value?.[1] || null
-    });
+    const params = getSearchParams();
+    await Promise.all([
+      store.fetchErrData({
+        ...params,
+        currentPage: page,
+        pageSize: pageSize.value,
+      }),
+      store.fetchErrTypeStats(params),
+    ]);
   } finally {
     loading.value = false;
   }
 };
 
-// 分页变化
 const handlePageChange = (page) => {
   currentPage.value = page;
   handleSearch(page);
@@ -122,15 +106,25 @@ const handlePageSizeChange = (size) => {
   handleSearch(1);
 };
 
-// 页面加载默认获取
 onMounted(async () => {
   await handleSearch();
 });
 </script>
 
 <style scoped>
+.error-info-page {
+  width: 100%;
+  min-height: 100%;
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: stretch;
+  gap: 20px;
+  box-sizing: border-box;
+}
+
 .error-info-container {
   width: 100%;
+  flex: 0 0 auto;
 }
 
 .search-form {
@@ -156,6 +150,20 @@ onMounted(async () => {
 .button-wrapper .el-button {
   width: 100%;
   min-width: 100px;
+}
+
+.chart-container {
+  display: flex;
+  justify-content: center;
+  width: 100%;
+  min-height: 560px;
+  flex: 0 0 auto;
+  box-sizing: border-box;
+}
+
+.chart-panel {
+  width: min(100%, 980px);
+  min-height: 560px;
 }
 
 .pagination-wrapper {
@@ -228,6 +236,15 @@ onMounted(async () => {
     width: 100% !important;
     margin-left: 0 !important;
     margin-bottom: 10px;
+  }
+
+  .chart-container {
+    min-height: 620px;
+  }
+
+  .chart-panel {
+    width: 100%;
+    min-height: 620px;
   }
 
   .table-wrapper th,

@@ -5,6 +5,7 @@ const getSensorData = require('../controllers/getSensorData');
 const getDataByType = require('../controllers/getDataByType');
 const getDeviceManageData = require('../controllers/getDeviceManageData');
 const getErrData = require('../controllers/getErrData');
+const getErrTypeStats = require('../controllers/getErrTypeStats');
 const getDirectTree = require('../controllers/getDirectTree')
 const getDirectRender=require('../controllers/getDirectRender')
 // Service: deviceData
@@ -28,6 +29,7 @@ router.post('/deviceData/update', updateDeviceData);
 
 // 错误数据相关
 router.get('/errData', getErrData);
+router.get('/errTypeStats', getErrTypeStats);
 
 // 指令树相关
 router.get('/directData', getDirectTree);
