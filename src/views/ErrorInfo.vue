@@ -121,7 +121,7 @@ onMounted(async () => {
   gap: 20px;
   box-sizing: border-box;
 }
-
+           
 .error-info-container {
   width: 100%;
   flex: 0 0 auto;
