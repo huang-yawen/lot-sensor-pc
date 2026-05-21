@@ -40,7 +40,7 @@ export const DirectStore = defineStore('DirectStore', () => {
 
   const handleUpdateData = async ({ id, value, d_no }) => {
     try {
-      const res = await axios.post('http://localhost:3000/multipleDirectData', {
+      const res = await axios.post('http://localhost:3000/directData/update', {
         config_id: id,
         value,
         d_no

@@ -15,6 +15,7 @@ const updateDeviceData = require('../service/deviceData/updateDeviceData');
 
 // Service: directData
 const updateMultipleDirectData=require('../service/directData/updateMultipleDirectData')
+const updateDirectDataAndPublish=require('../service/directData/updateDirectDataAndPublish')
 
 // 路由分组
 // 传感器相关
@@ -35,4 +36,5 @@ router.get('/errTypeStats', getErrTypeStats);
 router.get('/directData', getDirectTree);
 router.get('/directRender',getDirectRender)
 router.post('/multipleDirectData',updateMultipleDirectData);
+router.post('/directData/update',updateDirectDataAndPublish);
 module.exports = router;

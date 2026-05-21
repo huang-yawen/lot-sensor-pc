@@ -2,17 +2,19 @@ const mqtt = require('mqtt')
 const EventEmitter = require('events')
 const Joi = require('joi')
 const promisePool = require('../config/promisepool')
+
 class MqttClient extends EventEmitter {
     static defaultSetting = {
         url: 'mqtt://localhost:1883',
         option: {
-            clientId: "猜猜我是谁"
+            clientId: 'mqtt-client'
         },
         subscribeTopics: [
             { topic: 'testTopic/#', qos: 1 },
             { topic: '/isAlive/#', qos: 1 }
         ]
     }
+
     constructor(config = {}) {
         super()
         this.config = {
@@ -20,46 +22,52 @@ class MqttClient extends EventEmitter {
             option: { ...MqttClient.defaultSetting.option, ...config.option },
             subscribeTopics: config.subscribeTopics || MqttClient.defaultSetting.subscribeTopics
         }
-        //url/subscribetopic是二选一的，但是option是多种都需要一起实现的
         this.client = null
         this.isConnected = false
-        this.initClient();
         this.timer = {}
+        this.initClient()
     }
+
     initClient() {
         this.client = mqtt.connect(this.config.url, this.config.option)
         this.bindClientEvents()
     }
+
     bindClientEvents() {
         this.client.on('connect', () => {
-            console.log('连接成功啦')
+            this.isConnected = true
+            console.log('MQTT connected')
             this.subscribeAllTopics()
         })
 
         this.client.on('error', (err) => {
-            console.error('连接错误：', err.message)
+            console.error('MQTT connection error:', err.message)
         })
 
         this.client.on('offline', () => {
-            console.log('客户端离线')
+            this.isConnected = false
+            console.log('MQTT client offline')
+        })
+
+        this.client.on('close', () => {
+            this.isConnected = false
         })
 
         this.client.on('reconnect', () => {
-            console.log('正在重连...')
+            console.log('MQTT reconnecting...')
         })
 
         this.client.on('message', (topic, payload) => {
             let info
             try {
-                //payroad原本是二进制，需要toString才能够转换成看得懂的字符串
                 info = JSON.parse(payload.toString())
             } catch (err) {
-                if (err) console.error('消息解析失败：', err)
+                console.error('MQTT message parse failed:', err)
+                return
             }
 
-            //传感器数据接受
             if (topic === 'SensorData/add') {
-                info.c_time = new Date();
+                info.c_time = new Date()
                 const schema = Joi.object({
                     id: Joi.number().required(),
                     d_no: Joi.number().required(),
@@ -71,19 +79,18 @@ class MqttClient extends EventEmitter {
                     online: Joi.string().required(),
                     c_time: Joi.date().required()
                 })
-                const { value, error } = schema.validate(info)
-                if (error) console.log(error)
-                else {
+                const { error } = schema.validate(info)
+                if (error) {
+                    console.log(error)
+                } else {
                     console.log(info)
                     this.emit('message', topic, info)
                     this.SaveSensorData(info)
                 }
             }
 
-            //行为数据接受
             if (topic === 'BehaviorData/add') {
-                info.c_time = new Date();
-
+                info.c_time = new Date()
                 const schema = Joi.object({
                     id: Joi.number().required(),
                     d_no: Joi.number().required(),
@@ -100,18 +107,18 @@ class MqttClient extends EventEmitter {
                     online: Joi.string().required(),
                     c_time: Joi.date().required()
                 })
-                const { value, error } = schema.validate(info)
-                if (error) console.log(error)
-                else {
+                const { error } = schema.validate(info)
+                if (error) {
+                    console.log(error)
+                } else {
                     console.log(info)
                     this.emit('message', topic, info)
                     this.SaveBehaviorData(info)
                 }
             }
-            
-            //错误数据接受
-            if (topic === "ErrorData/add") {
-                info.c_time = new Date();
+
+            if (topic === 'ErrorData/add') {
+                info.c_time = new Date()
                 const schema = Joi.object({
                     id: Joi.number().required(),
                     d_no: Joi.string().required(),
@@ -120,46 +127,105 @@ class MqttClient extends EventEmitter {
                     type: Joi.string(),
                     c_time: Joi.date().required()
                 })
-                const { value, error } = schema.validate(info)
-                if (error) console.log(error)
-                else {
+                const { error } = schema.validate(info)
+                if (error) {
+                    console.log(error)
+                } else {
                     console.log(info)
                     this.emit('message', topic, info)
                     this.SaveErrorData(info)
                 }
             }
-     
-            //底层设备的反馈
+
             if (topic.startsWith('isAlive')) {
-                const id = topic.split("/").pop()
+                const id = topic.split('/').pop()
                 clearTimeout(this.timer[id])
                 delete this.timer[id]
-                console.log(`${id}号设备是活着的！`)
+                console.log(`${id} device is alive`)
             }
         })
     }
 
     subscribeAllTopics() {
-        const { config, client } = this
-        const topics = config.subscribeTopics.reduce((acc, item) => {
+        const topics = this.config.subscribeTopics.reduce((acc, item) => {
             acc[item.topic] = { qos: item.qos }
             return acc
         }, {})
-        client.subscribe(topics, (err) => {
+
+        this.client.subscribe(topics, (err) => {
             if (err) {
-                console.error('批量导入失败：', err.message)
+                console.error('MQTT subscribe failed:', err.message)
             } else {
-                console.log("批量导入成功啦")
+                console.log('MQTT subscribe success')
             }
         })
     }
+
+    publishJson(topic, payload, options = {}) {
+        return this.publish(topic, JSON.stringify(payload), options)
+    }
+
+    waitUntilConnected(timeout = 5000) {
+        if (this.client && this.isConnected) {
+            return Promise.resolve()
+        }
+
+        return new Promise((resolve, reject) => {
+            if (!this.client) {
+                reject(new Error('MQTT client is not initialized'))
+                return
+            }
+
+            const cleanup = () => {
+                clearTimeout(timer)
+                this.client.off('connect', handleConnect)
+                this.client.off('error', handleError)
+            }
+
+            const handleConnect = () => {
+                cleanup()
+                resolve()
+            }
+
+            const handleError = (err) => {
+                cleanup()
+                reject(err)
+            }
+
+            const timer = setTimeout(() => {
+                cleanup()
+                reject(new Error('MQTT client connect timeout'))
+            }, timeout)
+
+            this.client.once('connect', handleConnect)
+            this.client.once('error', handleError)
+        })
+    }
+
+    async publish(topic, payload, options = {}) {
+        await this.waitUntilConnected()
+
+        return new Promise((resolve, reject) => {
+            this.client.publish(topic, payload, options, (err) => {
+                if (err) {
+                    reject(err)
+                    return
+                }
+
+                resolve({ topic, payload })
+            })
+        })
+    }
+
     async SaveSensorData(info) {
         const params = [info.id, info.d_no, info.field1, info.field2, info.field3, info.field4, info.field5, info.c_time, info.online]
         try {
-            await promisePool.execute(`insert into t_sensor_data 
-            values(?,?,?,?,?,?,?,?,?)`, params)
+            await promisePool.execute(
+                `insert into t_sensor_data values(?,?,?,?,?,?,?,?,?)`,
+                params
+            )
         } catch (err) {
-            if (err) console.log(err)
+            console.log(err)
         }
     }
 
@@ -167,8 +233,11 @@ class MqttClient extends EventEmitter {
         const params = [
             info.id,
             info.d_no,
-            info.field1, info.field2, info.field3, info.field4, info.field5,
-            // 如果 info.field6 不存在，则赋值为 null
+            info.field1,
+            info.field2,
+            info.field3,
+            info.field4,
+            info.field5,
             info.field6 ?? null,
             info.field7 ?? null,
             info.field8 ?? null,
@@ -176,15 +245,15 @@ class MqttClient extends EventEmitter {
             info.field10 ?? null,
             info.c_time,
             info.online
-        ];
+        ]
 
         try {
             await promisePool.execute(
                 `insert into t_behavior_data values (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
                 params
-            );
+            )
         } catch (err) {
-            console.error("写入失败：", err.message);
+            console.error('Save behavior data failed:', err.message)
         }
     }
 
@@ -193,22 +262,23 @@ class MqttClient extends EventEmitter {
         try {
             await promisePool.execute(`insert into t_error_msg values(?,?,?,?,?,?)`, params)
         } catch (err) {
-            if (err) console.log(err)
+            console.log(err)
         }
     }
 
     checkIfAlive(id) {
         setInterval(() => {
-            this.client.publish(`checkIfAlive/${id}`, `${Date.now()}检查是否存活`, { qos: 1, retain: false }, err => {
+            this.client.publish(`checkIfAlive/${id}`, `${Date.now()} check alive`, { qos: 1, retain: false }, err => {
                 if (err) {
-                    console.error("检查消息发送失败", err.message);
+                    console.error('Check alive publish failed:', err.message)
                 }
             })
-            if (this.timer[id]) clearTimeout(this.timer[id]);
+
+            if (this.timer[id]) clearTimeout(this.timer[id])
             this.timer[id] = setTimeout(() => {
-                console.log("对方已经失联")
+                console.log('Device heartbeat timeout')
             }, 3000)
-        }, 10000)//心脏跳动的频率为10s,如果3秒内没收到回复，就算对方失联
+        }, 10000)
     }
 }
 
