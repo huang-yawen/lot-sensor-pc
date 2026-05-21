@@ -8,7 +8,7 @@ const getErrData = require('../controllers/getErrData');
 const getErrTypeStats = require('../controllers/getErrTypeStats');
 const getDirectTree = require('../controllers/getDirectTree')
 const getDirectRender=require('../controllers/getDirectRender')
-// Service: deviceData
+// Service: 
 const addDeviceData = require('../service/deviceData/addDeviceData');
 const deleteDeviceData = require('../service/deviceData/deleteDeviceData');
 const updateDeviceData = require('../service/deviceData/updateDeviceData');
