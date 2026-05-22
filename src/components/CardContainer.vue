@@ -35,6 +35,7 @@ const formatValue = (key, value) => {
   return value
 }
 
+// 卡片渲染前过滤字段，避免隐藏 id/编号时留下空行。
 const visibleEntries = (obj) => Object.entries(obj).filter(([key]) => displayStore.isFieldVisible(key))
 
 watch(

@@ -25,6 +25,10 @@ class MqttClient extends EventEmitter {
         this.client = null
         this.isConnected = false
         this.timer = {}
+        // 记录当前心跳正常的设备编号。
+        this.aliveDeviceIds = new Set()
+        // 设备离线时，按设备编号暂存待发送消息。
+        this.offlineMessageQueues = new Map()
         this.initClient()
     }
 
@@ -58,6 +62,15 @@ class MqttClient extends EventEmitter {
         })
 
         this.client.on('message', (topic, payload) => {
+            // 兼容 isAlive/1 和 /isAlive/1 两种写法。
+            const normalizedTopic = topic.replace(/^\/+/, '')
+
+            if (normalizedTopic.startsWith('isAlive/')) {
+                const id = normalizedTopic.split('/').pop()
+                this.markDeviceAlive(id)
+                return
+            }
+
             let info
             try {
                 info = JSON.parse(payload.toString())
@@ -137,12 +150,6 @@ class MqttClient extends EventEmitter {
                 }
             }
 
-            if (topic.startsWith('isAlive')) {
-                const id = topic.split('/').pop()
-                clearTimeout(this.timer[id])
-                delete this.timer[id]
-                console.log(`${id} device is alive`)
-            }
         })
     }
 
@@ -164,6 +171,115 @@ class MqttClient extends EventEmitter {
     publishJson(topic, payload, options = {}) {
         // 统一把对象转成 JSON 后发布，避免各业务重复序列化。
         return this.publish(topic, JSON.stringify(payload), options)
+    }
+
+    async publishJsonToDevice(deviceId, topic, payload, options = {}) {
+        const finalDeviceId = this.normalizeDeviceId(deviceId)
+
+        // 没有设备编号时无法判断在线状态，仍按普通 MQTT 消息发送。
+        if (finalDeviceId === null) {
+            return {
+                status: 'published',
+                reason: 'no_device_id',
+                mqtt: await this.publishJson(topic, payload, options)
+            }
+        }
+
+        const message = {
+            topic,
+            payload: JSON.stringify(payload),
+            options,
+            queuedAt: new Date().toISOString()
+        }
+
+        // 设备不在线就入队，等收到心跳后再补发。
+        if (!this.isDeviceAlive(finalDeviceId)) {
+            this.enqueueOfflineMessage(finalDeviceId, message)
+            return {
+                status: 'queued',
+                deviceId: finalDeviceId,
+                queueLength: this.getOfflineQueueLength(finalDeviceId)
+            }
+        }
+
+        return {
+            status: 'published',
+            deviceId: finalDeviceId,
+            mqtt: await this.publish(topic, message.payload, options)
+        }
+    }
+
+    normalizeDeviceId(id) {
+        // 统一设备编号格式，避免 1 和 '1' 被当成两个设备。
+        if (id === undefined || id === null || id === '' || id === 'null') {
+            return null
+        }
+        return String(id)
+    }
+
+    isDeviceAlive(id) {
+        const finalDeviceId = this.normalizeDeviceId(id)
+        return finalDeviceId !== null && this.aliveDeviceIds.has(finalDeviceId)
+    }
+
+    enqueueOfflineMessage(id, message) {
+        const finalDeviceId = this.normalizeDeviceId(id)
+        if (finalDeviceId === null) return
+
+        const queue = this.offlineMessageQueues.get(finalDeviceId) || []
+        // 队列只存在内存里，后端重启后会清空。
+        queue.push(message)
+        this.offlineMessageQueues.set(finalDeviceId, queue)
+        console.log(`Device ${finalDeviceId} is offline, queued MQTT message. queue length: ${queue.length}`)
+    }
+
+    getOfflineQueueLength(id) {
+        const finalDeviceId = this.normalizeDeviceId(id)
+        if (finalDeviceId === null) return 0
+        return this.offlineMessageQueues.get(finalDeviceId)?.length || 0
+    }
+
+    markDeviceAlive(id) {
+        const finalDeviceId = this.normalizeDeviceId(id)
+        if (finalDeviceId === null) return
+
+        clearTimeout(this.timer[finalDeviceId])
+        delete this.timer[finalDeviceId]
+        this.aliveDeviceIds.add(finalDeviceId)
+        console.log(`${finalDeviceId} device is alive`)
+        // 设备恢复在线后，把离线期间积压的消息补发出去。
+        this.flushOfflineQueue(finalDeviceId)
+    }
+
+    markDeviceOffline(id) {
+        const finalDeviceId = this.normalizeDeviceId(id)
+        if (finalDeviceId === null) return
+
+        this.aliveDeviceIds.delete(finalDeviceId)
+        console.log(`${finalDeviceId} device heartbeat timeout`)
+    }
+
+    async flushOfflineQueue(id) {
+        const finalDeviceId = this.normalizeDeviceId(id)
+        const queue = this.offlineMessageQueues.get(finalDeviceId)
+        if (!queue || queue.length === 0) return
+
+        this.offlineMessageQueues.delete(finalDeviceId)
+
+        // 按入队顺序发送；中途失败时把剩余消息放回队列。
+        for (let index = 0; index < queue.length; index += 1) {
+            const message = queue[index]
+            try {
+                await this.publish(message.topic, message.payload, message.options)
+            } catch (err) {
+                const remainingMessages = queue.slice(index)
+                this.offlineMessageQueues.set(finalDeviceId, remainingMessages)
+                console.error(`Flush offline queue failed for device ${finalDeviceId}:`, err.message)
+                return
+            }
+        }
+
+        console.log(`Flushed offline MQTT queue for device ${finalDeviceId}, count: ${queue.length}`)
     }
 
     waitUntilConnected(timeout = 5000) {
@@ -269,16 +385,19 @@ class MqttClient extends EventEmitter {
     }
 
     checkIfAlive(id) {
+        const finalDeviceId = this.normalizeDeviceId(id)
+        if (finalDeviceId === null) return
+
         setInterval(() => {
-            this.client.publish(`checkIfAlive/${id}`, `${Date.now()} check alive`, { qos: 1, retain: false }, err => {
+            this.client.publish(`checkIfAlive/${finalDeviceId}`, `${Date.now()} check alive`, { qos: 1, retain: false }, err => {
                 if (err) {
                     console.error('Check alive publish failed:', err.message)
                 }
             })
 
-            if (this.timer[id]) clearTimeout(this.timer[id])
-            this.timer[id] = setTimeout(() => {
-                console.log('Device heartbeat timeout')
+            if (this.timer[finalDeviceId]) clearTimeout(this.timer[finalDeviceId])
+            this.timer[finalDeviceId] = setTimeout(() => {
+                this.markDeviceOffline(finalDeviceId)
             }, 3000)
         }, 10000)
     }

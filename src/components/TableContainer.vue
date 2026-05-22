@@ -119,7 +119,7 @@ const dateRange = ref(null)
 const currentPage = ref(1)
 const localPageSize = ref(props.pageSize)
 
-// 从数据中自动提取列
+// 从数据中自动提取列，再按全局显示开关过滤 id/编号。
 const computedColumns = computed(() => {
   if (props.data && props.data.length > 0) {
     const firstItem = props.data[0]

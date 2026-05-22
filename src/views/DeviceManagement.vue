@@ -93,6 +93,7 @@ const currentPage = ref(1)
 const pageSize = ref(5)
 
 const deviceData = computed(() => store.deviceData)
+// 设备管理是手写表格，也要接入全局字段显示开关。
 const tableColumns = computed(() => {
   const firstItem = deviceData.value[0]
   return firstItem ? Object.keys(firstItem).filter(displayStore.isFieldVisible) : []

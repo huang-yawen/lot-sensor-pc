@@ -69,6 +69,7 @@ const keyword = ref("");
 const dateRange = ref(null);
 const loading = ref(false);
 
+// 故障记录是手写表格，也统一过滤 id/编号列。
 const headers = computed(() => {
   const data = store.errData;
   return data.length ? Object.keys(data[0]).filter(displayStore.isFieldVisible) : [];

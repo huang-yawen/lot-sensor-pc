@@ -41,15 +41,17 @@ module.exports = async (req, res) => {
             time: new Date().toISOString()
         }
 
-        // 让设备端能及时收到页面修改后的指令值。
-        await mqttClient.publishJson(topic, payload, { qos: 1, retain: false })
+        // 设备离线时不直接发，先进入对应设备的内存队列，等心跳恢复后补发。
+        const publishResult = await mqttClient.publishJsonToDevice(saveResult.d_no, topic, payload, { qos: 1, retain: false })
 
         res.json({
             success: true,
-            message: 'Configuration saved and MQTT message published successfully.',
+            message: publishResult.status === 'queued'
+                ? 'Configuration saved. Device is offline, MQTT message queued.'
+                : 'Configuration saved and MQTT message published successfully.',
             data: {
                 db: saveResult,
-                mqtt: { topic, payload }
+                mqtt: { topic, payload, publish: publishResult }
             }
         })
     } catch (err) {

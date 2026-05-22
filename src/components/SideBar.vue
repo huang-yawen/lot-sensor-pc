@@ -59,6 +59,7 @@
                         <span>故障记录</span>
                     </el-menu-item>
                 </el-menu>
+                <!-- 放在侧边栏最底部，控制所有页面里的 id/编号字段显示。 -->
                 <div class="display-actions">
                     <el-button class="display-btn" :type="displayStore.hideIdFields ? 'primary' : 'default'" @click="displayStore.toggleIdFields">
                         <el-icon>
@@ -124,6 +125,7 @@ const handleClose = (key, keyPath) => {
 }
 
 .display-actions {
+    /* 自动顶到侧边栏底部。 */
     margin-top: auto;
     padding: 16px;
     display: flex;
