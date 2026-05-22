@@ -162,6 +162,7 @@ class MqttClient extends EventEmitter {
     }
 
     publishJson(topic, payload, options = {}) {
+        // 统一把对象转成 JSON 后发布，避免各业务重复序列化。
         return this.publish(topic, JSON.stringify(payload), options)
     }
 
@@ -203,6 +204,7 @@ class MqttClient extends EventEmitter {
     }
 
     async publish(topic, payload, options = {}) {
+        // 发布前先等 MQTT 连接成功，避免页面刚保存时消息丢失。
         await this.waitUntilConnected()
 
         return new Promise((resolve, reject) => {

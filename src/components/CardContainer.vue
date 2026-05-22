@@ -7,7 +7,7 @@
     <div id="ul-wrapper">
       <div v-for="(obj, index) in filteredDataList" :key="index" class="data-card">
         <ul>
-          <li v-for="(value, key) in obj" :key="key">
+          <li v-for="[key, value] in visibleEntries(obj)" :key="key">
             <span class="key">{{ key }}：</span>
             <span class="val">{{ formatValue(key, value) }}</span>
           </li>
@@ -18,6 +18,9 @@
 </template>
 <script setup>
 import { ref, computed, watch } from 'vue'
+import { DisplayStore } from '@/stores/DisplayStore'
+
+const displayStore = DisplayStore()
 
 const props = defineProps({
   data: { type: Array, default: () => [] }
@@ -31,6 +34,8 @@ const formatValue = (key, value) => {
   if (key === '创立时间') return new Date(value).toLocaleString('zh-CN')
   return value
 }
+
+const visibleEntries = (obj) => Object.entries(obj).filter(([key]) => displayStore.isFieldVisible(key))
 
 watch(
   () => props.data,

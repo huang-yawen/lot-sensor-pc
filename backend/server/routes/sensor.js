@@ -36,5 +36,6 @@ router.get('/errTypeStats', getErrTypeStats);
 router.get('/directData', getDirectTree);
 router.get('/directRender',getDirectRender)
 router.post('/multipleDirectData',updateMultipleDirectData);
+// 保存指令配置后同步发布 MQTT，供设备端实时接收。
 router.post('/directData/update',updateDirectDataAndPublish);
 module.exports = router;

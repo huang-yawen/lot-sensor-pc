@@ -40,6 +40,7 @@ export const DirectStore = defineStore('DirectStore', () => {
 
   const handleUpdateData = async ({ id, value, d_no }) => {
     try {
+      // 保存设备设置；后端会同时写库并发布 MQTT。
       const res = await axios.post('http://localhost:3000/directData/update', {
         config_id: id,
         value,
@@ -47,6 +48,7 @@ export const DirectStore = defineStore('DirectStore', () => {
       });
       if (res.data.success) {
         console.log('[DirectStore] 数据更新成功');
+        // 更新后重新拉取当前设备渲染数据，保证页面值和数据库一致。
         await handleRender(d_no);
         return res.data;
       } else {

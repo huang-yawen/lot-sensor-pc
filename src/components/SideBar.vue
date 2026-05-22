@@ -59,12 +59,32 @@
                         <span>故障记录</span>
                     </el-menu-item>
                 </el-menu>
+                <div class="display-actions">
+                    <el-button class="display-btn" :type="displayStore.hideIdFields ? 'primary' : 'default'" @click="displayStore.toggleIdFields">
+                        <el-icon>
+                            <Hide v-if="displayStore.hideIdFields" />
+                            <View v-else />
+                        </el-icon>
+                        <span>{{ displayStore.hideIdFields ? '显示ID' : '隐藏ID' }}</span>
+                    </el-button>
+                    <el-button class="display-btn" :type="displayStore.hideNumberFields ? 'primary' : 'default'" @click="displayStore.toggleNumberFields">
+                        <el-icon>
+                            <Hide v-if="displayStore.hideNumberFields" />
+                            <View v-else />
+                        </el-icon>
+                        <span>{{ displayStore.hideNumberFields ? '显示编号' : '隐藏编号' }}</span>
+                    </el-button>
+                </div>
             </el-col>
         </el-row>
     </div>
 </template>
 
 <script setup>
+import { DisplayStore } from '@/stores/DisplayStore'
+
+const displayStore = DisplayStore()
+
 const handleOpen = (key, keyPath) => {
     console.log(key, keyPath)
 }
@@ -75,6 +95,7 @@ const handleClose = (key, keyPath) => {
 <style scoped>
 .container{
     width: 100%;
+    height: 100%;
     margin: 0 !important;
     padding: 0 !important;
     text-align: left;
@@ -86,8 +107,33 @@ const handleClose = (key, keyPath) => {
 :deep(.el-col) {
     margin: 0 !important;
     padding: 0 !important;
+    display: flex;
+    flex-direction: column;
 }
 :deep(.el-menu) {
     text-align: left;
+}
+
+.tac,
+:deep(.el-col) {
+    height: 100%;
+}
+
+.el-menu-vertical-demo {
+    border-right: none;
+}
+
+.display-actions {
+    margin-top: auto;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.display-btn {
+    width: 100%;
+    margin-left: 0 !important;
+    justify-content: flex-start;
 }
 </style>

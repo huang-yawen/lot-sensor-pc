@@ -8,6 +8,7 @@ const buildTopic = (config) => {
     const topic = config?.topic || DEFAULT_DIRECT_TOPIC
     const preffix = config?.preffix
 
+    // 数据库可配置前缀和主题；缺省时统一发布到 direct。
     if (!preffix) return topic
     return `${String(preffix).replace(/\/$/, '')}/${String(topic).replace(/^\//, '')}`
 }
@@ -22,6 +23,7 @@ module.exports = async (req, res) => {
 
         const saveResult = await saveDirectData({ config_id, value, d_no })
 
+        // 保存成功后读取指令配置，用配置里的 topic/preffix 组装 MQTT 主题。
         const [[config]] = await promisePool.query(
             `SELECT id, t_name, f_type, topic, preffix FROM t_direct_config WHERE id = ? LIMIT 1`,
             [config_id]
@@ -39,6 +41,7 @@ module.exports = async (req, res) => {
             time: new Date().toISOString()
         }
 
+        // 让设备端能及时收到页面修改后的指令值。
         await mqttClient.publishJson(topic, payload, { qos: 1, retain: false })
 
         res.json({

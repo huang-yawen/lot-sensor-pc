@@ -1,6 +1,7 @@
 const promisePool = require('../../config/promisepool')
 
 const normalizeDeviceNo = (dNo) => {
+    // 前端可能传空值或字符串 null，这里统一成数据库可判断的 NULL。
     if (dNo === undefined || dNo === null || dNo === 'null' || dNo === '') {
         return null
     }
@@ -13,6 +14,7 @@ const saveDirectData = async ({ config_id, value, d_no }) => {
     let updateQuery
     let updateParams
 
+    // 先尝试更新已有配置；没有命中时再插入新配置。
     if (finalDNo === null) {
         updateQuery = `UPDATE t_direct SET value = ? WHERE config_id = ? AND d_no IS NULL`
         updateParams = [value, config_id]

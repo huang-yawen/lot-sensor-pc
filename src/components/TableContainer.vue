@@ -77,6 +77,9 @@
 <script setup>
 import { ref, watch, computed } from 'vue'
 import { Search } from '@element-plus/icons-vue'
+import { DisplayStore } from '@/stores/DisplayStore'
+
+const displayStore = DisplayStore()
 
 const props = defineProps({
   data: {
@@ -120,7 +123,7 @@ const localPageSize = ref(props.pageSize)
 const computedColumns = computed(() => {
   if (props.data && props.data.length > 0) {
     const firstItem = props.data[0]
-    return Object.keys(firstItem)
+    return Object.keys(firstItem).filter(displayStore.isFieldVisible)
   }
   return []
 })

@@ -12,13 +12,13 @@
       <table v-if="deviceData.length > 0">
         <thead>
           <tr>
-            <th v-for="(val, key) in deviceData[0]" :key="key">{{ key }}</th>
+            <th v-for="key in tableColumns" :key="key">{{ key }}</th>
             <th>操作</th>
           </tr>
         </thead>
         <tbody>
           <tr v-for="(item, index) in deviceData" :key="index">
-            <td v-for="(val, key) in item" :key="key">{{ val }}</td>
+            <td v-for="key in tableColumns" :key="key">{{ item[key] }}</td>
             <td>
               <el-button type="primary" @click="showEditForm(item)">修改</el-button>
               <el-button type="danger" @click="handleDelete(item)">删除</el-button>
@@ -77,9 +77,11 @@
 import { ref, computed, onMounted } from 'vue'
 import { Search } from '@element-plus/icons-vue'
 import { DeviceStore } from '@/stores/DeviceStore.js'
+import { DisplayStore } from '@/stores/DisplayStore'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 const store = DeviceStore()
+const displayStore = DisplayStore()
 const input = ref('')
 const formData = ref({})
 const editData = ref({})
@@ -91,6 +93,10 @@ const currentPage = ref(1)
 const pageSize = ref(5)
 
 const deviceData = computed(() => store.deviceData)
+const tableColumns = computed(() => {
+  const firstItem = deviceData.value[0]
+  return firstItem ? Object.keys(firstItem).filter(displayStore.isFieldVisible) : []
+})
 
 const fetchData = async () => {
   console.log('搜索参数:', { input: input.value, currentPage: currentPage.value, pageSize: pageSize.value })

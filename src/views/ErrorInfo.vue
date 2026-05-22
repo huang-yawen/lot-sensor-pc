@@ -58,8 +58,10 @@ import { computed, onMounted, ref } from "vue";
 import { Search } from "@element-plus/icons-vue";
 import PieChart from "../components/PieChart.vue";
 import { ErrorStore } from "../stores/ErrorStore";
+import { DisplayStore } from "@/stores/DisplayStore";
 
 const store = ErrorStore();
+const displayStore = DisplayStore();
 
 const currentPage = ref(1);
 const pageSize = ref(5);
@@ -69,7 +71,7 @@ const loading = ref(false);
 
 const headers = computed(() => {
   const data = store.errData;
-  return data.length ? Object.keys(data[0]) : [];
+  return data.length ? Object.keys(data[0]).filter(displayStore.isFieldVisible) : [];
 });
 
 const getSearchParams = () => ({
