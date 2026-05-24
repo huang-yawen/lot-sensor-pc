@@ -5,7 +5,7 @@ import axios from 'axios';
 export const DirectStore = defineStore('DirectStore', () => {
   const data = ref([]);
   const renderData = ref([]);
-  const loading = ref(false);
+  const loading = ref(false);        
 
   const fetchDirectData = async () => {
     loading.value = true;
