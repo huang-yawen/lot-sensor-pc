@@ -32,6 +32,7 @@ const saveDirectData = async ({ config_id, value, d_no }) => {
     let existsQuery
     let existsParams
 
+    // MySQL 里 NULL 不能用等号比较，全局配置和设备配置需要分开查询。
     if (finalDNo === null) {
         existsQuery = `SELECT id FROM t_direct WHERE config_id = ? AND d_no IS NULL LIMIT 1`
         existsParams = [config_id]

@@ -33,6 +33,7 @@ class MqttClient extends EventEmitter {
     }
 
     initClient() {
+        // 启动时建立 MQTT 长连接，后续订阅、发布都复用同一个 client。
         this.client = mqtt.connect(this.config.url, this.config.option)
         this.bindClientEvents()
     }
@@ -81,6 +82,7 @@ class MqttClient extends EventEmitter {
 
             if (topic === 'SensorData/add') {
                 info.c_time = new Date()
+                // 传感器数据先做字段校验，再通知业务监听者并写入数据库。
                 const schema = Joi.object({
                     id: Joi.number().required(),
                     d_no: Joi.number().required(),
@@ -104,6 +106,7 @@ class MqttClient extends EventEmitter {
 
             if (topic === 'BehaviorData/add') {
                 info.c_time = new Date()
+                // 行为数据字段较多，缺省字段用 Joi 保持兼容，落库时再补 null。
                 const schema = Joi.object({
                     id: Joi.number().required(),
                     d_no: Joi.number().required(),
@@ -132,6 +135,7 @@ class MqttClient extends EventEmitter {
 
             if (topic === 'ErrorData/add') {
                 info.c_time = new Date()
+                // 故障消息是告警链路入口，校验通过后直接保存到故障表。
                 const schema = Joi.object({
                     id: Joi.number().required(),
                     d_no: Joi.string().required(),
@@ -154,6 +158,7 @@ class MqttClient extends EventEmitter {
     }
 
     subscribeAllTopics() {
+        // 把配置里的订阅数组转换成 mqtt.js 支持的 { topic: { qos } } 格式。
         const topics = this.config.subscribeTopics.reduce((acc, item) => {
             acc[item.topic] = { qos: item.qos }
             return acc
@@ -324,18 +329,42 @@ class MqttClient extends EventEmitter {
         await this.waitUntilConnected()
 
         return new Promise((resolve, reject) => {
+            let firstPublished = false
+            let secondPublished = false
+            let hasRejected = false
+
+            // 业务要求所有 MQTT 下发都发送两次；保持同一 topic、payload、options。
             this.client.publish(topic, payload, options, (err) => {
+                if (hasRejected) return
                 if (err) {
+                    hasRejected = true
                     reject(err)
                     return
                 }
 
-                resolve({ topic, payload })
+                firstPublished = true
+                if (secondPublished) {
+                    resolve({ topic, payload })
+                }
+            })
+            this.client.publish(topic, payload, options, (err) => {
+                if (hasRejected) return
+                if (err) {
+                    hasRejected = true
+                    reject(err)
+                    return
+                }
+
+                secondPublished = true
+                if (firstPublished) {
+                    resolve({ topic, payload })
+                }
             })
         })
     }
 
     async SaveSensorData(info) {
+        // MQTT 上报的数据最终落到传感器历史表，供实时页和历史页查询。
         const params = [info.id, info.d_no, info.field1, info.field2, info.field3, info.field4, info.field5, info.c_time, info.online]
         try {
             await promisePool.execute(
@@ -348,6 +377,7 @@ class MqttClient extends EventEmitter {
     }
 
     async SaveBehaviorData(info) {
+        // 行为数据允许部分扩展字段为空，统一写成 null 避免 SQL 参数错位。
         const params = [
             info.id,
             info.d_no,
@@ -376,6 +406,7 @@ class MqttClient extends EventEmitter {
     }
 
     async SaveErrorData(info) {
+        // 故障数据保留设备编号、故障内容和类型，用于故障列表及统计。
         const params = [info.id, info.d_no, info.c_time, info.e_msg, info.e_no, info.type]
         try {
             await promisePool.execute(`insert into t_error_msg values(?,?,?,?,?,?)`, params)
@@ -389,7 +420,14 @@ class MqttClient extends EventEmitter {
         if (finalDeviceId === null) return
 
         setInterval(() => {
-            this.client.publish(`checkIfAlive/${finalDeviceId}`, `${Date.now()} check alive`, { qos: 1, retain: false }, err => {
+            const heartbeatPayload = `${Date.now()} check alive`
+            // 心跳没有走 publish()，这里按同样规则直接重复发送两次。
+            this.client.publish(`checkIfAlive/${finalDeviceId}`, heartbeatPayload, { qos: 1, retain: false }, err => {
+                if (err) {
+                    console.error('Check alive publish failed:', err.message)
+                }
+            })
+            this.client.publish(`checkIfAlive/${finalDeviceId}`, heartbeatPayload, { qos: 1, retain: false }, err => {
                 if (err) {
                     console.error('Check alive publish failed:', err.message)
                 }

@@ -1,6 +1,6 @@
 import { defineStore } from "pinia";
-import axios from "axios";
 import { ref } from "vue";
+import api from '@/api';
 
 export const ErrorStore = defineStore("ErrorStore", () => {
   const errData = ref([]);
@@ -25,18 +25,14 @@ export const ErrorStore = defineStore("ErrorStore", () => {
   const fetchErrData = async (params = {}) => {
     loading.value = true;
     try {
-      // axios会自动将响应数据解析为JSON,所以不用.json,但是fetch不行，所以要自己去.json
-      const response = await axios.get("http://localhost:3000/errData", {
+      // 故障列表支持关键字、时间范围和分页筛选，时间先转成后端可比较的字符串。
+      const response = await api.get("/errData", {
         params: {
           page: params.currentPage || 1,
           keyword: params.keyword || "",
           pageSize: params.pageSize || 5,
           startTime: formatDateTime(params.startTime),
           endTime: formatDateTime(params.endTime),
-        },
-        headers: {
-          "Cache-Control": "no-cache",
-          "Pragma": "no-cache",
         },
       });
 
@@ -70,15 +66,12 @@ export const ErrorStore = defineStore("ErrorStore", () => {
 
   const fetchErrTypeStats = async (params = {}) => {
     try {
-      const response = await axios.get("http://localhost:3000/errTypeStats", {
+      // 统计接口复用列表筛选条件，保证图表和表格看到的是同一批故障数据。
+      const response = await api.get("/errTypeStats", {
         params: {
           keyword: params.keyword || "",
           startTime: formatDateTime(params.startTime),
           endTime: formatDateTime(params.endTime),
-        },
-        headers: {
-          "Cache-Control": "no-cache",
-          "Pragma": "no-cache",
         },
       });
 

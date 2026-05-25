@@ -1,6 +1,6 @@
 import { defineStore } from "pinia";
 import { ref } from 'vue';
-import axios from 'axios';
+import api from '@/api';
 
 export const DirectStore = defineStore('DirectStore', () => {
   const data = ref([]);
@@ -10,7 +10,7 @@ export const DirectStore = defineStore('DirectStore', () => {
   const fetchDirectData = async () => {
     loading.value = true;
     try {
-      const res = await axios.get('http://localhost:3000/directData');
+      const res = await api.get('/directData');
       if (res.data.success) {
         // 后端返回的数据结构已经是正确的分组结构了
         // treeData['null'] 是第一层的数组
@@ -26,7 +26,8 @@ export const DirectStore = defineStore('DirectStore', () => {
 
   const handleRender = async (d_no) => {
     try {
-      const res = await axios.get('http://localhost:3000/directRender', { params: { d_no } });
+      // 渲染数据会把全局默认值和设备专属值合并后返回。
+      const res = await api.get('/directRender', { params: { d_no } });
       if (res.data.success) {
         renderData.value = res.data.data || [];
         return renderData.value;
@@ -41,7 +42,7 @@ export const DirectStore = defineStore('DirectStore', () => {
   const handleUpdateData = async ({ id, value, d_no }) => {
     try {
       // 保存设备设置；后端会同时写库并发布 MQTT。
-      const res = await axios.post('http://localhost:3000/directData/update', {
+      const res = await api.post('/directData/update', {
         config_id: id,
         value,
         d_no

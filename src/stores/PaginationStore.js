@@ -1,6 +1,6 @@
 import { defineStore } from "pinia";
-import axios from 'axios'
 import { ref } from 'vue'
+import api from '@/api'
 
 export const PaginationStore = defineStore("paginationStore", () => {
     const paginationData = ref([])
@@ -13,7 +13,8 @@ export const PaginationStore = defineStore("paginationStore", () => {
     const fetchPaginationData = async (params = {}) => {
         loading.value = true
         try {
-            const response = await axios.get('http://localhost:3000/dataByType', {
+            // 传感器历史和行为历史共用分页接口，通过 type 切换数据表。
+            const response = await api.get('/dataByType', {
                 params: {
                     type: params.type || 'sensor',
                     online: params.online || null,
@@ -23,10 +24,6 @@ export const PaginationStore = defineStore("paginationStore", () => {
                     endTime: params.endTime,
                     pageSize: params.pageSize ? Number(params.pageSize) : pageSize.value
                 },
-                headers: {
-                    'Cache-Control': 'no-cache',
-                    'Pragma': 'no-cache'
-                }
             })
             if (response.data.success) {
                 paginationData.value = response.data.data.list || []
@@ -40,6 +37,7 @@ export const PaginationStore = defineStore("paginationStore", () => {
                     type.value = response.data.data.type
                 }
 
+                // 后端返回数据库时间，Store 统一格式化后再交给表格展示。
                 paginationData.value = paginationData.value.map(item => ({
                     ...item,
                     '创立时间': item['创立时间']

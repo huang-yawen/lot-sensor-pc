@@ -27,6 +27,7 @@ module.exports= async (req, res) => {
             `SELECT f_name, db_name, unit FROM ${fieldMappingTable} WHERE visible = 1`
         );
 
+        // 字段映射表决定前端展示列名和单位，避免在接口里写死列配置。
         const fieldMapping = {};
         const fieldUnit = {};
         fieldMapper.forEach(item => {

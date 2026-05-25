@@ -17,6 +17,7 @@ module.exports = async (req, res) => {
 
         const finalMap = new Map();
 
+        // 先放全局默认值，再用设备专属值覆盖，形成最终渲染配置。
         globalResult.forEach(item => {
             finalMap.set(String(item.config_id), item.value);
         });

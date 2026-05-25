@@ -1,6 +1,12 @@
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 
+const backendProxy = {
+  target: 'http://localhost:3000',
+  changeOrigin: true,
+  secure: false
+}
+
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [vue()],
@@ -11,11 +17,14 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      '/data': {
-        target: 'http://localhost:3000',//后端接口地址
-        changeOrigin: true,
-        secure: false
-      }
+      '/data': backendProxy,
+      '/dataByType': backendProxy,
+      '/deviceData': backendProxy,
+      '/errData': backendProxy,
+      '/errTypeStats': backendProxy,
+      '/directData': backendProxy,
+      '/directRender': backendProxy,
+      '/multipleDirectData': backendProxy
     }
   }
 })

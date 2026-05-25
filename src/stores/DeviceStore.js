@@ -1,6 +1,6 @@
 import { defineStore } from "pinia";
 import { ref } from 'vue';
-import axios from "axios";
+import api from '@/api';
 
 export const DeviceStore = defineStore('deviceStore', () => {
     const deviceData = ref([]);
@@ -12,17 +12,14 @@ export const DeviceStore = defineStore('deviceStore', () => {
         loading.value = true;
         try {
             console.log('[deviceStore] 发送搜索请求，参数:', params);
-            const response = await axios.get('http://localhost:3000/deviceData', {
+            // 设备管理页按关键字拉取列表，同时加时间戳避开浏览器缓存。
+            const response = await api.get('/deviceData', {
                 params: {
                     currentPage: params.currentPage || 1,
                     pageSize: params.pageSize || 5,
                     input: params.input || '',
                     timestamp: Date.now()
                 },
-                headers: {
-                    'Cache-Control': 'no-cache',
-                    'Pragma': 'no-cache'
-                }
             });
 
             console.log('[deviceStore] 收到完整响应:', response);
@@ -34,6 +31,7 @@ export const DeviceStore = defineStore('deviceStore', () => {
                 ids.value = [];
                 const rawIds = [];
 
+                // 列表数据顺手提取设备编号，供指令设置页选择设备时复用。
                 fullList.forEach(item => {
                     console.log('[deviceStore] 单条数据:', item);
                     rawIds.push(item['电车编号id'])
@@ -65,15 +63,15 @@ export const DeviceStore = defineStore('deviceStore', () => {
     };
 
     const handleDelete = async (id) => {
-        return await axios.post('http://localhost:3000/deviceData/delete', { id });
+        return await api.post('/deviceData/delete', { id });
     };
 
     const handleAdd = async (item) => {
-        return await axios.post('http://localhost:3000/deviceData/add', item);
+        return await api.post('/deviceData/add', item);
     };
 
     const handleUpdate = async (item) => {
-        return await axios.post('http://localhost:3000/deviceData/update', item);
+        return await api.post('/deviceData/update', item);
     };
 
     return {

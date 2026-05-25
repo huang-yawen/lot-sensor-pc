@@ -42,6 +42,7 @@ const compMap = markRaw({
 const getComponent = (type) => compMap[type] || compMap.default
 
 const match = (parentVal, refVal) => {
+  // off&on 表示子节点不受父节点取值限制，其余情况必须和父值一致。
   if (refVal === 'off&on') return true
   return String(parentVal) === String(refVal)
 }
@@ -49,6 +50,7 @@ const match = (parentVal, refVal) => {
 const matchedChildGroups = computed(() => {
   const val = props.formData[props.node.id] 
   const groups = props.node.children || {}
+  // 只渲染当前父节点取值命中的子节点分组。
   return Object.entries(groups).filter(([refKey]) => match(val, refKey))
 })//[ ["on", [...] ], ["off", [...] ] ]，entries是把对象转换为前面那样子的数组
 

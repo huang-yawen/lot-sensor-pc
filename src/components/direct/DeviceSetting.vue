@@ -31,6 +31,7 @@ const initNode = (node, customRenderData) => {
 
   const renderDataToUse = customRenderData || prop.renderData;
 
+  // 数据库已有值优先，没有保存过时才使用配置表里的默认值。
   const dbItem = renderDataToUse?.find(i => String(i.config_id) === String(node.id))
 
   let initialValue;
@@ -58,6 +59,7 @@ const initNode = (node, customRenderData) => {
 }
 
 const initializeForm = async () => {
+  // 每次切换设备都重新拉取渲染数据，避免沿用上一个设备的表单值。
   const latestRenderData = await prop.handleRender(prop.id);
 
   Object.keys(formData).forEach(key => delete formData[key]);
@@ -73,6 +75,7 @@ const initializeForm = async () => {
 const handleUpdate = async (id, value) => {
   formData[id] = value;
   try {
+    // 保存单个配置项，后端负责写库并通过 MQTT 下发到设备。
     await prop.handleUpdateData({ id, value, d_no: prop.id });
   } catch (err) {
     console.error('保存失败:', err);
