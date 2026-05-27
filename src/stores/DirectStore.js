@@ -41,12 +41,14 @@ export const DirectStore = defineStore('DirectStore', () => {
 
   const handleUpdateData = async ({ id, value, d_no }) => {
     try {
+      console.log('[DirectStore] 开始更新数据:', { id, value, d_no });
       // 保存设备设置；后端会同时写库并发布 MQTT。
       const res = await api.post('/directData/update', {
         config_id: id,
         value,
         d_no
       });
+      console.log('[DirectStore] 后端响应:', res.data);
       if (res.data.success) {
         console.log('[DirectStore] 数据更新成功');
         // 更新后重新拉取当前设备渲染数据，保证页面值和数据库一致。
@@ -57,7 +59,17 @@ export const DirectStore = defineStore('DirectStore', () => {
       }
     } catch (err) {
       console.error('[DirectStore] 更新数据失败:', err);
-      throw err;
+      // 检查是否是 axios 错误
+      if (err.response) {
+        // 服务器返回错误状态码
+        throw new Error(err.response.data?.message || '服务器错误');
+      } else if (err.request) {
+        // 请求发出但没有收到响应
+        throw new Error('网络错误，请检查服务器是否正常运行');
+      } else {
+        // 其他错误
+        throw err;
+      }
     }
   };
 

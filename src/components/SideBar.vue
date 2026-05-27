@@ -3,7 +3,14 @@
         <el-row class="tac">
             <el-col :span="24">
                 <h4 style="text-align: center;">物联网数据管理中心</h4>
-                <el-menu default-active="2" class="el-menu-vertical-demo" @open="handleOpen" @close="handleClose" router>
+                <el-menu
+                    :default-active="activeMenu"
+                    :default-openeds="openedMenus"
+                    class="el-menu-vertical-demo"
+                    @open="handleOpen"
+                    @close="handleClose"
+                    router
+                >
                     <el-sub-menu index="1">
                         <template #title>
                             <el-icon>
@@ -82,9 +89,27 @@
 </template>
 
 <script setup>
+import { computed } from 'vue'
+import { useRoute } from 'vue-router'
 import { DisplayStore } from '@/stores/DisplayStore'
 
 const displayStore = DisplayStore()
+const route = useRoute()
+
+const menuParents = {
+    '/sensor-realtime': '1',
+    '/sensor-history': '1',
+    '/behavior-realtime': '2',
+    '/behavior-history': '2',
+    '/device-management': '3',
+    '/device-setting': '3',
+}
+
+const activeMenu = computed(() => route.path === '/' ? '/sensor-realtime' : route.path)
+const openedMenus = computed(() => {
+    const parent = menuParents[activeMenu.value]
+    return parent ? [parent] : []
+})
 
 const handleOpen = (key, keyPath) => {
     console.log(key, keyPath)

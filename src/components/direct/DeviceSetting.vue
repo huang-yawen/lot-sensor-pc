@@ -7,6 +7,7 @@
 
 <script setup>
 import { computed, onMounted, reactive, markRaw, watch } from 'vue'
+import { ElMessage } from 'element-plus'
 import DynamicNode from '@/components/direct/DynamicNode.vue'
 import * as Icons from '@element-plus/icons-vue'
 
@@ -29,12 +30,12 @@ const icons = markRaw({
 const initNode = (node, customRenderData) => {
   if (!node) return
 
-  const renderDataToUse = customRenderData || prop.renderData;
+  const renderDataToUse = customRenderData || prop.renderData
 
   // 数据库已有值优先，没有保存过时才使用配置表里的默认值。
   const dbItem = renderDataToUse?.find(i => String(i.config_id) === String(node.id))
 
-  let initialValue;
+  let initialValue
   if (dbItem && dbItem.value !== null && dbItem.value !== undefined) {
     initialValue = dbItem.value
     console.log(`[Frontend Init] Found value for ID ${node.id} (${prop.id}):`, initialValue);
@@ -75,10 +76,14 @@ const initializeForm = async () => {
 const handleUpdate = async (id, value) => {
   formData[id] = value;
   try {
+    console.log(`[Frontend] 开始保存配置: id=${id}, value=${value}, d_no=${prop.id}`)
     // 保存单个配置项，后端负责写库并通过 MQTT 下发到设备。
-    await prop.handleUpdateData({ id, value, d_no: prop.id });
+    const result = await prop.handleUpdateData({ id, value, d_no: prop.id });
+    console.log('[Frontend] 配置保存成功:', result)
+    ElMessage.success(result?.message || '配置保存成功！')
   } catch (err) {
-    console.error('保存失败:', err);
+    console.error('[Frontend] 保存失败:', err);
+    ElMessage.error(err?.message || '保存失败，请重试')
   }
 }
 

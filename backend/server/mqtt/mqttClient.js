@@ -25,15 +25,12 @@ class MqttClient extends EventEmitter {
         this.client = null
         this.isConnected = false
         this.timer = {}
-        // 记录当前心跳正常的设备编号。
         this.aliveDeviceIds = new Set()
-        // 设备离线时，按设备编号暂存待发送消息。
         this.offlineMessageQueues = new Map()
         this.initClient()
     }
 
     initClient() {
-        // 启动时建立 MQTT 长连接，后续订阅、发布都复用同一个 client。
         this.client = mqtt.connect(this.config.url, this.config.option)
         this.bindClientEvents()
     }
@@ -63,7 +60,6 @@ class MqttClient extends EventEmitter {
         })
 
         this.client.on('message', (topic, payload) => {
-            // 兼容 isAlive/1 和 /isAlive/1 两种写法。
             const normalizedTopic = topic.replace(/^\/+/, '')
 
             if (normalizedTopic.startsWith('isAlive/')) {
@@ -82,7 +78,6 @@ class MqttClient extends EventEmitter {
 
             if (topic === 'SensorData/add') {
                 info.c_time = new Date()
-                // 传感器数据先做字段校验，再通知业务监听者并写入数据库。
                 const schema = Joi.object({
                     id: Joi.number().required(),
                     d_no: Joi.number().required(),
@@ -106,7 +101,6 @@ class MqttClient extends EventEmitter {
 
             if (topic === 'BehaviorData/add') {
                 info.c_time = new Date()
-                // 行为数据字段较多，缺省字段用 Joi 保持兼容，落库时再补 null。
                 const schema = Joi.object({
                     id: Joi.number().required(),
                     d_no: Joi.number().required(),
@@ -135,7 +129,6 @@ class MqttClient extends EventEmitter {
 
             if (topic === 'ErrorData/add') {
                 info.c_time = new Date()
-                // 故障消息是告警链路入口，校验通过后直接保存到故障表。
                 const schema = Joi.object({
                     id: Joi.number().required(),
                     d_no: Joi.string().required(),
@@ -158,7 +151,6 @@ class MqttClient extends EventEmitter {
     }
 
     subscribeAllTopics() {
-        // 把配置里的订阅数组转换成 mqtt.js 支持的 { topic: { qos } } 格式。
         const topics = this.config.subscribeTopics.reduce((acc, item) => {
             acc[item.topic] = { qos: item.qos }
             return acc
@@ -174,21 +166,11 @@ class MqttClient extends EventEmitter {
     }
 
     publishJson(topic, payload, options = {}) {
-        // 统一把对象转成 JSON 后发布，避免各业务重复序列化。
         return this.publish(topic, JSON.stringify(payload), options)
     }
 
     async publishJsonToDevice(deviceId, topic, payload, options = {}) {
         const finalDeviceId = this.normalizeDeviceId(deviceId)
-
-        // 没有设备编号时无法判断在线状态，仍按普通 MQTT 消息发送。
-        if (finalDeviceId === null) {
-            return {
-                status: 'published',
-                reason: 'no_device_id',
-                mqtt: await this.publishJson(topic, payload, options)
-            }
-        }
 
         const message = {
             topic,
@@ -197,25 +179,33 @@ class MqttClient extends EventEmitter {
             queuedAt: new Date().toISOString()
         }
 
-        // 设备不在线就入队，等收到心跳后再补发。
-        if (!this.isDeviceAlive(finalDeviceId)) {
+        let publishResult
+        try {
+            publishResult = await this.publish(topic, message.payload, options)
+            console.log(`[MQTT] 消息已发布到主题 ${topic}`)
+        } catch (err) {
+            console.error(`[MQTT] 发布失败 ${topic}:`, err.message)
+            publishResult = { error: err.message }
+        }
+
+        if (finalDeviceId !== null && !this.isDeviceAlive(finalDeviceId)) {
             this.enqueueOfflineMessage(finalDeviceId, message)
             return {
                 status: 'queued',
                 deviceId: finalDeviceId,
-                queueLength: this.getOfflineQueueLength(finalDeviceId)
+                queueLength: this.getOfflineQueueLength(finalDeviceId),
+                mqtt: publishResult
             }
         }
 
         return {
             status: 'published',
             deviceId: finalDeviceId,
-            mqtt: await this.publish(topic, message.payload, options)
+            mqtt: publishResult
         }
     }
 
     normalizeDeviceId(id) {
-        // 统一设备编号格式，避免 1 和 '1' 被当成两个设备。
         if (id === undefined || id === null || id === '' || id === 'null') {
             return null
         }
@@ -232,7 +222,6 @@ class MqttClient extends EventEmitter {
         if (finalDeviceId === null) return
 
         const queue = this.offlineMessageQueues.get(finalDeviceId) || []
-        // 队列只存在内存里，后端重启后会清空。
         queue.push(message)
         this.offlineMessageQueues.set(finalDeviceId, queue)
         console.log(`Device ${finalDeviceId} is offline, queued MQTT message. queue length: ${queue.length}`)
@@ -252,7 +241,6 @@ class MqttClient extends EventEmitter {
         delete this.timer[finalDeviceId]
         this.aliveDeviceIds.add(finalDeviceId)
         console.log(`${finalDeviceId} device is alive`)
-        // 设备恢复在线后，把离线期间积压的消息补发出去。
         this.flushOfflineQueue(finalDeviceId)
     }
 
@@ -271,7 +259,6 @@ class MqttClient extends EventEmitter {
 
         this.offlineMessageQueues.delete(finalDeviceId)
 
-        // 按入队顺序发送；中途失败时把剩余消息放回队列。
         for (let index = 0; index < queue.length; index += 1) {
             const message = queue[index]
             try {
@@ -325,46 +312,66 @@ class MqttClient extends EventEmitter {
     }
 
     async publish(topic, payload, options = {}) {
-        // 发布前先等 MQTT 连接成功，避免页面刚保存时消息丢失。
-        await this.waitUntilConnected()
+        if (!this.client) {
+            throw new Error('MQTT client is not initialized')
+        }
+
+        if (!this.isConnected) {
+            console.warn(`[MQTT] 客户端未连接，尝试连接...`)
+            try {
+                await this.waitUntilConnected(10000)
+                console.log(`[MQTT] 客户端连接成功`)
+            } catch (err) {
+                console.error(`[MQTT] 客户端连接失败:`, err.message)
+                throw err
+            }
+        }
 
         return new Promise((resolve, reject) => {
             let firstPublished = false
             let secondPublished = false
             let hasRejected = false
 
-            // 业务要求所有 MQTT 下发都发送两次；保持同一 topic、payload、options。
-            this.client.publish(topic, payload, options, (err) => {
+            const handlePublish = (err) => {
                 if (hasRejected) return
                 if (err) {
                     hasRejected = true
+                    console.error(`[MQTT] 发布失败 ${topic}:`, err.message)
                     reject(err)
                     return
                 }
 
                 firstPublished = true
                 if (secondPublished) {
+                    console.log(`[MQTT] 发布成功 ${topic}:`, payload.substring(0, 100))
                     resolve({ topic, payload })
                 }
-            })
-            this.client.publish(topic, payload, options, (err) => {
+            }
+
+            const handleSecondPublish = (err) => {
                 if (hasRejected) return
                 if (err) {
                     hasRejected = true
+                    console.error(`[MQTT] 第二发布失败 ${topic}:`, err.message)
                     reject(err)
                     return
                 }
 
                 secondPublished = true
                 if (firstPublished) {
+                    console.log(`[MQTT] 发布成功 ${topic}:`, payload.substring(0, 100))
                     resolve({ topic, payload })
                 }
-            })
+            }
+
+            this.client.publish(topic, payload, options, handlePublish)
+            setTimeout(() => {
+                this.client.publish(topic, payload, options, handleSecondPublish)
+            }, 100)
         })
     }
 
     async SaveSensorData(info) {
-        // MQTT 上报的数据最终落到传感器历史表，供实时页和历史页查询。
         const params = [info.id, info.d_no, info.field1, info.field2, info.field3, info.field4, info.field5, info.c_time, info.online]
         try {
             await promisePool.execute(
@@ -377,7 +384,6 @@ class MqttClient extends EventEmitter {
     }
 
     async SaveBehaviorData(info) {
-        // 行为数据允许部分扩展字段为空，统一写成 null 避免 SQL 参数错位。
         const params = [
             info.id,
             info.d_no,
@@ -406,7 +412,6 @@ class MqttClient extends EventEmitter {
     }
 
     async SaveErrorData(info) {
-        // 故障数据保留设备编号、故障内容和类型，用于故障列表及统计。
         const params = [info.id, info.d_no, info.c_time, info.e_msg, info.e_no, info.type]
         try {
             await promisePool.execute(`insert into t_error_msg values(?,?,?,?,?,?)`, params)
@@ -421,12 +426,6 @@ class MqttClient extends EventEmitter {
 
         setInterval(() => {
             const heartbeatPayload = `${Date.now()} check alive`
-            // 心跳没有走 publish()，这里按同样规则直接重复发送两次。
-            this.client.publish(`checkIfAlive/${finalDeviceId}`, heartbeatPayload, { qos: 1, retain: false }, err => {
-                if (err) {
-                    console.error('Check alive publish failed:', err.message)
-                }
-            })
             this.client.publish(`checkIfAlive/${finalDeviceId}`, heartbeatPayload, { qos: 1, retain: false }, err => {
                 if (err) {
                     console.error('Check alive publish failed:', err.message)

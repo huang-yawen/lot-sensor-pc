@@ -38,14 +38,6 @@ const handleResize = () => {
 
 const chartData = ref([])
 
-const normalizeType = (value) => {
-  const type = String(value ?? '').trim()
-  if (!type || ['undefined', 'null', 'nan'].includes(type.toLowerCase())) {
-    return '未知故障'
-  }
-  return type
-}
-
 const initChart = async () => {
   await nextTick()
 
@@ -81,12 +73,12 @@ const updateChart = (source) => {
       return
     }
 
-    const total = source.reduce((sum, item) => sum + Number(item.count || 0), 0)
+    const total = source.reduce((sum, item) => sum + item.count, 0)
     
     const pieData = source.map(item => ({
-      name: normalizeType(item.type),
-      value: Number(item.count || 0),
-      percent: total > 0 ? ((Number(item.count || 0) / total) * 100).toFixed(1) : '0'
+      name: item.type || '未知故障',
+      value: item.count,
+      percent: total > 0 ? ((item.count / total) * 100).toFixed(1) : '0'
     }))
 
     chartData.value = pieData
@@ -100,8 +92,8 @@ const updateChart = (source) => {
         {
           name: '故障类型',
           type: 'pie',
-          radius: ['36%', '64%'],
-          center: ['50%', '52%'],
+          radius: ['40%', '70%'],
+          center: ['50%', '50%'],
           avoidLabelOverlap: false,
           itemStyle: {
             borderRadius: 8,
@@ -114,7 +106,9 @@ const updateChart = (source) => {
           },
           emphasis: {
             label: {
-              show: false
+              show: true,
+              fontSize: 18,
+              fontWeight: 'bold'
             }
           },
           labelLine: {
@@ -163,44 +157,39 @@ onBeforeUnmount(() => {
   border: 1px solid #e2e8f0;
   box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
   padding: 24px;
-  min-height: 560px;
+  height: 100%;
   display: flex;
   flex-direction: column;
-  box-sizing: border-box;
 }
 
 .chart-title {
   font-size: 16px;
   font-weight: 600;
   color: #334155;
-  margin: 0 0 12px 0;
+  margin: 0 0 20px 0;
   padding-bottom: 12px;
   border-bottom: 1px solid #f1f5f9;
-  text-align: center;
-  flex-shrink: 0;
 }
 
 .pie-chart-container {
-  flex: 0 0 340px;
-  min-height: 340px;
+  flex: 1;
+  min-height: 200px;
 }
 
 .legend-container {
   display: flex;
   flex-wrap: wrap;
-  justify-content: center;
-  gap: 10px 16px;
-  margin-top: 12px;
-  padding-top: 12px;
+  gap: 16px;
+  margin-top: 16px;
+  padding-top: 16px;
   border-top: 1px solid #f1f5f9;
-  flex-shrink: 0;
 }
 
 .legend-item {
   display: flex;
   align-items: center;
   gap: 8px;
-  min-width: 160px;
+  min-width: 120px;
 }
 
 .legend-color {
@@ -213,14 +202,12 @@ onBeforeUnmount(() => {
 .legend-text {
   font-size: 13px;
   color: #64748b;
-  white-space: normal;
-  word-break: break-word;
+  flex-shrink: 0;
 }
 
 .legend-value {
   font-size: 13px;
   font-weight: 600;
   color: #334155;
-  flex-shrink: 0;
 }
 </style>
