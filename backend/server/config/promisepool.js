@@ -10,8 +10,11 @@ const pool = mysql.createPool({
   database: process.env.DB_NAME || 'task',
   waitForConnections: true,
   connectionLimit: Number(process.env.DB_CONNECTION_LIMIT) || 10,
-  queueLimit: 0
-  
+  queueLimit: 0,
+  charset: 'utf8mb4',
+  enableKeepAlive: true,
+  keepAliveInitialDelay: 0,
+  dateStrings: true// 开启日期字符串解析,把日期当成一般的字符串进行返回
 })
 const promisePool = pool.promise()
 module.exports = promisePool;

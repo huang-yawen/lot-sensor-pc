@@ -4,6 +4,7 @@ import api from '@/api'
 
 export const SensorStore = defineStore('sensorStore', () => {
     const sensorData = ref({})
+    const fieldUnits = ref({})
     const loading = ref(false)
 
     const sensorValue = () => sensorData.value
@@ -16,13 +17,15 @@ export const SensorStore = defineStore('sensorStore', () => {
                 params: online ? { online } : {}
             })
             sensorData.value = response.data
+            fieldUnits.value = response.data?.fieldUnits || {}
         } catch (error) {
             console.error('API 请求失败:', error)
             sensorData.value = {}
+            fieldUnits.value = {}
         } finally {
             loading.value = false
         }
     }
 
-    return { sensorData, fetchData, sensorValue, loading }
+    return { sensorData, fieldUnits, fetchData, sensorValue, loading }
 })

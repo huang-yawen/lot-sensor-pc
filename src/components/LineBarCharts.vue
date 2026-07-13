@@ -95,13 +95,13 @@ const updateChart = (source) => {
         xAxis: {},
         yAxis: {},
         series: []
-      })
+      }, true)
       return
     }
 
     // 获取数据字段（排除指定的关键字段）
     const elemKeys = Object.keys(json[0])
-    const exclude = ['id', '设备编号', '数据类型', '创立时间', '采集时间']
+    const exclude = ['id', '设备编号', '数据类型', '创立时间', '采集时间','储运箱ID','物体编号']
     const fields = elemKeys.filter(k => !exclude.includes(k))
 
     // 处理时间数据，格式化为可读字符串

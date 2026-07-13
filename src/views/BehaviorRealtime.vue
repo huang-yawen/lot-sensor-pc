@@ -17,11 +17,12 @@ import { computed, onMounted } from 'vue'
 import CardContainer from '@/components/CardContainer.vue'
 import LineBarCharts from '@/components/LineBarCharts.vue'
 import { PaginationStore } from '@/stores/PaginationStore.js'
+import { transformBehaviorList } from '@/utils/fieldTransform'
 
 const store = PaginationStore()
 const online = '实时数据'
 
-const data = computed(() => store.paginationData || [])
+const data = computed(() => transformBehaviorList(store.paginationData || []))
 
 onMounted(async () => {
   await store.fetchPaginationData({

@@ -1,14 +1,28 @@
+/**
+ * 显示控制 Store
+ * 
+ * 【说明】
+ * 之前 SideBar 上的"显示ID/隐藏编号"按钮已被移除，
+ * 字段可见性改由后端 systemConfig.js 统一控制。
+ * 
+ * 此 store 目前仅保留 isFieldVisible 函数供前端表格/卡片过滤字段使用，
+ * 默认所有字段都显示（true），用户如需隐藏字段则通过后端 API 设置。
+ * 
+ * 后续如需完全由后端控制字段可见性，可在 isFieldVisible 中调用后端API，
+ * 但目前先保持简单——所有字段默认显示。
+ */
+
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 
 export const DisplayStore = defineStore('displayStore', () => {
-  // 侧边栏两个按钮控制这两个开关。
+  // 字段可见性现在由后端 systemConfig.js 统一控制，
+  // 前端不再提供切换按钮，默认全部显示。
   const hideIdFields = ref(false)
   const hideNumberFields = ref(false)
 
   const isIdField = (key) => String(key).trim().toLowerCase() === 'id'
 
-  // “编号”字段可能是中文列名，也可能是后端传来的 d_no/device_id。
   const isNumberField = (key) => {
     const rawKey = String(key).trim()
     const lowerKey = rawKey.toLowerCase()
@@ -22,19 +36,9 @@ export const DisplayStore = defineStore('displayStore', () => {
     return true
   }
 
-  const toggleIdFields = () => {
-    hideIdFields.value = !hideIdFields.value
-  }
-
-  const toggleNumberFields = () => {
-    hideNumberFields.value = !hideNumberFields.value
-  }
-
   return {
     hideIdFields,
     hideNumberFields,
     isFieldVisible,
-    toggleIdFields,
-    toggleNumberFields
   }
 })

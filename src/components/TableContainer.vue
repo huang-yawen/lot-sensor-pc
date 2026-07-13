@@ -17,8 +17,6 @@
             start-placeholder="开始时间"
             end-placeholder="结束时间"
             format="YYYY-MM-DD HH:mm:ss"
-            date-format="YYYY/MM/DD ddd"
-            time-format="A hh:mm:ss"
             style="margin-left: 30px;"
             :clearable="true"
           />
@@ -31,28 +29,35 @@
           >
             开始查找
           </el-button>
+          <!-- 智能识别按钮插槽 -->
+          <slot name="actions" />
         </div>
       </div>
     </div>
 
-    <!-- 表格区域 -->
+    <!-- 表格区域（Element Plus el-table 带复选框） -->
     <div class="table-wrapper">
-      <table v-if="data.length > 0">
-        <thead>
-          <tr>
-            <th v-for="key in computedColumns" :key="key">
-              {{ key }}
-            </th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="(item, rowIndex) in data" :key="rowIndex">
-            <td v-for="key in computedColumns" :key="key">
-              {{ item[key] }}
-            </td>
-          </tr>
-        </tbody>
-      </table>
+      <el-table
+        ref="tableRef"
+        :data="data"
+        style="width: 100%"
+        @selection-change="onSelectionChange"
+        v-if="data.length > 0"
+        border
+        stripe
+        :header-cell-style="{ background: '#f8fafc', color: '#475569', fontWeight: 600 }"
+      >
+        <el-table-column type="selection" width="55" align="center" />
+        <el-table-column
+          v-for="key in computedColumns"
+          :key="key"
+          :prop="key"
+          :label="key"
+          show-overflow-tooltip
+          align="center"
+          :width="getColumnWidth(key)"
+        />
+      </el-table>
       <div v-else class="empty-state">
         {{ loading ? '加载中...' : '暂无数据' }}
       </div>
@@ -112,12 +117,13 @@ const props = defineProps({
   }
 })
 
-const emit = defineEmits(['search', 'pageChange', 'sizeChange'])
+const emit = defineEmits(['search', 'pageChange', 'sizeChange', 'selectionChange'])
 
 const keyword = ref('')
-const dateRange = ref(null)
+const dateRange = ref([])
 const currentPage = ref(1)
 const localPageSize = ref(props.pageSize)
+const tableRef = ref(null)
 
 // 从数据中自动提取列，再按全局显示开关过滤 id/编号。
 const computedColumns = computed(() => {
@@ -127,6 +133,19 @@ const computedColumns = computed(() => {
   }
   return []
 })
+
+// 根据列名返回合适的列宽度
+const getColumnWidth = (key) => {
+  const lower = String(key).toLowerCase()
+  if (lower === 'id' || lower === '序号') return 80
+  if (lower.includes('时间') || lower.includes('创立时间') || lower.includes('操作时间') || lower.includes('创建时间')) return 195
+  return ''
+}
+
+// 多选回调
+const onSelectionChange = (selection) => {
+  emit('selectionChange', selection)
+}
 
 watch(() => props.pageSize, (newVal) => {
   localPageSize.value = newVal
@@ -147,17 +166,16 @@ const handleSearch = (page = 1) => {
 
 const handlePageChange = (page) => {
   emit('pageChange', page)
-  handleSearch(page)
 }
 
 const handleSizeChange = (size) => {
   localPageSize.value = size
   emit('sizeChange', size)
-  handleSearch(1)
 }
 
 defineExpose({
-  handleSearch
+  handleSearch,
+  tableRef
 })
 </script>
 
@@ -179,20 +197,17 @@ defineExpose({
 }
 
 .button-wrapper {
-  width: 100px;
-  height: 32px;
-  flex-shrink: 0;
   display: flex;
   align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
 }
 
 .button-wrapper .el-button {
-  width: 100%;
   min-width: 100px;
 }
 
 .pagination-wrapper {
-  margin-left: 0;
   margin-top: 24px;
   display: flex;
   justify-content: center;
@@ -200,46 +215,10 @@ defineExpose({
 
 .table-wrapper {
   background: white;
-  border-radius: 12px;
+  border-radius: 4px;
   border: 1px solid #e2e8f0;
   box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
   overflow: auto;
-}
-
-.table-wrapper table {
-  width: 100%;
-  text-align: center;
-  border-collapse: collapse;
-  font-size: 14px;
-}
-
-.table-wrapper th {
-  background: linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%);
-  color: #475569;
-  font-weight: 600;
-  padding: 14px 16px;
-  border-bottom: 2px solid #e2e8f0;
-  font-size: 13px;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-
-.table-wrapper td {
-  padding: 14px 16px;
-  border-bottom: 1px solid #f1f5f9;
-  color: #334155;
-}
-
-.table-wrapper tbody tr {
-  transition: background-color 0.2s ease;
-}
-
-.table-wrapper tbody tr:hover {
-  background-color: #f8fafc;
-}
-
-.table-wrapper tbody tr:hover td {
-  color: #1e293b;
 }
 
 .empty-state {
@@ -261,12 +240,6 @@ defineExpose({
     width: 100% !important;
     margin-left: 0 !important;
     margin-bottom: 10px;
-  }
-
-  .table-wrapper th,
-  .table-wrapper td {
-    padding: 8px 12px;
-    font-size: 12px;
   }
 }
 </style>

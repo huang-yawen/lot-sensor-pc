@@ -33,6 +33,10 @@ const routes=[
                 component:()=>import('@/views/DirectSetting.vue'),
                 meta: { title: '设备数据/设备设置' }
             },{
+                path:'/operation-history',
+                component:()=>import('@/views/OperationHistory.vue'),
+                meta: { title: '设备数据/操作历史' }
+            },{
                 path:'/error-info',
                 component:()=>import('@/views/ErrorInfo.vue'),
                 meta: { title: '故障记录' }         

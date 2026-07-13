@@ -1,20 +1,24 @@
 <template>
-  <div class="dynamic-node">
+  <div class="dynamic-node" v-if="!shouldHideField(node?.t_name, visibility)">
     <div class="node-row">
       <div class="node-header">
-        <component v-if="icons[node.id]" :is="icons[node.id]" class="icon" />
         <span class="node-title">{{ node.t_name }}</span>
       </div>
       <div class="node-component">
         <component :is="getComponent(node.f_type)" :node="node" :model-value="formData[node.id]"
-          @update:modelValue="val => formData[node.id] = val" @change="val => $emit('update:modelValue', node.id, val)" />
+          :is-manual-mode="isManualMode"
+          @update:modelValue="val => handleLocalUpdate(node.id, val)"
+          @change="val => $emit('update:modelValue', node.id, val)"
+          @save="val => $emit('save', node.id, val)" />
       </div>
     </div>
 
     <div class="node-children" v-if="matchedChildGroups.length">
       <div v-for="([refKey, children]) in matchedChildGroups" :key="refKey">
         <DynamicNode v-for="child in sortNodes(children)" :key="child.id" :node="child" :form-data="formData"
-          :icons="icons" :id="props.id" @update:modelValue="(id, val) => $emit('update:modelValue', id, val)" />
+          :icons="icons" :id="props.id" :is-manual-mode="isManualMode"
+          @update:modelValue="(id, val) => $emit('update:modelValue', id, val)"
+          @save="(id, val) => $emit('save', id, val)" />
       </div>
     </div>
   </div>
@@ -22,27 +26,48 @@
 
 <script setup>
 import { computed, markRaw, defineAsyncComponent } from 'vue'
+import { DisplayStore } from '@/stores/DisplayStore'
+import { ElMessage } from 'element-plus'
+
+const visibility = DisplayStore()
 
 const props = defineProps({
   node: Object,
   formData: Object, 
   icons: Object,
-  id: [Number, String] 
+  id: [Number, String],
+  isManualMode: {
+    type: Boolean,
+    default: false
+  }
 })
 
-const emit = defineEmits(['update:modelValue'])
+const emit = defineEmits(['update:modelValue', 'save'])
+
+// 本地暂存表单值
+const handleLocalUpdate = (id, val) => {
+  props.formData[id] = val
+  ElMessage({ message: '指令已暂存', type: 'success', duration: 1500 })
+}
+
+// 与移动端 DirectNodeMobile.vue 一致的字段可见性判断
+const shouldHideField = (field, settings) => {
+  if (!settings) return false
+  return !settings.isFieldVisible(field)
+}
 
 const compMap = markRaw({
   1: defineAsyncComponent(() => import('./Type1Select.vue')),
   2: defineAsyncComponent(() => import('./Type2Input.vue')),
   3: defineAsyncComponent(() => import('./Type3Slider.vue')),
+  4: defineAsyncComponent(() => import('./Type4Time.vue')),
+  6: defineAsyncComponent(() => import('./Type6Calibrate.vue')),
   default: defineAsyncComponent(() => import('./TypeDefault.vue'))
 })
 
 const getComponent = (type) => compMap[type] || compMap.default
 
 const match = (parentVal, refVal) => {
-  // off&on 表示子节点不受父节点取值限制，其余情况必须和父值一致。
   if (refVal === 'off&on') return true
   return String(parentVal) === String(refVal)
 }
@@ -50,9 +75,8 @@ const match = (parentVal, refVal) => {
 const matchedChildGroups = computed(() => {
   const val = props.formData[props.node.id] 
   const groups = props.node.children || {}
-  // 只渲染当前父节点取值命中的子节点分组。
   return Object.entries(groups).filter(([refKey]) => match(val, refKey))
-})//[ ["on", [...] ], ["off", [...] ] ]，entries是把对象转换为前面那样子的数组
+})
 
 const sortNodes = (nodes) => [...nodes].sort((a, b) => (Number(a.order) || 0) - (Number(b.order) || 0))
 </script>
@@ -79,17 +103,9 @@ const sortNodes = (nodes) => [...nodes].sort((a, b) => (Number(a.order) || 0) - 
 
 .node-title {
   font-weight: 600;
-  margin-left: 7px;
-  font-size: 16px;
+  font-size: 19px;
   white-space: nowrap;
   color: #333;
-}
-
-.icon {
-  width: 1.2em;
-  height: 1.2em;
-  color: #409eff;
-  flex-shrink: 0;
 }
 
 .node-children {

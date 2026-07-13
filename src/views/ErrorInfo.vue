@@ -7,7 +7,7 @@
             clearable />
           <div class="block" style="flex-shrink: 0;">
             <el-date-picker v-model="dateRange" type="datetimerange" start-placeholder="开始时间" end-placeholder="结束时间"
-              format="YYYY-MM-DD HH:mm:ss" date-format="YYYY/MM/DD ddd" time-format="A hh:mm:ss"
+              format="YYYY-MM-DD HH:mm:ss"
               style="margin-left: 30px;" :clearable="true" />
           </div>
           <div class="button-wrapper">
@@ -66,7 +66,7 @@ const displayStore = DisplayStore();
 const currentPage = ref(1);
 const pageSize = ref(5);
 const keyword = ref("");
-const dateRange = ref(null);
+const dateRange = ref([]);
 const loading = ref(false);
 
 // 故障记录是手写表格，也统一过滤 id/编号列。

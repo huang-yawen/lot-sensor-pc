@@ -50,13 +50,17 @@
                             </el-icon>
                             <span>设备数据</span>
                         </template>
-                        <el-menu-item index="/device-management">
+                        <!-- <el-menu-item index="/device-management">
                             <el-icon><Grid /></el-icon>
                             <span>设备管理</span>
-                        </el-menu-item>
+                        </el-menu-item> -->
                         <el-menu-item index="/device-setting">
                             <el-icon><Setting /></el-icon>
-                            <span>设备设置</span>
+                            <span>指令配置</span>
+                        </el-menu-item>
+                        <el-menu-item index="/operation-history">
+                            <el-icon><Timer /></el-icon>
+                            <span>操作历史</span>
                         </el-menu-item>
                     </el-sub-menu>
                     <el-menu-item index="/error-info" to="/error-info">
@@ -66,23 +70,6 @@
                         <span>故障记录</span>
                     </el-menu-item>
                 </el-menu>
-                <!-- 放在侧边栏最底部，控制所有页面里的 id/编号字段显示。 -->
-                <div class="display-actions">
-                    <el-button class="display-btn" :type="displayStore.hideIdFields ? 'primary' : 'default'" @click="displayStore.toggleIdFields">
-                        <el-icon>
-                            <Hide v-if="displayStore.hideIdFields" />
-                            <View v-else />
-                        </el-icon>
-                        <span>{{ displayStore.hideIdFields ? '显示ID' : '隐藏ID' }}</span>
-                    </el-button>
-                    <el-button class="display-btn" :type="displayStore.hideNumberFields ? 'primary' : 'default'" @click="displayStore.toggleNumberFields">
-                        <el-icon>
-                            <Hide v-if="displayStore.hideNumberFields" />
-                            <View v-else />
-                        </el-icon>
-                        <span>{{ displayStore.hideNumberFields ? '显示编号' : '隐藏编号' }}</span>
-                    </el-button>
-                </div>
             </el-col>
         </el-row>
     </div>
@@ -91,9 +78,7 @@
 <script setup>
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
-import { DisplayStore } from '@/stores/DisplayStore'
 
-const displayStore = DisplayStore()
 const route = useRoute()
 
 const menuParents = {
@@ -103,6 +88,7 @@ const menuParents = {
     '/behavior-history': '2',
     '/device-management': '3',
     '/device-setting': '3',
+    '/operation-history': '3',
 }
 
 const activeMenu = computed(() => route.path === '/' ? '/sensor-realtime' : route.path)
@@ -149,18 +135,4 @@ const handleClose = (key, keyPath) => {
     border-right: none;
 }
 
-.display-actions {
-    /* 自动顶到侧边栏底部。 */
-    margin-top: auto;
-    padding: 16px;
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-}
-
-.display-btn {
-    width: 100%;
-    margin-left: 0 !important;
-    justify-content: flex-start;
-}
 </style>

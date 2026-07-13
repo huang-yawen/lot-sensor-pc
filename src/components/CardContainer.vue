@@ -23,7 +23,8 @@ import { DisplayStore } from '@/stores/DisplayStore'
 const displayStore = DisplayStore()
 
 const props = defineProps({
-  data: { type: Array, default: () => [] }
+  data: { type: Array, default: () => [] },
+  fieldUnits: { type: Object, default: () => ({}) }
 })
 
 let dataList = ref([])
@@ -32,7 +33,8 @@ const selectedValue = ref('')
 
 const formatValue = (key, value) => {
   if (key === '创立时间') return new Date(value).toLocaleString('zh-CN')
-  return value
+  const unit = props.fieldUnits[key]
+  return unit ? `${value} ${unit}` : value
 }
 
 // 卡片渲染前过滤字段，避免隐藏 id/编号时留下空行。

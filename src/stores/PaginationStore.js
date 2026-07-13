@@ -7,26 +7,29 @@ export const PaginationStore = defineStore("paginationStore", () => {
     const total = ref(0)
     const currentPage = ref(1) 
     const pageSize = ref(5)
+    const fieldUnits = ref({})
     const loading = ref(false)
     const type = ref('数据监测中心')
 
-    const fetchPaginationData = async (params = {}) => {
+        const fetchPaginationData = async (params = {}) => {
         loading.value = true
         try {
             // 传感器历史和行为历史共用分页接口，通过 type 切换数据表。
-            const response = await api.get('/dataByType', {
-                params: {
-                    type: params.type || 'sensor',
-                    online: params.online || null,
-                    page: params.currentPage || currentPage.value,
-                    keyword: params.keyword || '',
-                    startTime: params.startTime,
-                    endTime: params.endTime,
-                    pageSize: params.pageSize ? Number(params.pageSize) : pageSize.value
-                },
-            })
+            const queryParams = {
+                type: params.type || 'sensor',
+                page: params.currentPage || currentPage.value,
+                keyword: params.keyword || '',
+                pageSize: params.pageSize ? Number(params.pageSize) : pageSize.value
+            }
+            // 只发送有值的参数，避免 null 序列化为 "null" 字符串
+            if (params.online) queryParams.online = params.online
+            if (params.startTime) queryParams.startTime = params.startTime
+            if (params.endTime) queryParams.endTime = params.endTime
+
+            const response = await api.get('/dataByType', { params: queryParams })
             if (response.data.success) {
                 paginationData.value = response.data.data.list || []
+                fieldUnits.value = response.data.data.fieldUnits || {}
                 total.value = response.data.data.total || 0
                 currentPage.value = response.data.data.page || 1
                 pageSize.value = response.data.data.size || pageSize.value
@@ -64,6 +67,7 @@ export const PaginationStore = defineStore("paginationStore", () => {
         total,
         currentPage,
         pageSize,
+        fieldUnits,
         loading,
         type
     }

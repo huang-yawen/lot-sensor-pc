@@ -1,16 +1,19 @@
 <template>
   <div class="main-container">
-    <div class="panel global-panel">
+    <!-- ========== 全局指令配置（多设备时显示） ========== -->
+    <div class="panel global-panel" v-if="!singleDeviceMode">
       <h3 class="panel-title">全局指令配置</h3>
       <DeviceSetting :storeData="store.data" :renderData="store.renderData" :handleUpdateData="store.handleUpdateData"
         :fetchDirectData="store.fetchDirectData" :handleRender="store.handleRender" :id="'null'" />
     </div>
 
+    <!-- ========== 设备指令配置 ========== -->
     <div class="panel device-panel">
-      <h3 class="panel-title">多设备指令配置</h3>
+      <h3 class="panel-title">设备指令配置</h3>
       
-      <div class="device-selector">
-        <span class="selector-label">选择设备：</span>
+      <!-- 设备选择器（单设备模式隐藏） -->
+      <div class="device-selector" v-if="!hideDevicePicker">
+        <span class="selector-label">电车编号ID：</span>
         <el-dropdown @command="handleCommand" trigger="click">
           <span class="el-dropdown-link">
             {{ selectedDeviceId || '请选择设备' }}
@@ -26,11 +29,12 @@
         </el-dropdown>
       </div>
 
-      <div class="device-content">
-        <DeviceSetting v-if="selectedDeviceId" :storeData="store.data" :renderData="store.renderData"
+      <div class="state" v-if="!selectedDeviceId && !hideDevicePicker">请选择设备以配置指令</div>
+      <div class="state" v-else-if="loading">加载中...</div>
+      <div class="device-content" v-else>
+        <DeviceSetting :storeData="store.data" :renderData="store.renderData"
           :handleUpdateData="store.handleUpdateData" :fetchDirectData="store.fetchDirectData"
-          :handleRender="store.handleRender" :id="selectedDeviceId" />
-        <div v-else class="empty-tip">请从上方下拉菜单选择设备</div>
+          :handleRender="store.handleRender" :id="selectedDeviceId || 'null'" />
       </div>
     </div>
   </div>
@@ -40,34 +44,60 @@
 import DeviceSetting from '@/components/direct/DeviceSetting.vue'
 import { DirectStore } from '@/stores/DirectStore'
 import { DeviceStore } from '@/stores/DeviceStore' 
+import { DisplayStore } from '@/stores/DisplayStore'
 import { computed, ref, onMounted } from 'vue'
 import { ArrowDown } from '@element-plus/icons-vue'
 
 const store = DirectStore()
 const dStore = DeviceStore() 
+const displayStore = DisplayStore()
 
 const selectedDeviceId = ref(null)
 const ids = computed(() => dStore.ids || [])
+const singleDeviceMode = ref(true)
+const loading = ref(false)
 
+// 单设备模式或字段可见性配置决定是否隐藏设备选择器
+const hideDevicePicker = computed(() => {
+  if (singleDeviceMode.value) return true
+  // 多设备模式：根据字段可见性配置决定
+  return !displayStore.isFieldVisible('电车编号ID')
+})
 
 const handleCommand = (command) => {
   selectedDeviceId.value = command
 }
 
 onMounted(async () => {
-  await dStore.fetchDeviceData({ currentPage: 1, pageSize: 999 })
-  await store.fetchDirectData()
+  loading.value = true
+  try {
+    await dStore.fetchDeviceData({ currentPage: 1, pageSize: 999 })
+    await store.fetchDirectData()
+    
+    // 获取单设备模式配置（通过 handleRender 获取）
+    const result = await store.handleRender('null')
+    if (result.singleDeviceMode !== undefined) {
+      singleDeviceMode.value = result.singleDeviceMode
+    }
+    
+    // 单设备模式：自动选中第一个设备
+    if (singleDeviceMode.value && ids.value.length > 0) {
+      selectedDeviceId.value = ids.value[0]
+    }
+  } finally {
+    loading.value = false
+  }
 })
 </script>
 
 <style scoped>
 .main-container {
   display: flex;
+  flex-direction: column;
   gap: 20px;
   padding: 16px;
   height: calc(100vh - 100px);
-  overflow:hidden;
-
+  overflow-y: auto;
 }
 
 .panel {
@@ -75,18 +105,6 @@ onMounted(async () => {
   border-radius: 10px;
   box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
   padding: 16px;
-  width: calc(50% - 35px);
-  max-width: calc(50% - 35px);
-  display: flex;
-  flex-direction: column;
-}
-
-.global-panel {
-  flex-shrink: 0;
-}
-
-.device-panel {
-  flex-shrink: 0;
 }
 
 .panel-title {
@@ -139,7 +157,7 @@ onMounted(async () => {
   flex: 1;
 }
 
-.empty-tip {
+.state {
   padding: 30px 20px;
   text-align: center;
   color: #909399;

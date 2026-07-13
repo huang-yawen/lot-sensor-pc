@@ -1,7 +1,10 @@
 <template>
   <div class="container">
     <DynamicNode v-for="node in data" :key="node.id" :node="node" :form-data="formData" :icons="icons"
-      @update:modelValue="handleUpdate" :id="prop.id" />
+      :is-manual-mode="isManualMode"
+      @update:modelValue="handleUpdate"
+      @save="handleSave"
+      :id="prop.id" />
   </div>
 </template>
 
@@ -25,6 +28,11 @@ const formData = reactive({})
 const icons = markRaw({
   0: Icons.Pointer, 1: Icons.SwitchButton, 2: Icons.Edit,
   3: Icons.Operation, 4: Icons.Guide, 5: Icons.Memo
+})
+
+// 判断校准组件是否为手动模式：config_id=0 的值为 "off" 时手动，"on" 时自动
+const isManualMode = computed(() => {
+  return String(formData[0] || 'off') === 'off'
 })
 
 const initNode = (node, customRenderData) => {
@@ -61,7 +69,8 @@ const initNode = (node, customRenderData) => {
 
 const initializeForm = async () => {
   // 每次切换设备都重新拉取渲染数据，避免沿用上一个设备的表单值。
-  const latestRenderData = await prop.handleRender(prop.id);
+  const result = await prop.handleRender(prop.id);
+  const latestRenderData = result.data || result || [];
 
   Object.keys(formData).forEach(key => delete formData[key]);
 
@@ -80,11 +89,16 @@ const handleUpdate = async (id, value) => {
     // 保存单个配置项，后端负责写库并通过 MQTT 下发到设备。
     const result = await prop.handleUpdateData({ id, value, d_no: prop.id });
     console.log('[Frontend] 配置保存成功:', result)
-    ElMessage.success(result?.message || '配置保存成功！')
+    ElMessage.success('指令已发送')
   } catch (err) {
     console.error('[Frontend] 保存失败:', err);
-    ElMessage.error(err?.message || '保存失败，请重试')
   }
+}
+
+// save 事件：用于 Type2Input、Type3Slider、Type4Time、Type6Calibrate 等需要即时保存的组件
+const handleSave = async (id, value) => {
+  // 与 handleUpdate 逻辑相同，直接保存
+  await handleUpdate(id, value)
 }
 
 watch(() => prop.id, async (newId) => {

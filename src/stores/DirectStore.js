@@ -30,12 +30,16 @@ export const DirectStore = defineStore('DirectStore', () => {
       const res = await api.get('/directRender', { params: { d_no } });
       if (res.data.success) {
         renderData.value = res.data.data || [];
-        return renderData.value;
+        // 返回包含 data 和 singleDeviceMode 的对象（与移动端一致）
+        return {
+          data: renderData.value,
+          singleDeviceMode: res.data.singleDeviceMode !== undefined ? res.data.singleDeviceMode : true
+        };
       }
-      return [];
+      return { data: [], singleDeviceMode: true };
     } catch (err) {
       console.error('[DirectStore] 获取渲染数据失败:', err);
-      return [];
+      return { data: [], singleDeviceMode: true };
     }
   };
 

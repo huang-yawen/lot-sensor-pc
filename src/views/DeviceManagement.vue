@@ -31,6 +31,19 @@
       </div>
     </div>
 
+    <div class="pagination-wrapper">
+      <el-pagination
+        v-model:current-page="currentPage"
+        v-model:page-size="pageSize"
+        :page-sizes="[5, 10, 15, 20]"
+        :background="true"
+        layout="sizes, prev, pager, next"
+        :total="store.total || 0"
+        @size-change="handlePageSizeChange"
+        @current-change="handlePageChange"
+      />
+    </div>
+
     <!-- 新增面板 -->
     <div class="update" v-if="showAdd">
       <div class="modal-mask" @click="showAdd = false"></div>
@@ -92,6 +105,17 @@ const showEdit = ref(false)
 const currentPage = ref(1)
 const pageSize = ref(5)
 
+const handlePageChange = (page) => {
+  currentPage.value = page
+  fetchData()
+}
+
+const handlePageSizeChange = (size) => {
+  pageSize.value = size
+  currentPage.value = 1
+  fetchData()
+}
+
 const deviceData = computed(() => store.deviceData)
 // 设备管理是手写表格，也要接入全局字段显示开关。
 const tableColumns = computed(() => {
@@ -103,7 +127,12 @@ const fetchData = async () => {
   console.log('搜索参数:', { input: input.value, currentPage: currentPage.value, pageSize: pageSize.value })
   store.loading = true
   try {
-    await store.fetchDeviceData({ input: input.value, currentPage: currentPage.value, pageSize: pageSize.value })
+    await store.fetchDeviceData({ 
+      input: input.value, 
+      currentPage: currentPage.value, 
+      pageSize: pageSize.value,
+      searchMode: displayStore.hideNumberFields ? 'deviceName' : 'all'
+    })
   } finally {
     store.loading = false
   }
@@ -230,6 +259,12 @@ onMounted(() => fetchData())
   position: relative;
   gap: 16px;
   align-items: center;
+}
+
+.pagination-wrapper {
+  margin-top: 24px;
+  display: flex;
+  justify-content: center;
 }
 
 .search-btn {

@@ -24,7 +24,11 @@ export default defineConfig({
       '/errTypeStats': backendProxy,
       '/directData': backendProxy,
       '/directRender': backendProxy,
-      '/multipleDirectData': backendProxy
+      '/multipleDirectData': backendProxy,
+      '/directData/update': backendProxy,
+      '/intelligent/recognize': backendProxy,
+      '/api/system-config': backendProxy,
+      '/api/operation-history': backendProxy
     }
   }
 })

@@ -18,6 +18,7 @@ export const DeviceStore = defineStore('deviceStore', () => {
                     currentPage: params.currentPage || 1,
                     pageSize: params.pageSize || 5,
                     input: params.input || '',
+                    searchMode: params.searchMode || 'all',
                     timestamp: Date.now()
                 },
             });
@@ -34,7 +35,7 @@ export const DeviceStore = defineStore('deviceStore', () => {
                 // 列表数据顺手提取设备编号，供指令设置页选择设备时复用。
                 fullList.forEach(item => {
                     console.log('[deviceStore] 单条数据:', item);
-                    rawIds.push(item['电车编号id'])
+                    rawIds.push(item['设备编号'])
                     if (item['创建时间']) {
                         try {
                             item['创建时间'] = new Date(item['创建时间']).toLocaleString('zh-CN', {

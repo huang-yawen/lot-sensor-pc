@@ -1,9 +1,14 @@
 const fs = require('fs')
 const path = require('path')
 
-const envPath = path.join(__dirname, '../../.env')
+const envPaths = [
+    path.join(__dirname, '../../.env'),
+    path.join(__dirname, '../.env')
+]
 
-if (fs.existsSync(envPath)) {
+function loadEnvFile(envPath) {
+    if (!fs.existsSync(envPath)) return
+
     const envText = fs.readFileSync(envPath, 'utf8')
 
     envText.split(/\r?\n/).forEach(line => {
@@ -13,7 +18,7 @@ if (fs.existsSync(envPath)) {
         const separatorIndex = trimmed.indexOf('=')
         if (separatorIndex === -1) return
 
-        const key = trimmed.slice(0, separatorIndex).trim()
+        const key = trimmed.slice(0, separatorIndex).trim().replace(/^\uFEFF/, '')
         let value = trimmed.slice(separatorIndex + 1).trim()
 
         if (
@@ -28,5 +33,7 @@ if (fs.existsSync(envPath)) {
         }
     })
 }
+
+envPaths.forEach(loadEnvFile)
 
 module.exports = process.env
