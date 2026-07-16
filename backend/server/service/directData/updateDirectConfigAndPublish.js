@@ -28,6 +28,7 @@ const promisePool = require('../../config/dbPool')
 const mqttClient = require('../../mqtt')
 const { saveDirectData } = require('./saveDirectConfig')
 const { saveOperationHistory } = require('../operationHistory/saveOperationHistory')
+const systemConfig = require('../../config/systemConfig')
 
 // ============================================================
 // 【模式切换变量】SINGLE_DEVICE_MODE
@@ -36,7 +37,7 @@ const { saveOperationHistory } = require('../operationHistory/saveOperationHisto
 // true  - 单设备模式（默认）
 // false - 多设备模式
 // ============================================================
-const SINGLE_DEVICE_MODE = process.env.SINGLE_DEVICE_MODE === 'true'
+const isSingleDeviceMode = () => systemConfig.getConfig().SINGLE_DEVICE_MODE === true
 
 /** 单设备模式下的默认设备编号（从 t_device 表获取的第一个设备） */
 const DEFAULT_DEVICE_ID = null // 将在启动时从数据库加载
@@ -114,7 +115,8 @@ module.exports = async (req, res) => {
       return res.status(400).json({ success: false, message: 'config_id 必填' })
     }
 
-    console.log('[DirectUpdate] 收到指令:', { config_id, value, d_no, mode: SINGLE_DEVICE_MODE ? '单设备' : '多设备' })
+    const singleDeviceMode = isSingleDeviceMode()
+    console.log('[DirectUpdate] 收到指令:', { config_id, value, d_no, mode: singleDeviceMode ? '单设备' : '多设备' })
 
     // 1. 构建 MQTT 消息
     const payload = buildPayload(config_id, value)
@@ -122,7 +124,7 @@ module.exports = async (req, res) => {
     // 2. 确定目标设备编号
     let deviceId = null
 
-    if (SINGLE_DEVICE_MODE) {
+    if (singleDeviceMode) {
       // ========== 单设备模式 ==========
       // 从数据库获取默认设备编号
       deviceId = await getDefaultDeviceId()
@@ -160,18 +162,24 @@ module.exports = async (req, res) => {
     // 4. 设备在线 -> 先发送指令（发送两次以确保设备可靠接收）
     try {
       // 第一次发送
-      await mqttClient.publish('control', payload)
+      const firstPublish = await mqttClient.publish('control', payload)
+      if (firstPublish.status !== 'published') {
+        throw new Error(`MQTT 第一次发送未成功: ${firstPublish.status}`)
+      }
       console.log('[DirectUpdate] MQTT 第一次发送成功')
 
       // 第二次发送（间隔 200ms，确保设备可靠接收）
       await new Promise(resolve => setTimeout(resolve, 200))
-      await mqttClient.publish('control', payload)
+      const secondPublish = await mqttClient.publish('control', payload)
+      if (secondPublish.status !== 'published') {
+        throw new Error(`MQTT 第二次发送未成功: ${secondPublish.status}`)
+      }
       console.log('[DirectUpdate] MQTT 第二次发送成功')
 
       // 5. 发送成功后再保存到数据库
       // 单设备模式：保存时传入设备号，保存为设备专属配置
       // 多设备模式：保存时传入原始 d_no（null=全局，设备号=设备专属）
-      const saveDNo = SINGLE_DEVICE_MODE ? deviceId : d_no
+      const saveDNo = singleDeviceMode ? deviceId : d_no
       const saveResult = await saveDirectData({ config_id, value, d_no: saveDNo })
       console.log('[DirectUpdate] 数据库保存成功:', saveResult)
 
@@ -191,8 +199,8 @@ module.exports = async (req, res) => {
       })
     } catch (err) {
       console.error('[DirectUpdate] MQTT 发送失败:', err.message)
-      return res.json({
-        success: true,
+      return res.status(503).json({
+        success: false,
         message: 'MQTT 发送失败，指令未保存到数据库',
         data: { status: 'failed', error: err.message }
       })

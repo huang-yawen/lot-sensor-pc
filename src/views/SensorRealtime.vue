@@ -19,7 +19,7 @@ import LineBarCharts from '@/components/LineBarCharts.vue'
 import { SensorStore } from '@/stores/SensorStore'
 import { computed, onMounted, onUnmounted } from 'vue'
 import CardContainer from '@/components/CardContainer.vue'
-import { connect as wsConnect, on as wsOn, close as wsClose } from '@/utils/websocket'
+import { on as wsOn } from '@/utils/websocket'
 
 const store = SensorStore()
 
@@ -38,15 +38,7 @@ const data = computed(() => {
 onMounted(async () => {
   await reloadData()
 
-  // 连接 WebSocket，接收实时推送
-  wsConnect({
-    onMessage: (data) => {
-      if (data.type === 'sensor_data') {
-        reloadData(false)
-      }
-    }
-  })
-
+  // WebSocket 连接由顶层 TopNav 统一维护；这里只订阅一次传感器消息。
   wsUnsubscribe = wsOn('sensor_data', () => {
     reloadData(false)
   })
@@ -57,7 +49,6 @@ onUnmounted(() => {
     wsUnsubscribe()
     wsUnsubscribe = null
   }
-  wsClose()
 })
 </script>
 

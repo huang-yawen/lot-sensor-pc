@@ -100,5 +100,8 @@ mqttClient.checkIfAlive = (deviceId) => deviceManager.isOnline(deviceId)
 mqttClient.addPendingCommand = (deviceId, configId, value) => deviceManager.addPendingCommand(deviceId, configId, value)
 mqttClient.publishJsonToDevice = (deviceId, topic, payload, options) => mqttClient.publish(topic, payload, options)
 mqttClient.getAllDeviceStatus = () => deviceManager.getAllDeviceStatus()
+mqttClient.registerDevice = (deviceId) => deviceManager.registerDevice(deviceId)
+mqttClient.removeDevice = (deviceId) => deviceManager.removeDevice(deviceId)
+mqttClient.renameDevice = (oldDeviceId, newDeviceId) => deviceManager.renameDevice(oldDeviceId, newDeviceId)
 
 module.exports = mqttClient

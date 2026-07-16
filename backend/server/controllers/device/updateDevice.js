@@ -1,8 +1,12 @@
 const updateDeviceManageData = require('../../service/deviceData/updateDeviceManageData')
+const mqttClient = require('../../mqtt')
 
 module.exports = async (req, res) => {
     try {
         const result = await updateDeviceManageData(req.body)
+        if (result.success) {
+            mqttClient.renameDevice(result.oldDeviceNumber, result.deviceNumber)
+        }
         res.json(result)
     } catch (err) {
         console.error('更新设备失败:', err)

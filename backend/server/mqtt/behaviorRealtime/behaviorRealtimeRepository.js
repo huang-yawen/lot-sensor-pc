@@ -1,8 +1,10 @@
 const promisePool = require('../../config/dbPool')
 const { saveOperationHistory } = require('../../service/operationHistory/saveOperationHistory')
+const { saveDirectData } = require('../../service/directData/saveDirectConfig')
 
 /** 开关类型指令（config_id=0,1,2,4,9），t_direct 存 on/off，MQTT 发 open/close */
 const REVERSE_SWITCH_MAP = { on: 'open', off: 'close' }
+const SWITCH_STORAGE_MAP = { open: 'on', close: 'off' }
 const SWITCH_CONFIG_IDS = new Set([0, 1, 2, 4, 9])
 
 /** 行为数据字段 到 t_direct_config.id 的映射 */
@@ -69,6 +71,10 @@ async function detectAndRecordChanges(info, d_no) {
 
         // 遍历行为数据的每个字段，与 t_direct 的预期值对比
         for (const [infoKey, configId] of Object.entries(FIELD_TO_CONFIG_ID)) {
+            // 设备可能只上报部分字段；缺失字段不能当成空字符串变化。
+            if (!Object.prototype.hasOwnProperty.call(info, infoKey) || info[infoKey] == null) {
+                continue
+            }
             const newVal = String(info[infoKey] ?? '').trim()
             const expectedVal = expectedValues[configId]
 
@@ -84,7 +90,7 @@ async function detectAndRecordChanges(info, d_no) {
             // 如果 t_direct 中有这个配置的预期值，且与实际值不同
             if (newVal !== compareExpected) {
                 console.log(`[BehaviorRealtime] 检测到变化: config_id=${configId}, infoKey=${infoKey}, 预期=${compareExpected}, 实际=${newVal}`)
-                await saveOperationHistory({
+                const historyResult = await saveOperationHistory({
                     d_no,
                     config_id: configId,
                     old_value: expectedVal,
@@ -92,7 +98,15 @@ async function detectAndRecordChanges(info, d_no) {
                     source: 'auto',
                     c_time: info.Time || null
                 })
-                hasChanges = true
+                if (historyResult.success) {
+                    // 接受设备实际状态为新的比较基准，防止每个上报包重复记录同一次变化。
+                    const storedValue = SWITCH_CONFIG_IDS.has(configId)
+                        ? (SWITCH_STORAGE_MAP[newVal] || newVal)
+                        : newVal
+                    await saveDirectData({ config_id: configId, value: storedValue, d_no })
+                    expectedValues[configId] = storedValue
+                    hasChanges = true
+                }
             }
         }
 

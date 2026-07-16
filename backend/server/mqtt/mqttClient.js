@@ -90,9 +90,11 @@ class MqttClient extends EventEmitter {
    */
   publish(topic, payload, options = { qos: 1 }) {
     return new Promise((resolve, reject) => {
-      if (!this.isConnected) {
-        console.warn('[MQTT] 未连接，消息丢弃:', topic)
-        resolve({ status: 'disconnected' })
+      if (!this.isConnected || !this.client || !this.client.connected) {
+        const err = new Error(`MQTT 未连接，无法发布到主题 ${topic}`)
+        err.code = 'MQTT_DISCONNECTED'
+        console.warn('[MQTT] 未连接，拒绝发送:', topic)
+        reject(err)
         return
       }
       const message = JSON.stringify(payload)

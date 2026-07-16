@@ -9,6 +9,8 @@ lerna-debug.log*
 .env
 .env.*
 !.env.example
+backend/server/data/pending-commands.json
+backend/server/data/pending-commands.json.tmp
 
 node_modules
 dist

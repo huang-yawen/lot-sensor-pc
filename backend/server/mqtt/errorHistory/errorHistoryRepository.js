@@ -29,10 +29,23 @@ function buildErrorMessage(info) {
     return messages.join('，')
 }
 
+async function getDeviceNo(info) {
+    const reported = info.VID ?? info.d_no ?? info.DNO ?? info.device_id
+    if (reported !== undefined && reported !== null && String(reported).trim()) {
+        return String(reported).trim()
+    }
+
+    const [rows] = await promisePool.query(
+        'SELECT `number` FROM `t_device` ORDER BY `id` ASC LIMIT 1'
+    )
+    return rows.length > 0 ? String(rows[0].number).trim() : null
+}
+
 async function saveErrorMsg(info) {
+    const deviceNo = await getDeviceNo(info)
     const params = [
-        '202177',
-        info.Time ?? null,
+        deviceNo,
+        info.c_time ?? info.Time ?? null,
         buildErrorMessage(info),
         info.e_no ?? info.error_no ?? null,
         buildErrorType(info),

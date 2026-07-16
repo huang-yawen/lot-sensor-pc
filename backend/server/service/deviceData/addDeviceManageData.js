@@ -11,9 +11,14 @@ const promisePool = require('../../config/dbPool')
  * @returns {Promise<{success: boolean, message: string}>}
  */
 module.exports = async (data) => {
+    const id = Number(data.id)
+    const deviceNumber = String(data['电车编号id'] ?? '').trim()
+    if (!Number.isInteger(id) || !deviceNumber) {
+        return { success: false, message: 'id 和电车编号id 必须有效' }
+    }
     await promisePool.execute(
         `INSERT INTO \`t_device\` (id, device_name, remarks, ctime, number) VALUES (?, ?, ?, ?, ?)`,
-        [Number(data.id), data['设备名称'], data['备注'], data['创立时间'], data['电车编号id']]
+        [id, data['设备名称'], data['备注'], data['创立时间'], deviceNumber]
     )
-    return { success: true, message: '成功啦！' }
+    return { success: true, message: '成功啦！', deviceNumber }
 }

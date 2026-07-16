@@ -23,6 +23,17 @@ module.exports = async (data) => {
     if (!deviceName || !number) {
         return { success: false, message: '设备名称和电车编号id 不能为空' }
     }
+    if (!Number.isInteger(newId)) {
+        return { success: false, message: 'id 无效' }
+    }
+
+    const [[existingDevice]] = await promisePool.execute(
+        'SELECT `number` FROM `t_device` WHERE `id` = ? LIMIT 1',
+        [oldId]
+    )
+    if (!existingDevice) {
+        return { success: false, message: '未找到该设备' }
+    }
 
     const [result] = await promisePool.execute(
         `UPDATE t_device SET 
@@ -38,5 +49,10 @@ module.exports = async (data) => {
         return { success: false, message: '未找到该设备，或数据未变化' }
     }
 
-    return { success: true, message: '修改成功！' }
+    return {
+        success: true,
+        message: '修改成功！',
+        oldDeviceNumber: existingDevice.number,
+        deviceNumber: String(number).trim(),
+    }
 }

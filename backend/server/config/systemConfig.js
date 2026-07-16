@@ -182,6 +182,17 @@ const defaultConfig = {
  * 当前运行的配置（深拷贝默认值，支持热更新）
  */
 let currentConfig = JSON.parse(JSON.stringify(defaultConfig))
+if (process.env.SINGLE_DEVICE_MODE === 'true' || process.env.SINGLE_DEVICE_MODE === 'false') {
+  currentConfig.SINGLE_DEVICE_MODE = process.env.SINGLE_DEVICE_MODE === 'true'
+}
+
+function isValidConfigValue(key, value) {
+  if (typeof value !== typeof defaultConfig[key]) return false
+  if (key === 'DEFAULT_PAGE_SIZE') return Number.isInteger(value) && value > 0 && value <= 100
+  if (key === 'REALTIME_REFRESH_INTERVAL') return Number.isFinite(value) && value >= 0
+  if (key === 'HEARTBEAT_TIMEOUT') return Number.isFinite(value) && value >= 1000
+  return true
+}
 
 /**
  * 获取当前配置
@@ -197,7 +208,7 @@ function updateConfig(partial) {
   if (!partial || typeof partial !== 'object') return false
   let updated = false
   for (const [key, value] of Object.entries(partial)) {
-    if (key in currentConfig) {
+    if (key in currentConfig && isValidConfigValue(key, value)) {
       currentConfig[key] = value
       updated = true
     }

@@ -28,7 +28,11 @@ export default defineConfig({
       '/directData/update': backendProxy,
       '/intelligent/recognize': backendProxy,
       '/api/system-config': backendProxy,
-      '/api/operation-history': backendProxy
+      '/api/operation-history': backendProxy,
+      '/ws': {
+        ...backendProxy,
+        ws: true
+      }
     }
   }
 })

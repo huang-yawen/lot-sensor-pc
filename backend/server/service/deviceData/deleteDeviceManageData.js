@@ -8,6 +8,15 @@ const promisePool = require('../../config/dbPool')
  */
 module.exports = async (data) => {
     const deleteId = Number(data.id)
-    await promisePool.execute('DELETE FROM `t_device` WHERE `id` = ?', [deleteId])
-    return { success: true }
+    if (!Number.isInteger(deleteId)) {
+        return { success: false, message: 'id 无效' }
+    }
+    const [[device]] = await promisePool.execute(
+        'SELECT `number` FROM `t_device` WHERE `id` = ? LIMIT 1',
+        [deleteId]
+    )
+    if (!device) return { success: false, message: '未找到该设备' }
+
+    const [result] = await promisePool.execute('DELETE FROM `t_device` WHERE `id` = ?', [deleteId])
+    return { success: result.affectedRows > 0, deviceNumber: device.number }
 }

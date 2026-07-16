@@ -24,6 +24,8 @@
 const promisePool = require('../config/dbPool')
 const { saveDirectData } = require('../service/directData/saveDirectConfig')
 const systemConfig = require('../config/systemConfig')
+const fs = require('fs')
+const path = require('path')
 
 const configIdMapping = {
   0: 'mode', 1: 'air', 2: 'fan', 3: 'speed_fan', 4: 'acMode',
@@ -31,8 +33,11 @@ const configIdMapping = {
   10: 'LXD', 11: 'bright_led', 12: 'TBegin', 13: 'TEnd', 14: 'calibrate'
 }
 
-/** 设备离线超时时间（毫秒），从系统配置读取，默认10000 */
-const OFFLINE_TIMEOUT = systemConfig.getConfig().HEARTBEAT_TIMEOUT || 10000
+/** 动态读取超时配置，确保热更新立即生效。 */
+function getOfflineTimeout() {
+  const timeout = Number(systemConfig.getConfig().HEARTBEAT_TIMEOUT)
+  return Number.isFinite(timeout) && timeout > 0 ? timeout : 10000
+}
 
 class DeviceManager {
   /**
@@ -53,6 +58,15 @@ class DeviceManager {
     /** @type {Map<string, Array<{config_id: number, value: any}>>} 暂存指令队列 */
     this._pendingCommands = new Map()
 
+    /** @type {Set<string>} 正在发送暂存指令的设备，避免心跳并发触发重复发送 */
+    this._flushingDevices = new Set()
+
+    this._pendingFile = process.env.PENDING_COMMANDS_FILE
+      ? path.resolve(process.env.PENDING_COMMANDS_FILE)
+      : path.join(__dirname, '../data/pending-commands.json')
+
+    this._loadPendingCommands()
+
     /** @type {boolean} 是否已从数据库加载设备列表 */
     this._loaded = false
 
@@ -71,7 +85,7 @@ class DeviceManager {
       )
       if (rows && rows.length > 0) {
         for (const row of rows) {
-          const deviceId = row.number
+          const deviceId = String(row.number).trim()
           // 初始化设备为离线状态
           this._onlineStatus.set(deviceId, false)
         }
@@ -95,6 +109,7 @@ class DeviceManager {
    */
   onHeartbeat(deviceId) {
     if (!deviceId) return
+    deviceId = String(deviceId).trim()
 
     // 只跟踪数据库中已注册的设备
     if (!this._onlineStatus.has(deviceId)) {
@@ -115,8 +130,10 @@ class DeviceManager {
     if (wasOffline) {
       console.log(`[DeviceManager] 设备 ${deviceId} 上线`)
       this._sendTimeCalibration(deviceId)
-      this._flushPendingCommands(deviceId)
     }
+
+    // 每次心跳都允许重试失败队列；并发保护会阻止重复发送。
+    this._flushPendingCommands(deviceId)
   }
 
   /** 重置设备的离线检测定时器 */
@@ -126,9 +143,9 @@ class DeviceManager {
     }
     this._offlineTimers.set(deviceId, setTimeout(() => {
       this._onlineStatus.set(deviceId, false)
-      console.log(`[DeviceManager] 设备 ${deviceId} 离线（${OFFLINE_TIMEOUT/1000}秒无心跳）`)
+      console.log(`[DeviceManager] 设备 ${deviceId} 离线（${getOfflineTimeout()/1000}秒无心跳）`)
       this._offlineTimers.delete(deviceId)
-    }, OFFLINE_TIMEOUT))
+    }, getOfflineTimeout()))
   }
 
   /**
@@ -138,9 +155,42 @@ class DeviceManager {
    * @returns {boolean}
    */
   isOnline(deviceId) {
+    deviceId = String(deviceId ?? '').trim()
     const lastBeat = this._lastHeartbeat.get(deviceId)
     if (!lastBeat) return false
-    return (Date.now() - lastBeat) < OFFLINE_TIMEOUT
+    return (Date.now() - lastBeat) < getOfflineTimeout()
+  }
+
+  /** 设备 CRUD 后同步内存注册表，无需重启服务。 */
+  registerDevice(deviceId) {
+    const normalized = String(deviceId ?? '').trim()
+    if (!normalized) return
+    if (!this._onlineStatus.has(normalized)) {
+      this._onlineStatus.set(normalized, false)
+    }
+  }
+
+  removeDevice(deviceId) {
+    const normalized = String(deviceId ?? '').trim()
+    if (!normalized) return
+    const timer = this._offlineTimers.get(normalized)
+    if (timer) clearTimeout(timer)
+    this._offlineTimers.delete(normalized)
+    this._lastHeartbeat.delete(normalized)
+    this._onlineStatus.delete(normalized)
+    this._pendingCommands.delete(normalized)
+    this._persistPendingCommands()
+  }
+
+  renameDevice(oldDeviceId, newDeviceId) {
+    const oldId = String(oldDeviceId ?? '').trim()
+    const newId = String(newDeviceId ?? '').trim()
+    if (oldId === newId) {
+      this.registerDevice(newId)
+      return
+    }
+    this.removeDevice(oldId)
+    this.registerDevice(newId)
   }
 
   /**
@@ -173,25 +223,60 @@ class DeviceManager {
    * @param {*} value
    */
   addPendingCommand(deviceId, configId, value) {
+    deviceId = String(deviceId ?? '').trim()
     if (!deviceId || deviceId === 'null') return
 
     if (!this._pendingCommands.has(deviceId)) {
       this._pendingCommands.set(deviceId, [])
     }
-    this._pendingCommands.get(deviceId).push({ config_id: configId, value })
+    // 同一配置只保留用户最后一次设置，避免设备上线后执行过期指令。
+    const commands = this._pendingCommands.get(deviceId)
+      .filter((item) => String(item.config_id) !== String(configId))
+    commands.push({ config_id: configId, value })
+    this._pendingCommands.set(deviceId, commands)
+    this._persistPendingCommands()
     console.log(`[DeviceManager] 设备 ${deviceId} 指令暂存 (config_id=${configId})`)
+  }
+
+  _loadPendingCommands() {
+    try {
+      if (!fs.existsSync(this._pendingFile)) return
+      const saved = JSON.parse(fs.readFileSync(this._pendingFile, 'utf8'))
+      for (const [deviceId, commands] of Object.entries(saved)) {
+        if (Array.isArray(commands) && commands.length > 0) {
+          this._pendingCommands.set(deviceId, commands)
+        }
+      }
+      console.log(`[DeviceManager] 已恢复 ${this._pendingCommands.size} 个设备的暂存指令`)
+    } catch (err) {
+      console.error('[DeviceManager] 恢复暂存指令失败:', err.message)
+    }
+  }
+
+  _persistPendingCommands() {
+    try {
+      const content = Object.fromEntries(this._pendingCommands)
+      fs.mkdirSync(path.dirname(this._pendingFile), { recursive: true })
+      const tempFile = `${this._pendingFile}.tmp`
+      fs.writeFileSync(tempFile, JSON.stringify(content, null, 2), 'utf8')
+      fs.renameSync(tempFile, this._pendingFile)
+    } catch (err) {
+      console.error('[DeviceManager] 保存暂存指令失败:', err.message)
+    }
   }
 
   /** 设备上线时发送所有暂存指令，发送成功后保存到数据库 */
   async _flushPendingCommands(deviceId) {
     const commands = this._pendingCommands.get(deviceId)
-    if (!commands || commands.length === 0) return
+    if (!commands || commands.length === 0 || this._flushingDevices.has(deviceId)) return
+
+    this._flushingDevices.add(deviceId)
 
     console.log(`[DeviceManager] 设备 ${deviceId} 上线，发送 ${commands.length} 条暂存指令（每条发送两次）`)
-    for (const cmd of commands) {
-      const payload = this._buildPayload(cmd.config_id, cmd.value)
-      if (payload) {
-        try {
+    try {
+      for (const cmd of [...commands]) {
+        const payload = this._buildPayload(cmd.config_id, cmd.value)
+        if (payload) {
           // 每条指令发送两次以确保设备可靠接收
           await this.mqttClient.publish('control', payload)
           await new Promise(resolve => setTimeout(resolve, 200))
@@ -199,13 +284,21 @@ class DeviceManager {
 
           // 发送成功后保存到数据库
           await saveDirectData({ config_id: cmd.config_id, value: cmd.value, d_no: deviceId })
+          const remaining = (this._pendingCommands.get(deviceId) || []).filter(
+            (item) => String(item.config_id) !== String(cmd.config_id)
+          )
+          if (remaining.length > 0) this._pendingCommands.set(deviceId, remaining)
+          else this._pendingCommands.delete(deviceId)
+          this._persistPendingCommands()
           console.log(`[DeviceManager] 暂存指令已发送并保存到数据库 (config_id=${cmd.config_id})`)
-        } catch (err) {
-          console.error(`[DeviceManager] 暂存指令处理失败:`, err.message)
         }
       }
+    } catch (err) {
+      // 保留失败指令及其后的指令，等待下一次心跳或重连后重试。
+      console.error(`[DeviceManager] 暂存指令处理失败，队列已保留:`, err.message)
+    } finally {
+      this._flushingDevices.delete(deviceId)
     }
-    this._pendingCommands.delete(deviceId)
   }
 
   // ==================== 时间校准 ====================
@@ -279,6 +372,7 @@ class DeviceManager {
     this._lastHeartbeat.clear()
     this._onlineStatus.clear()
     this._pendingCommands.clear()
+    this._flushingDevices.clear()
   }
 }
 

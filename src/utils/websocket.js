@@ -4,7 +4,8 @@
  * 支持自动重连机制
  */
 
-const WS_BASE_URL = import.meta.env.VITE_WS_URL || `ws://${location.hostname}:3000`
+const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
+const WS_BASE_URL = import.meta.env.VITE_WS_URL || `${wsProtocol}//${location.host}`
 
 let ws = null
 let reconnectTimer = null
@@ -25,8 +26,8 @@ const HEARTBEAT_INTERVAL = 15000 // 心跳间隔（毫秒）
  * @param {Function} [options.onError] - 连接错误的回调
  */
 export function connect(options = {}) {
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    console.log('[WebSocket] 已连接，跳过')
+  if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+    console.log('[WebSocket] 已连接或正在连接，跳过重复连接')
     return
   }
 
@@ -106,12 +107,14 @@ export function on(type, callback) {
  * 手动关闭 WebSocket 连接
  */
 export function close() {
+  isManualClose = true
   stopHeartbeat()
   if (reconnectTimer) {
     clearTimeout(reconnectTimer)
     reconnectTimer = null
   }
   if (ws) {
+    ws.onclose = null
     ws.close()
     ws = null
   }
@@ -121,7 +124,6 @@ export function close() {
  * 完全关闭 WebSocket 连接并阻止自动重连
  */
 export function closePermanently() {
-  isManualClose = true
   close()
 }
 
