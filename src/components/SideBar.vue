@@ -11,6 +11,10 @@
                     @close="handleClose"
                     router
                 >
+                    <el-menu-item index="/dashboard" to="/dashboard">
+                        <el-icon><DataBoard /></el-icon>
+                        <span>首页概览</span>
+                    </el-menu-item>
                     <el-sub-menu index="1">
                         <template #title>
                             <el-icon>
@@ -91,7 +95,7 @@ const menuParents = {
     '/operation-history': '3',
 }
 
-const activeMenu = computed(() => route.path === '/' ? '/sensor-realtime' : route.path)
+const activeMenu = computed(() => route.path === '/' ? '/dashboard' : route.path)
 const openedMenus = computed(() => {
     const parent = menuParents[activeMenu.value]
     return parent ? [parent] : []

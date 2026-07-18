@@ -168,14 +168,14 @@ const defaultConfig = {
   //
   //  默认值: '默认场景'
   //
-  SCENE_TAG: '默认场景',
+  SCENE_TAG: '2026水循环系统',
 
   // 【SCENE_DESCRIPTION】场景描述
   //   更详细的说明，描述这个场景的用途和特点
   //
   //  默认值: '系统初始默认配置'
   //
-  SCENE_DESCRIPTION: '系统初始默认配置',
+  SCENE_DESCRIPTION: '双温度、流量、压力监测及水泵、加热模块控制',
 }
 
 /**

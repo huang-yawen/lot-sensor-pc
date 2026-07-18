@@ -66,11 +66,10 @@ CREATE TABLE `t_sensor_field_mapper`  (
 -- ----------------------------
 -- Records of t_sensor_field_mapper  传感器数据映射表
 -- ----------------------------
-INSERT INTO `t_sensor_field_mapper` VALUES (1, '水温', 'field1', 't1', '℃', '1', '1');
-INSERT INTO `t_sensor_field_mapper` VALUES (2, '水温2', 'field2', 't2', '℃', '1', '1');
-INSERT INTO `t_sensor_field_mapper` VALUES (3, '水质1', 'field3', 'tds1', 'ppm', '1', '1');
-INSERT INTO `t_sensor_field_mapper` VALUES (4, '水质2', 'field4', 'tds2', 'ppm', '1', '1');
-INSERT INTO `t_sensor_field_mapper` VALUES (5, '湿度', 'field5', 'tds', 'hPa', '1', '1');
+INSERT INTO `t_sensor_field_mapper` VALUES (1, '进水温度', 'field1', 'Tin', '℃', '1', '1');
+INSERT INTO `t_sensor_field_mapper` VALUES (2, '出水温度', 'field2', 'Tout', '℃', '1', '1');
+INSERT INTO `t_sensor_field_mapper` VALUES (3, '管路流量', 'field3', 'Flow', 'L/min', '1', '1');
+INSERT INTO `t_sensor_field_mapper` VALUES (4, '管路压力', 'field4', 'Pressure', 'kPa', '1', '1');
 
 -- ----------------------------
 -- Table structure for t_behavior_data  行为数据    
@@ -120,10 +119,10 @@ CREATE TABLE `t_behavior_field_mapper`  (
 -- ----------------------------
 -- Records of t_behavior_field_mapper
 -- ----------------------------
-INSERT INTO `t_behavior_field_mapper` VALUES (1, '水温1', 'field1', 't1', '', '1', '1');
-INSERT INTO `t_behavior_field_mapper` VALUES (2, '水温2', 'field2', 't2', '', '1', '1');
-INSERT INTO `t_behavior_field_mapper` VALUES (3, '水质1', 'field3', 'tds1', '', '1', '1');
-INSERT INTO `t_behavior_field_mapper` VALUES (4, '水质2', 'field4', 'tds2', NULL, '1', '1');
+INSERT INTO `t_behavior_field_mapper` VALUES (1, '水泵状态', 'field1', 'pump', '', '1', '1');
+INSERT INTO `t_behavior_field_mapper` VALUES (2, '加热状态', 'field2', 'heater', '', '1', '1');
+INSERT INTO `t_behavior_field_mapper` VALUES (3, '进水继电器', 'field3', 'inlet_valve', '', '1', '1');
+INSERT INTO `t_behavior_field_mapper` VALUES (4, '排水继电器', 'field4', 'drain_valve', NULL, '1', '1');
 
 -- ----------------------------
 -- Table structure for t_device
@@ -174,18 +173,16 @@ CREATE TABLE `t_direct_config`  (
 -- ----------------------------
 -- Records of t_direct_config
 -- ----------------------------
-INSERT INTO `t_direct_config` VALUES (0, NULL, NULL, '控制模式', '1', '手动:off|自动:on', NULL, NULL, NULL, NULL, NULL, NULL, NULL);
-INSERT INTO `t_direct_config` VALUES (1, 0, 'off&on', '空调开关', '1', '关:off|开:on', NULL, NULL, NULL, '0', 'direct', NULL, NULL);
-INSERT INTO `t_direct_config` VALUES (2, 0, 'off', '风机开关', '1', '关:off|开:on', NULL, 'null', 'null', '1', 'direct', NULL, NULL);
-INSERT INTO `t_direct_config` VALUES (3, 2, 'on', '风机模式', '3', '正转:1|反转:0', NULL, '100', '1', '3', 'direct', NULL, NULL);
-INSERT INTO `t_direct_config` VALUES (4, 2, 'on', '风机功率', '2', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
-INSERT INTO `t_direct_config` VALUES (5, 1, 'on', '空调模式', '1', '制冷:0|制热:1', NULL, 'null', 'null', '4', 'direct', NULL, NULL);
-INSERT INTO `t_direct_config` VALUES (6, 1, 'on', '空调功率', '3', NULL, NULL, '100', '1', '7', 'direct', NULL, NULL);
-INSERT INTO `t_direct_config` VALUES (7, 0, 'on', '温差', '2', NULL, NULL, '100', '0', '6', 'direct', NULL, NULL);
-INSERT INTO `t_direct_config` VALUES (9, 0, 'on', '温度下限阈值', '2', NULL, NULL, NULL, NULL, '9', 'direct', NULL, NULL);
-INSERT INTO `t_direct_config` VALUES (10, 0, 'on', '温度上限阈值', '2', NULL, NULL, NULL, NULL, '10', 'direct', NULL, NULL);
-INSERT INTO `t_direct_config` VALUES (11, 0, 'on', '光照阈值', '2', NULL, NULL, 'null', 'null', '11', 'direct', NULL, NULL);
-INSERT INTO `t_direct_config` VALUES (14, 0, 'off&on', '校准时间', '6', NULL, NULL, NULL, NULL, '14', 'direct', NULL, NULL);
+INSERT INTO `t_direct_config` VALUES (0, NULL, NULL, '控制模式', '1', '手动:off|自动:on', NULL, NULL, NULL, '0', 'control', 'mode', NULL);
+INSERT INTO `t_direct_config` VALUES (1, 0, 'off&on', '循环水泵', '1', '关闭:off|开启:on', NULL, NULL, NULL, '1', 'control', 'pump', NULL);
+INSERT INTO `t_direct_config` VALUES (2, 0, 'off&on', '加热模块', '1', '关闭:off|开启:on', NULL, NULL, NULL, '2', 'control', 'heater', NULL);
+INSERT INTO `t_direct_config` VALUES (3, 0, 'off&on', '进水继电器', '1', '关闭:off|开启:on', NULL, NULL, NULL, '3', 'control', 'inlet_valve', NULL);
+INSERT INTO `t_direct_config` VALUES (4, 0, 'off&on', '排水继电器', '1', '关闭:off|开启:on', NULL, NULL, NULL, '4', 'control', 'drain_valve', NULL);
+INSERT INTO `t_direct_config` VALUES (5, 0, 'on', '温度上限阈值', '2', NULL, NULL, '100', '0', '5', 'control', 'temp_high', NULL);
+INSERT INTO `t_direct_config` VALUES (6, 0, 'on', '温度下限阈值', '2', NULL, NULL, '100', '0', '6', 'control', 'temp_low', NULL);
+INSERT INTO `t_direct_config` VALUES (7, 0, 'on', '流量下限阈值', '2', NULL, NULL, '100', '0', '7', 'control', 'flow_low', NULL);
+INSERT INTO `t_direct_config` VALUES (8, 0, 'on', '压力上限阈值', '2', NULL, NULL, '1000', '0', '8', 'control', 'pressure_high', NULL);
+INSERT INTO `t_direct_config` VALUES (14, 0, 'off&on', '校准时间', '6', NULL, NULL, NULL, NULL, '14', 'control', 'calibrate', NULL);
 
 -- ----------------------------
 -- Table structure for t_error_msg

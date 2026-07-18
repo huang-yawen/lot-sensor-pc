@@ -62,8 +62,12 @@ const SWITCH_MAP = { on: 'open', off: 'close' }
  * @param {*} value
  * @returns {Object}
  */
-function buildPayload(configId, value) {
-  const key = CONFIG_MAP[configId] || `unknown_${configId}`
+async function buildPayload(configId, value) {
+  const [rows] = await promisePool.query(
+    'SELECT preffix, f_type FROM t_direct_config WHERE id = ? LIMIT 1',
+    [configId]
+  )
+  const key = String(rows[0]?.preffix || '').trim() || CONFIG_MAP[configId] || `unknown_${configId}`
 
   // 校准时间特殊处理：value 是 JSON 字符串
   if (Number(configId) === 14) {
@@ -75,7 +79,8 @@ function buildPayload(configId, value) {
   }
 
   // 开关类型值映射（on->open, off->close）
-  const mappedValue = SWITCH_IDS.includes(Number(configId)) && SWITCH_MAP[value]
+  const isSwitch = String(rows[0]?.f_type) === '1' || SWITCH_IDS.includes(Number(configId))
+  const mappedValue = isSwitch && SWITCH_MAP[value]
     ? SWITCH_MAP[value]
     : String(value)
 
@@ -119,7 +124,7 @@ module.exports = async (req, res) => {
     console.log('[DirectUpdate] 收到指令:', { config_id, value, d_no, mode: singleDeviceMode ? '单设备' : '多设备' })
 
     // 1. 构建 MQTT 消息
-    const payload = buildPayload(config_id, value)
+    const payload = await buildPayload(config_id, value)
 
     // 2. 确定目标设备编号
     let deviceId = null

@@ -275,7 +275,7 @@ class DeviceManager {
     console.log(`[DeviceManager] 设备 ${deviceId} 上线，发送 ${commands.length} 条暂存指令（每条发送两次）`)
     try {
       for (const cmd of [...commands]) {
-        const payload = this._buildPayload(cmd.config_id, cmd.value)
+        const payload = await this._buildPayload(cmd.config_id, cmd.value)
         if (payload) {
           // 每条指令发送两次以确保设备可靠接收
           await this.mqttClient.publish('control', payload)
@@ -341,8 +341,12 @@ class DeviceManager {
    * @param {*} value
    * @returns {Object|null}
    */
-  _buildPayload(configId, value) {
-    const propertyName = configIdMapping[configId] || `unknown_${configId}`
+  async _buildPayload(configId, value) {
+    const [rows] = await promisePool.query(
+      'SELECT preffix, f_type FROM t_direct_config WHERE id = ? LIMIT 1',
+      [configId]
+    )
+    const propertyName = String(rows[0]?.preffix || '').trim() || configIdMapping[configId] || `unknown_${configId}`
 
     // 校准时间特殊处理
     if (Number(configId) === 14) {
@@ -356,7 +360,8 @@ class DeviceManager {
     // 开关类型值映射（on->open, off->close）
     const SWITCH_TYPES = [0, 1, 2, 4, 9]
     const VALUE_MAP = { on: 'open', off: 'close' }
-    const mappedValue = SWITCH_TYPES.includes(Number(configId)) && VALUE_MAP[value]
+    const isSwitch = String(rows[0]?.f_type) === '1' || SWITCH_TYPES.includes(Number(configId))
+    const mappedValue = isSwitch && VALUE_MAP[value]
       ? VALUE_MAP[value]
       : String(value)
 

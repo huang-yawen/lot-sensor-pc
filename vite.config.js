@@ -29,6 +29,7 @@ export default defineConfig({
       '/intelligent/recognize': backendProxy,
       '/api/system-config': backendProxy,
       '/api/operation-history': backendProxy,
+      '/api/mqtt/status': backendProxy,
       '/ws': {
         ...backendProxy,
         ws: true

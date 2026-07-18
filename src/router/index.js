@@ -7,7 +7,11 @@ const routes=[
         children: [
             {
                 path:'/',
-                redirect:'/sensor-realtime'
+                redirect:'/dashboard'
+            },{
+                path:'/dashboard',
+                component:()=>import('@/views/Dashboard.vue'),
+                meta: { title: '首页概览' }
             },{
                 path:'/sensor-realtime',
                 component:()=>import('@/views/SensorRealtime.vue'),

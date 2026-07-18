@@ -1,4 +1,5 @@
 const promisePool = require('../../config/dbPool')
+const { saveMappedData } = require('../../utils/mappedData')
 const { saveOperationHistory } = require('../../service/operationHistory/saveOperationHistory')
 const { saveDirectData } = require('../../service/directData/saveDirectConfig')
 
@@ -6,18 +7,6 @@ const { saveDirectData } = require('../../service/directData/saveDirectConfig')
 const REVERSE_SWITCH_MAP = { on: 'open', off: 'close' }
 const SWITCH_STORAGE_MAP = { open: 'on', close: 'off' }
 const SWITCH_CONFIG_IDS = new Set([0, 1, 2, 4, 9])
-
-/** 行为数据字段 到 t_direct_config.id 的映射 */
-const FIELD_TO_CONFIG_ID = {
-    mode: 0,
-    fan: 2,
-    fan_speed: 3,
-    air: 1,
-    acmode: 4,
-    air_power: 5,
-    led: 9,
-    led_power: 11
-}
 
 /**
  * 检测设备状态变化：将行为数据的字段值与 t_direct 表中记录的预期值对比。
@@ -45,6 +34,11 @@ async function detectAndRecordChanges(info, d_no) {
             `SELECT config_id, value, d_no FROM t_direct WHERE d_no = ? OR d_no IS NULL`,
             [d_no]
         )
+        const [configRows] = await promisePool.query(
+            `SELECT id, preffix, f_type
+             FROM t_direct_config
+             WHERE preffix IS NOT NULL AND preffix != ''`
+        )
 
         console.log('[BehaviorRealtime] t_direct 查询结果行数:', directRows.length)
 
@@ -70,7 +64,9 @@ async function detectAndRecordChanges(info, d_no) {
         let hasChanges = false
 
         // 遍历行为数据的每个字段，与 t_direct 的预期值对比
-        for (const [infoKey, configId] of Object.entries(FIELD_TO_CONFIG_ID)) {
+        for (const config of configRows) {
+            const infoKey = String(config.preffix).trim()
+            const configId = Number(config.id)
             // 设备可能只上报部分字段；缺失字段不能当成空字符串变化。
             if (!Object.prototype.hasOwnProperty.call(info, infoKey) || info[infoKey] == null) {
                 continue
@@ -83,7 +79,8 @@ async function detectAndRecordChanges(info, d_no) {
             }
 
             // 开关类型需要映射：t_direct 存 on/off，设备实际回报 open/close
-            const compareExpected = SWITCH_CONFIG_IDS.has(configId)
+            const isSwitch = String(config.f_type) === '1' || SWITCH_CONFIG_IDS.has(configId)
+            const compareExpected = isSwitch
                 ? (REVERSE_SWITCH_MAP[expectedVal] || expectedVal)
                 : expectedVal
 
@@ -100,7 +97,7 @@ async function detectAndRecordChanges(info, d_no) {
                 })
                 if (historyResult.success) {
                     // 接受设备实际状态为新的比较基准，防止每个上报包重复记录同一次变化。
-                    const storedValue = SWITCH_CONFIG_IDS.has(configId)
+                    const storedValue = isSwitch
                         ? (SWITCH_STORAGE_MAP[newVal] || newVal)
                         : newVal
                     await saveDirectData({ config_id: configId, value: storedValue, d_no })
@@ -143,25 +140,14 @@ async function saveBehaviorData(info) {
     // 从行为数据提取设备编号，不再硬编码
     const d_no = await getDeviceNo(info)
 
-    const params = [
-        d_no,
-        info.mode ?? null,
-        info.fan ?? null,
-        info.fan_speed ?? null,
-        info.air ?? null,
-        info.acmode ?? null,
-        info.air_power ?? null,
-        info.led ?? null,
-        info.led_power ?? null,
-        info.Time ?? null,
-       (String(info.online).trim() === '1' || info.online === true) ? '实时数据' : '保存数据'
-    ]
-
     try {
-        await promisePool.execute(
-            `INSERT INTO t_behavior_data (d_no, field1, field2, field3, field4, field5, field6, field7, field8, c_time, online) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            params
-        )
+        const mappedInfo = { ...info, d_no }
+        await saveMappedData({
+            table: 't_behavior_data',
+            mapperTable: 't_behavior_field_mapper',
+            info: mappedInfo,
+            dateTime: info.Time ?? null,
+        })
         console.log('[BehaviorRealtime] Data saved to database successfully, d_no:', d_no)
         
         // 保存成功后，检测状态变化并记录操作历史

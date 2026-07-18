@@ -1,23 +1,15 @@
 const promisePool = require('../../config/dbPool')
+const { saveMappedData } = require('../../utils/mappedData')
 
 async function saveSensorData(info) {
-    // Map MQTT fields into the sensor history table.
-    const params = [
-        info.VID ?? null,
-        info.Tin ?? null,
-        info.Tout ?? null,
-        info.LXin ?? null,
-        info.c_time ?? null,
-        // 先转成字符串，去掉两边空格，再进行比对；同时兼容布尔值 true
-        (String(info.online).trim() === '1' || info.online === true) ? '实时数据' : '保存数据'
-    ]
-
     try {
-        await promisePool.execute(
-            `INSERT INTO t_sensor_data (d_no, field1, field2, field3, c_time, online) VALUES (?, ?, ?, ?, ?, ?)`,
-            params
-        )
-        console.log('[SensorRealtime] Data saved to database successfully')
+        const result = await saveMappedData({
+            table: 't_sensor_data',
+            mapperTable: 't_sensor_field_mapper',
+            info,
+            dateTime: info.c_time ?? null,
+        })
+        console.log('[SensorRealtime] Data saved to database successfully:', result)
         return true
     } catch (err) {
         console.error('[SensorRealtime] Failed to save data:', err.message)
