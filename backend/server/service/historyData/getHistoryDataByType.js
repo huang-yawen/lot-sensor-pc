@@ -68,9 +68,9 @@ module.exports = async function getHistoryDataByType(query) {
         fieldUnit[item.db_name] = item.unit
     })
 
-    const searchMapper = ['id', 'd_no as 储运箱ID']
+    const searchMapper = ['id']
     if(dataTable=='t_sensor_data'){
-        searchMapper.push('pid as 物体编号')
+        searchMapper.push('d_no as 设备编号')
     }
     for (const key in fieldMapping) {
         searchMapper.push(`${key} AS \`${fieldMapping[key]}\``)

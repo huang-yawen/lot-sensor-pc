@@ -23,8 +23,8 @@ module.exports = async (req, res) => {
             fieldUnit[item.db_name] = item.unit
         })
 
-        const searchMapper = ['id', 'd_no AS 储运箱ID']
-        searchMapper.push('pid AS 物体编号')
+        const searchMapper = ['id']
+        searchMapper.push('d_no AS 设备编号')
         for (const key in fieldMapping) {
             searchMapper.push(`${key} AS \`${fieldMapping[key]}\``)
         }

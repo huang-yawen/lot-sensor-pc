@@ -65,7 +65,7 @@ const defaultConfig = {
   //  影响范围: SensorHistory、BehaviorHistory、
   //           SensorRealtime、BehaviorRealtime 的所有表格和卡片
   //
-  HIDE_ID_FIELDS: false,
+  HIDE_ID_FIELDS: true,
 
   // 【HIDE_NUMBER_FIELDS】隐藏编号字段
   //   true  = 在所有表格和卡片中隐藏编号列（如"电车编号ID"、"d_no"、"device_id"等）

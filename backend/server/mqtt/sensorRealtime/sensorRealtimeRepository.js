@@ -4,7 +4,6 @@ async function saveSensorData(info) {
     // Map MQTT fields into the sensor history table.
     const params = [
         info.VID ?? null,
-        info.PID ?? null,
         info.Tin ?? null,
         info.Tout ?? null,
         info.LXin ?? null,
@@ -15,7 +14,7 @@ async function saveSensorData(info) {
 
     try {
         await promisePool.execute(
-            `INSERT INTO t_sensor_data (d_no, pid,field1, field2, field3, c_time, online) VALUES (?, ?, ?, ?,?, ?,?)`,
+            `INSERT INTO t_sensor_data (d_no, field1, field2, field3, c_time, online) VALUES (?, ?, ?, ?, ?, ?)`,
             params
         )
         console.log('[SensorRealtime] Data saved to database successfully')
