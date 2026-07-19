@@ -6,6 +6,7 @@
  * 2. 提供消息发布功能
  * 3. 提供主题订阅功能
  * 4. 接收消息并交给路由器分发
+ * 5. 重连次数超限后优雅停止，不再无限重连
  * 
  * 使用方式：
  *   const mqttClient = require('./mqtt')
@@ -22,12 +23,16 @@ class MqttClient extends EventEmitter {
    * @param {string} config.url - Broker 地址，如 'mqtt://localhost:1883'
    * @param {Object} config.options - MQTT 连接选项
    * @param {Array} config.subscribeTopics - 要订阅的主题列表 [{ topic, qos }]
+   * @param {number} [config.maxReconnectAttempts=5] - 最大重连次数，超过后停止重连
    */
   constructor(config) {
     super()
     this.config = config
     this.isConnected = false
     this.client = null
+    this._reconnectCount = 0
+    this._maxReconnectAttempts = config.maxReconnectAttempts || 5
+    this._reconnectStopped = false
     this._connect()
   }
 
@@ -35,10 +40,18 @@ class MqttClient extends EventEmitter {
 
   /** 创建并连接 MQTT */
   _connect() {
-    this.client = mqtt.connect(this.config.url, this.config.options)
+    this._reconnectStopped = false
+    this._reconnectCount = 0
+
+    this.client = mqtt.connect(this.config.url, {
+      ...this.config.options,
+      // 用我们自己控制的重连逻辑，禁止 mqtt.js 内置的无限重连
+      reconnectPeriod: 0
+    })
 
     this.client.on('connect', () => {
       this.isConnected = true
+      this._reconnectCount = 0
       console.log('[MQTT] 已连接')
       this._subscribeAll()
       this.emit('connected')
@@ -52,10 +65,19 @@ class MqttClient extends EventEmitter {
     this.client.on('close', () => {
       this.isConnected = false
       console.log('[MQTT] 连接已关闭')
+
+      // 连接关闭后，如果还没停止重连，尝试重连
+      if (!this._reconnectStopped) {
+        this._scheduleReconnect()
+      }
     })
 
-    this.client.on('reconnect', () => {
-      console.log('[MQTT] 正在重连...')
+    this.client.on('offline', () => {
+      this.isConnected = false
+      console.log('[MQTT] 离线')
+      if (!this._reconnectStopped) {
+        this._scheduleReconnect()
+      }
     })
 
     // 收到消息 -> 触发事件，由 messageRouter 处理
@@ -64,12 +86,58 @@ class MqttClient extends EventEmitter {
     })
   }
 
+  /** 安排一次重连 */
+  _scheduleReconnect() {
+    if (this._reconnectStopped) return
+
+    this._reconnectCount++
+    console.log(`[MQTT] 正在重连... (第 ${this._reconnectCount}/${this._maxReconnectAttempts} 次)`)
+
+    if (this._reconnectCount > this._maxReconnectAttempts) {
+      this._stopReconnecting()
+      return
+    }
+
+    // 指数退避：1s, 2s, 4s, 8s, 16s ... 最大 30 秒
+    const delay = Math.min(1000 * Math.pow(2, this._reconnectCount - 1), 30000)
+    setTimeout(() => {
+      if (this._reconnectStopped) return
+      if (this.client && !this.client.connected) {
+        this.client.reconnect()
+      }
+    }, delay)
+  }
+
+  /** 停止所有重连尝试 */
+  _stopReconnecting() {
+    if (this._reconnectStopped) return
+    this._reconnectStopped = true
+    console.warn(`[MQTT] 已达到最大重连次数 (${this._maxReconnectAttempts})，停止重连`)
+    console.warn('[MQTT] 请检查 MQTT Broker (Mosquitto) 是否已启动')
+    this.isConnected = false
+    this.emit('reconnect_failed')
+  }
+
+  /** 手动触发重新连接（例如在用户启动 MQTT Broker 后可调用） */
+  reconnect() {
+    this._reconnectCount = 0
+    this._reconnectStopped = false
+    if (this.client) {
+      this.client.end(true)
+    }
+    this._connect()
+    console.log('[MQTT] 手动触发重新连接...')
+  }
+
   /** 订阅所有配置的主题 */
   _subscribeAll() {
     const topics = {}
     for (const item of this.config.subscribeTopics) {
       topics[item.topic] = { qos: item.qos || 0 }
     }
+
+    if (Object.keys(topics).length === 0) return
+
     this.client.subscribe(topics, (err) => {
       if (err) {
         console.error('[MQTT] 订阅失败:', err.message)
@@ -112,6 +180,7 @@ class MqttClient extends EventEmitter {
 
   /** 断开连接 */
   disconnect() {
+    this._reconnectStopped = true
     if (this.client) {
       this.client.end(true)
       this.client = null

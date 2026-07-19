@@ -175,11 +175,17 @@ setInterval(() => {
     broadcast('device_status', deviceStatus);
 }, 2000);
 
+// 监听 MQTT 重连失败事件，优雅降级
+mqttClient.on('reconnect_failed', () => {
+    console.warn('⚠️  MQTT 重连失败，已停止重连。WebSocket 仍可正常提供 API 服务。');
+    console.warn('⚠️  当 MQTT Broker (Mosquitto) 启动后，可调用 /api/system-config 或重启后端恢复连接。');
+});
+
 // 检查 MQTT 初始连接状态
 setTimeout(() => {
     if (mqttClient.isConnected) {
         console.log('✅ MQTT 连接成功！');
-    } else {
+    } else if (!mqttClient._reconnectStopped) {
         console.warn('⚠️  MQTT 尚未连接，可能正在重连或 Broker 未运行');
     }
 }, 5000);
