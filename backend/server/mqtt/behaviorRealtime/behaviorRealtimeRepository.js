@@ -2,10 +2,9 @@ const promisePool = require('../../config/dbPool')
 const { saveMappedData } = require('../../utils/mappedData')
 const { saveOperationHistory } = require('../../service/operationHistory/saveOperationHistory')
 const { saveDirectData } = require('../../service/directData/saveDirectConfig')
+const { getDeviceNo: getConfiguredDeviceNo, getReportedTime, toWireValue, fromWireValue } = require('../../utils/protocol')
 
 /** 开关类型指令（config_id=0,1,2,4,9），t_direct 存 on/off，MQTT 发 open/close */
-const REVERSE_SWITCH_MAP = { on: 'open', off: 'close' }
-const SWITCH_STORAGE_MAP = { open: 'on', close: 'off' }
 const SWITCH_CONFIG_IDS = new Set([0, 1, 2, 4, 9])
 
 /**
@@ -81,7 +80,7 @@ async function detectAndRecordChanges(info, d_no) {
             // 开关类型需要映射：t_direct 存 on/off，设备实际回报 open/close
             const isSwitch = String(config.f_type) === '1' || SWITCH_CONFIG_IDS.has(configId)
             const compareExpected = isSwitch
-                ? (REVERSE_SWITCH_MAP[expectedVal] || expectedVal)
+                ? String(toWireValue(expectedVal))
                 : expectedVal
 
             // 如果 t_direct 中有这个配置的预期值，且与实际值不同
@@ -93,12 +92,12 @@ async function detectAndRecordChanges(info, d_no) {
                     old_value: expectedVal,
                     new_value: newVal,
                     source: 'auto',
-                    c_time: info.Time || null
+                    c_time: getReportedTime(info) || null
                 })
                 if (historyResult.success) {
                     // 接受设备实际状态为新的比较基准，防止每个上报包重复记录同一次变化。
                     const storedValue = isSwitch
-                        ? (SWITCH_STORAGE_MAP[newVal] || newVal)
+                        ? fromWireValue(newVal)
                         : newVal
                     await saveDirectData({ config_id: configId, value: storedValue, d_no })
                     expectedValues[configId] = storedValue
@@ -119,9 +118,8 @@ async function detectAndRecordChanges(info, d_no) {
  * 从行为数据中提取设备编号，优先级：info.VID > info.d_no > info.DNO > 从 t_device 表取第一个
  */
 async function getDeviceNo(info) {
-    if (info.VID) return String(info.VID).trim()
-    if (info.d_no) return String(info.d_no).trim()
-    if (info.DNO) return String(info.DNO).trim()
+    const reported = getConfiguredDeviceNo(info)
+    if (reported != null) return String(reported).trim()
     // 从 t_device 表取第一个设备编号
     try {
         const [rows] = await promisePool.query(
@@ -146,7 +144,7 @@ async function saveBehaviorData(info) {
             table: 't_behavior_data',
             mapperTable: 't_behavior_field_mapper',
             info: mappedInfo,
-            dateTime: info.Time ?? null,
+            dateTime: getReportedTime(info) ?? null,
         })
         console.log('[BehaviorRealtime] Data saved to database successfully, d_no:', d_no)
         

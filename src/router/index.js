@@ -44,6 +44,14 @@ const routes=[
                 path:'/error-info',
                 component:()=>import('@/views/ErrorInfo.vue'),
                 meta: { title: '故障记录' }         
+            },{
+                path:'/judgment-history',
+                component:()=>import('@/views/JudgmentHistory.vue'),
+                meta: { title: '智能判定记录' }
+            },{
+                path:'/scene-config',
+                component:()=>import('@/views/SceneConfig.vue'),
+                meta: { title: '场景配置' }
             }
         ]
     }

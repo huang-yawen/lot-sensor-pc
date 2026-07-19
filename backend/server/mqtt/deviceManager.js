@@ -22,10 +22,12 @@
  */
 
 const promisePool = require('../config/dbPool')
-const { saveDirectData } = require('../service/directData/saveDirectConfig')
+const { saveDirectData, getDirectValue } = require('../service/directData/saveDirectConfig')
+const { saveOperationHistory } = require('../service/operationHistory/saveOperationHistory')
 const systemConfig = require('../config/systemConfig')
 const fs = require('fs')
 const path = require('path')
+const { toWireValue, getTopic } = require('../utils/protocol')
 
 const configIdMapping = {
   0: 'mode', 1: 'air', 2: 'fan', 3: 'speed_fan', 4: 'acMode',
@@ -277,13 +279,24 @@ class DeviceManager {
       for (const cmd of [...commands]) {
         const payload = await this._buildPayload(cmd.config_id, cmd.value)
         if (payload) {
+          const oldValue = await getDirectValue({ config_id: cmd.config_id, d_no: deviceId })
           // 每条指令发送两次以确保设备可靠接收
-          await this.mqttClient.publish('control', payload)
+          await this.mqttClient.publish(getTopic('control'), payload)
           await new Promise(resolve => setTimeout(resolve, 200))
-          await this.mqttClient.publish('control', payload)
+          await this.mqttClient.publish(getTopic('control'), payload)
 
           // 发送成功后保存到数据库
           await saveDirectData({ config_id: cmd.config_id, value: cmd.value, d_no: deviceId })
+          const historyResult = await saveOperationHistory({
+            d_no: deviceId,
+            config_id: Number(cmd.config_id),
+            old_value: oldValue,
+            new_value: cmd.value,
+            source: 'manual_queued'
+          })
+          if (!historyResult.success) {
+            console.error(`[DeviceManager] 离线补发历史记录失败 (config_id=${cmd.config_id}):`, historyResult.error)
+          }
           const remaining = (this._pendingCommands.get(deviceId) || []).filter(
             (item) => String(item.config_id) !== String(cmd.config_id)
           )
@@ -323,10 +336,20 @@ class DeviceManager {
 
     try {
       // 时间校准发送两次以确保设备可靠接收
-      await this.mqttClient.publish('control', payload)
+      await this.mqttClient.publish(getTopic('control'), payload)
       await new Promise(resolve => setTimeout(resolve, 200))
-      await this.mqttClient.publish('control', payload)
+      await this.mqttClient.publish(getTopic('control'), payload)
       console.log(`[DeviceManager] 设备 ${deviceId} 时间校准已发送（两次）`)
+      const historyResult = await saveOperationHistory({
+        d_no: deviceId,
+        config_id: 14,
+        old_value: null,
+        new_value: timeStr,
+        source: 'calibration'
+      })
+      if (!historyResult.success) {
+        console.error('[DeviceManager] 校时历史记录失败:', historyResult.error)
+      }
     } catch (err) {
       console.error(`[DeviceManager] 时间校准发送失败:`, err.message)
     }
@@ -359,10 +382,9 @@ class DeviceManager {
 
     // 开关类型值映射（on->open, off->close）
     const SWITCH_TYPES = [0, 1, 2, 4, 9]
-    const VALUE_MAP = { on: 'open', off: 'close' }
     const isSwitch = String(rows[0]?.f_type) === '1' || SWITCH_TYPES.includes(Number(configId))
-    const mappedValue = isSwitch && VALUE_MAP[value]
-      ? VALUE_MAP[value]
+    const mappedValue = isSwitch
+      ? toWireValue(value)
       : String(value)
 
     return { [propertyName]: mappedValue }

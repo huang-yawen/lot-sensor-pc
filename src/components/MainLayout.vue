@@ -19,9 +19,12 @@
 <script setup>
 import SideBar from '@/components/SideBar.vue'
 import TopNav from '@/components/TopNav.vue'
+import { DisplayStore } from '@/stores/DisplayStore'
 
-import { ref } from 'vue'
+import { ref, onMounted } from 'vue'
 const activeIndex = ref('2')
+const displayStore = DisplayStore()
+onMounted(() => displayStore.loadDisplayConfig().catch(error => console.error('[DisplayConfig] 加载失败:', error)))
 </script>
 
 <style scoped>

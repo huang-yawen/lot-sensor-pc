@@ -4,6 +4,21 @@
 SET NAMES utf8mb4;
 START TRANSACTION;
 
+CREATE TABLE IF NOT EXISTS t_judgment_record (
+  id BIGINT NOT NULL AUTO_INCREMENT,
+  d_no VARCHAR(64) NULL,
+  data_type VARCHAR(32) NOT NULL,
+  source_ids VARCHAR(1000) NULL,
+  request_body LONGTEXT NULL,
+  response_body LONGTEXT NULL,
+  conclusion VARCHAR(255) NULL,
+  confidence DECIMAL(8,4) NULL,
+  status VARCHAR(32) NOT NULL,
+  error_message VARCHAR(1000) NULL,
+  c_time DATETIME NOT NULL,
+  PRIMARY KEY (id), KEY idx_judgment_time (c_time), KEY idx_judgment_device (d_no)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+
 CREATE TABLE IF NOT EXISTS t_sensor_field_mapper_before_water LIKE t_sensor_field_mapper;
 INSERT IGNORE INTO t_sensor_field_mapper_before_water SELECT * FROM t_sensor_field_mapper;
 CREATE TABLE IF NOT EXISTS t_behavior_field_mapper_before_water LIKE t_behavior_field_mapper;
@@ -12,20 +27,20 @@ CREATE TABLE IF NOT EXISTS t_direct_config_before_water LIKE t_direct_config;
 INSERT IGNORE INTO t_direct_config_before_water SELECT * FROM t_direct_config;
 
 INSERT INTO t_sensor_field_mapper (id, f_name, db_name, p_name, unit, type, visible) VALUES
-  (1, '进水温度', 'field1', 'Tin',      '℃',     '1', '1'),
-  (2, '出水温度', 'field2', 'Tout',     '℃',     '1', '1'),
-  (3, '管路流量', 'field3', 'Flow',     'L/min',  '1', '1'),
-  (4, '管路压力', 'field4', 'Pressure', 'kPa',    '1', '1')
+  (1, '进水温度', 'field1', 'Tin|inlet_temperature|temp_in',      '℃',     '1', '1'),
+  (2, '出水温度', 'field2', 'Tout|outlet_temperature|temp_out',   '℃',     '1', '1'),
+  (3, '管路流量', 'field3', 'Flow|flow|flow_rate',                 'L/min',  '1', '1'),
+  (4, '管路压力', 'field4', 'Pressure|pressure',                   'kPa',    '1', '1')
 ON DUPLICATE KEY UPDATE
   f_name = VALUES(f_name), db_name = VALUES(db_name), p_name = VALUES(p_name),
   unit = VALUES(unit), type = VALUES(type), visible = VALUES(visible);
 UPDATE t_sensor_field_mapper SET visible = '0' WHERE id NOT IN (1, 2, 3, 4);
 
 INSERT INTO t_behavior_field_mapper (id, f_name, db_name, p_name, unit, type, visible) VALUES
-  (1, '水泵状态',   'field1', 'pump',        '', '1', '1'),
-  (2, '加热状态',   'field2', 'heater',      '', '1', '1'),
-  (3, '进水继电器', 'field3', 'inlet_valve', '', '1', '1'),
-  (4, '排水继电器', 'field4', 'drain_valve', '', '1', '1')
+  (1, '水泵状态',   'field1', 'pump|water_pump',          '', '1', '1'),
+  (2, '加热状态',   'field2', 'heater|heating',           '', '1', '1'),
+  (3, '进水继电器', 'field3', 'inlet_valve|inlet_relay',  '', '1', '1'),
+  (4, '排水继电器', 'field4', 'drain_valve|drain_relay',  '', '1', '1')
 ON DUPLICATE KEY UPDATE
   f_name = VALUES(f_name), db_name = VALUES(db_name), p_name = VALUES(p_name),
   unit = VALUES(unit), type = VALUES(type), visible = VALUES(visible);
@@ -51,4 +66,3 @@ VALUES
 DELETE FROM t_direct;
 
 COMMIT;
-

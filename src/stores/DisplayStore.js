@@ -14,12 +14,21 @@
 
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
+import api from '@/api'
 
 export const DisplayStore = defineStore('displayStore', () => {
   // 字段可见性现在由后端 systemConfig.js 统一控制，
   // 前端不再提供切换按钮，默认全部显示。
   const hideIdFields = ref(false)
   const hideNumberFields = ref(false)
+
+  const loadDisplayConfig = async () => {
+    const response = await api.get('/api/system-config')
+    if (response.data?.success) {
+      hideIdFields.value = response.data.data.HIDE_ID_FIELDS === true
+      hideNumberFields.value = response.data.data.HIDE_NUMBER_FIELDS === true
+    }
+  }
 
   const isIdField = (key) => String(key).trim().toLowerCase() === 'id'
 
@@ -40,5 +49,6 @@ export const DisplayStore = defineStore('displayStore', () => {
     hideIdFields,
     hideNumberFields,
     isFieldVisible,
+    loadDisplayConfig,
   }
 })

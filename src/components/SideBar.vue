@@ -2,7 +2,7 @@
     <div class="container">
         <el-row class="tac">
             <el-col :span="24">
-                <h4 style="text-align: center;">物联网数据管理中心</h4>
+                <h4 style="text-align: center;">{{ config.SYSTEM_TITLE }}</h4>
                 <el-menu
                     :default-active="activeMenu"
                     :default-openeds="openedMenus"
@@ -20,7 +20,7 @@
                             <el-icon>
                                 <Odometer />
                             </el-icon>
-                            <span>传感器数据</span>
+                            <span>{{ terms.sensor }}</span>
                         </template>
                         <el-menu-item index="/sensor-realtime" to="/sensor-realtime">
                             <el-icon><Promotion /></el-icon>
@@ -36,7 +36,7 @@
                             <el-icon>
                                 <Location />
                             </el-icon>
-                            <span>行为数据</span>
+                            <span>{{ terms.behavior }}</span>
                         </template>
                         <el-menu-item index="/behavior-realtime" to="/behavior-realtime">
                             <el-icon><Promotion /></el-icon>
@@ -52,7 +52,7 @@
                             <el-icon>
                                 <View />
                             </el-icon>
-                            <span>设备数据</span>
+                            <span>{{ terms.device }}</span>
                         </template>
                         <!-- <el-menu-item index="/device-management">
                             <el-icon><Grid /></el-icon>
@@ -71,7 +71,15 @@
                         <el-icon>
                             <Document />
                         </el-icon>
-                        <span>故障记录</span>
+                            <span>{{ terms.alarm }}</span>
+                    </el-menu-item>
+                    <el-menu-item v-if="config.ENABLE_JUDGMENT_HISTORY" index="/judgment-history" to="/judgment-history">
+                        <el-icon><Document /></el-icon>
+                        <span>{{ terms.judgment }}记录</span>
+                    </el-menu-item>
+                    <el-menu-item index="/scene-config" to="/scene-config">
+                        <el-icon><Setting /></el-icon>
+                        <span>场景配置</span>
                     </el-menu-item>
                 </el-menu>
             </el-col>
@@ -80,10 +88,15 @@
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
+import { useSystemConfigStore } from '@/stores/SystemConfigStore'
 
 const route = useRoute()
+const systemStore = useSystemConfigStore()
+const config = computed(() => systemStore.config)
+const terms = computed(() => systemStore.config.TERMINOLOGY || {})
+onMounted(() => systemStore.load().catch(error => console.error('[SideBar] 配置加载失败:', error)))
 
 const menuParents = {
     '/sensor-realtime': '1',

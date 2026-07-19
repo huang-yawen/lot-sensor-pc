@@ -19,3 +19,19 @@ behavioral_data
 
 指令下发的 JSON 属性名取自 `t_direct_config.preffix`。例如循环水泵配置的 `preffix=pump`，开启时下发 `{"pump":"open"}`。
 
+## 现场适配（推荐）
+
+启动前后端后进入“场景配置”页面，导出一份完整 JSON 作为备份。现场通常只需修改：
+
+- `config.MQTT_URL`、`config.MQTT_TOPICS` 和 `config.MQTT_QOS`
+- `config.DEVICE_ID_FIELDS`、`config.TIME_FIELDS`
+- `config.CONTROL_VALUE_MAP`（例如 `on/off` 是否需要转成 `open/close`）
+- `config.INTELLIGENT_JUDGMENT` 的地址、请求模板和返回字段路径
+- `metadata.t_sensor_field_mapper`、`metadata.t_behavior_field_mapper` 中的 `p_name`
+- `metadata.t_direct_config` 中的控制属性名 `preffix`
+
+`p_name` 支持用 `|` 写多个别名，例如 `Tin|inlet_temperature|temp_in`。场景包导入时会校验配置，三张元数据表在同一个数据库事务中更新；失败不会留下半套配置。
+
+自动联锁默认关闭（`ENABLE_AUTO_INTERLOCK=false`），防止设备接线和高低电平含义尚未确认时误动作。本地阈值告警默认开启，规则位于 `ALARM_RULES`。
+
+智能判定服务未启用时只运行确定性的本地占位判定，并在结果中标记 `mock=true`。比赛现场确认接口后，将 `INTELLIGENT_JUDGMENT.enabled` 改为 `true`；支持 `batch` 和 `single` 两种请求模式，所有成功、失败和 Mock 结果都会写入 `t_judgment_record`。

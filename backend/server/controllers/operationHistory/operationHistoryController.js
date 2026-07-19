@@ -6,6 +6,7 @@
 
 const promisePool = require('../../config/dbPool')
 const { getOperationHistory } = require('../../service/operationHistory/getOperationHistory')
+const { ensureOperationHistoryTable } = require('../../service/operationHistory/saveOperationHistory')
 
 // GET /api/operation-history — 获取操作历史列表
 const getHistoryList = async (req, res) => {
@@ -39,6 +40,7 @@ const getHistoryList = async (req, res) => {
 // GET /api/operation-history/configs — 获取指令配置下拉选项
 const getConfigOptions = async (req, res) => {
   try {
+    await ensureOperationHistoryTable()
     const [rows] = await promisePool.query(
       `SELECT id, t_name FROM t_direct_config ORDER BY id ASC`
     )

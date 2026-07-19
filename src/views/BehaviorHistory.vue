@@ -22,7 +22,7 @@
           :disabled="selectedRows.length === 0"
           @click="handleRecognize"
         >
-          智能识别
+          智能判定
         </el-button>
       </template>
     </TableContainer>
@@ -30,7 +30,7 @@
     <!-- 识别结果对话框（原始数据展示） -->
     <el-dialog
       v-model="dialogVisible"
-      title="智能识别结果"
+      title="智能判定结果"
       width="700px"
       :close-on-click-modal="false"
     >
@@ -75,16 +75,16 @@ const onSelectionChange = (selection) => {
   selectedRows.value = selection
 }
 
-// 智能识别——调用后端智能判定接口
+// 调用后端智能判定接口
 const handleRecognize = async () => {
   if (selectedRows.value.length === 0) {
-    ElMessage.warning('请先勾选需要识别的行为数据')
+    ElMessage.warning('请先勾选需要判定的运行数据')
     return
   }
   recognizing.value = true
   try {
     const ids = selectedRows.value.map(item => item.id)
-    const res = await api.post('/intelligent/recognize', {
+    const res = await api.post('/intelligent/judge', {
       type: 'behavior',
       ids: ids
     })
@@ -92,11 +92,11 @@ const handleRecognize = async () => {
       recognizeResult.value = res.data.data
       dialogVisible.value = true
     } else {
-      ElMessage.error(res.data.message || '识别失败')
+      ElMessage.error(res.data.message || '判定失败')
     }
   } catch (err) {
-    console.error('[BehaviorHistory] 智能识别失败:', err)
-    ElMessage.error('识别请求失败，请稍后重试')
+    console.error('[BehaviorHistory] 智能判定失败:', err)
+    ElMessage.error(err.response?.data?.message || '判定请求失败，请稍后重试')
   } finally {
     recognizing.value = false
   }
@@ -140,7 +140,7 @@ const handleSizeChange = (size) => {
 }
 
 onMounted(async () => {
-  // 从后端获取系统配置，决定是否显示智能识别按钮
+  // 从后端获取系统配置，决定是否显示智能判定按钮
   try {
     const res = await api.get('/api/system-config')
     if (res.data.success) {

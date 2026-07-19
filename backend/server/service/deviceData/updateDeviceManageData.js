@@ -6,7 +6,7 @@ const promisePool = require('../../config/dbPool')
  * @param {number} data.oldId - 原设备ID
  * @param {number} data.id - 新设备ID
  * @param {string} data['设备名称'] - 设备名称
- * @param {string} data['电车编号id'] - 电车编号
+ * @param {string} data['设备编号'] - 设备编号
  * @param {string} [data['备注']] - 备注
  * @returns {Promise<{success: boolean, message: string}>}
  */
@@ -14,14 +14,14 @@ module.exports = async (data) => {
     const oldId = Number(data.oldId)
     const newId = Number(data.id)
     const deviceName = data['设备名称'] ?? ''
-    const number = data['电车编号id'] ?? ''
+    const number = data['设备编号'] ?? data['电车编号id'] ?? ''
     const remarks = data['备注'] ?? null
 
     if (isNaN(oldId)) {
         return { success: false, message: 'oldId 无效' }
     }
     if (!deviceName || !number) {
-        return { success: false, message: '设备名称和电车编号id 不能为空' }
+        return { success: false, message: '设备名称和设备编号不能为空' }
     }
     if (!Number.isInteger(newId)) {
         return { success: false, message: 'id 无效' }

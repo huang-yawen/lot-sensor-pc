@@ -24,6 +24,10 @@ class MessageRouter {
     this.handlers.set(topic, handler)
   }
 
+  clear() {
+    this.handlers.clear()
+  }
+
   /**
    * 路由消息到对应的处理器
    * @param {string} topic - 原始主题

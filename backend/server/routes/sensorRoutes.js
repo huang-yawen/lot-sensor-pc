@@ -21,6 +21,7 @@ const getDirectConfigRender = require('../controllers/direct/directConfigRender'
 
 // 智能判定控制器
 const intelligentRecognize = require('../controllers/intelligent/recognize')
+const judgmentRecords = require('../controllers/intelligent/records')
 
 // 操作历史控制器
 const operationHistoryController = require('../controllers/operationHistory/operationHistoryController')
@@ -49,6 +50,8 @@ router.get('/errTypeStats', getErrorTypeStats)
 
 // 智能判定接口
 router.post('/intelligent/recognize', intelligentRecognize)
+router.post('/intelligent/judge', intelligentRecognize)
+router.get('/intelligent/records', judgmentRecords)
 
 // 操作历史接口
 router.get('/api/operation-history', operationHistoryController.getHistoryList)

@@ -13,7 +13,7 @@
       
       <!-- 设备选择器（单设备模式隐藏） -->
       <div class="device-selector" v-if="!hideDevicePicker">
-        <span class="selector-label">电车编号ID：</span>
+        <span class="selector-label">设备编号：</span>
         <el-dropdown @command="handleCommand" trigger="click">
           <span class="el-dropdown-link">
             {{ selectedDeviceId || '请选择设备' }}
@@ -61,7 +61,7 @@ const loading = ref(false)
 const hideDevicePicker = computed(() => {
   if (singleDeviceMode.value) return true
   // 多设备模式：根据字段可见性配置决定
-  return !displayStore.isFieldVisible('电车编号ID')
+  return !displayStore.isFieldVisible('设备编号')
 })
 
 const handleCommand = (command) => {

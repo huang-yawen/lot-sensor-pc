@@ -26,9 +26,10 @@
 
 const promisePool = require('../../config/dbPool')
 const mqttClient = require('../../mqtt')
-const { saveDirectData } = require('./saveDirectConfig')
+const { saveDirectData, getDirectValue } = require('./saveDirectConfig')
 const { saveOperationHistory } = require('../operationHistory/saveOperationHistory')
 const systemConfig = require('../../config/systemConfig')
+const { toWireValue, getTopic } = require('../../utils/protocol')
 
 // ============================================================
 // 【模式切换变量】SINGLE_DEVICE_MODE
@@ -53,8 +54,6 @@ const CONFIG_MAP = {
 const SWITCH_IDS = [0, 1, 2, 4, 9]
 
 /** 开关值映射 */
-const SWITCH_MAP = { on: 'open', off: 'close' }
-
 /**
  * 构建 MQTT 消息 payload
  * 所有值统一转为字符串，确保整体为 JSON 格式
@@ -80,8 +79,8 @@ async function buildPayload(configId, value) {
 
   // 开关类型值映射（on->open, off->close）
   const isSwitch = String(rows[0]?.f_type) === '1' || SWITCH_IDS.includes(Number(configId))
-  const mappedValue = isSwitch && SWITCH_MAP[value]
-    ? SWITCH_MAP[value]
+  const mappedValue = isSwitch
+    ? toWireValue(value)
     : String(value)
 
   return { [key]: mappedValue }
@@ -167,7 +166,7 @@ module.exports = async (req, res) => {
     // 4. 设备在线 -> 先发送指令（发送两次以确保设备可靠接收）
     try {
       // 第一次发送
-      const firstPublish = await mqttClient.publish('control', payload)
+      const firstPublish = await mqttClient.publish(getTopic('control'), payload)
       if (firstPublish.status !== 'published') {
         throw new Error(`MQTT 第一次发送未成功: ${firstPublish.status}`)
       }
@@ -175,7 +174,7 @@ module.exports = async (req, res) => {
 
       // 第二次发送（间隔 200ms，确保设备可靠接收）
       await new Promise(resolve => setTimeout(resolve, 200))
-      const secondPublish = await mqttClient.publish('control', payload)
+      const secondPublish = await mqttClient.publish(getTopic('control'), payload)
       if (secondPublish.status !== 'published') {
         throw new Error(`MQTT 第二次发送未成功: ${secondPublish.status}`)
       }
@@ -185,22 +184,29 @@ module.exports = async (req, res) => {
       // 单设备模式：保存时传入设备号，保存为设备专属配置
       // 多设备模式：保存时传入原始 d_no（null=全局，设备号=设备专属）
       const saveDNo = singleDeviceMode ? deviceId : d_no
+      const oldValue = await getDirectValue({ config_id, d_no: saveDNo })
       const saveResult = await saveDirectData({ config_id, value, d_no: saveDNo })
       console.log('[DirectUpdate] 数据库保存成功:', saveResult)
 
       // 记录操作历史（手动指令下发）
       // 只存 config_id + new_value，操作名称和值含义通过 JOIN t_direct_config 获取
-      await saveOperationHistory({
+      const historyResult = await saveOperationHistory({
         d_no: deviceId || saveDNo,
         config_id: Number(config_id),
+        old_value: oldValue,
         new_value: String(value),
         source: 'manual'
       })
 
+      const historyMessage = historyResult.skipped
+        ? '指令已发送并保存；当前配置不记录软件操作历史'
+        : historyResult.success
+          ? '指令已发送、保存并记录操作历史'
+          : '指令已发送并保存，但操作历史记录失败'
       return res.json({
         success: true,
-        message: '指令已发送并保存到数据库（已发送两次以确保接收）',
-        data: { db: saveResult, status: 'published' }
+        message: historyMessage,
+        data: { db: saveResult, status: 'published', history: historyResult }
       })
     } catch (err) {
       console.error('[DirectUpdate] MQTT 发送失败:', err.message)

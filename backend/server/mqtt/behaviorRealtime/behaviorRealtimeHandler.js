@@ -1,4 +1,6 @@
 const { saveBehaviorData } = require('./behaviorRealtimeRepository')
+const { getReportedTime, getTopic } = require('../../utils/protocol')
+const { evaluateRules } = require('../../service/alarm/evaluateRules')
 
 const BEHAVIOR_TOPIC = 'behavioral_data'
 
@@ -49,7 +51,7 @@ function normalizeDateTime(value) {
 }
 
 async function handleMessage(topic, payload) {
-    if (topic !== BEHAVIOR_TOPIC) {
+    if (topic !== getTopic('behavior')) {
         return null
     }
 
@@ -58,12 +60,14 @@ async function handleMessage(topic, payload) {
         return null
     }
 
-    info.c_time = normalizeDateTime(info.Time) || formatDateTime(new Date())
+    info.c_time = normalizeDateTime(getReportedTime(info)) || formatDateTime(new Date())
 
     console.log('[BehaviorRealtime] Received message:', { topic, data: info })
 
     try {
         await saveBehaviorData(info)
+        const alarms = await evaluateRules(info)
+        if (alarms.length) info._alarms = alarms
         return info
     } catch (err) {
         console.error('[BehaviorRealtime] Error processing message:', err.message)

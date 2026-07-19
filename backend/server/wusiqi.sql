@@ -66,10 +66,10 @@ CREATE TABLE `t_sensor_field_mapper`  (
 -- ----------------------------
 -- Records of t_sensor_field_mapper  传感器数据映射表
 -- ----------------------------
-INSERT INTO `t_sensor_field_mapper` VALUES (1, '进水温度', 'field1', 'Tin', '℃', '1', '1');
-INSERT INTO `t_sensor_field_mapper` VALUES (2, '出水温度', 'field2', 'Tout', '℃', '1', '1');
-INSERT INTO `t_sensor_field_mapper` VALUES (3, '管路流量', 'field3', 'Flow', 'L/min', '1', '1');
-INSERT INTO `t_sensor_field_mapper` VALUES (4, '管路压力', 'field4', 'Pressure', 'kPa', '1', '1');
+INSERT INTO `t_sensor_field_mapper` VALUES (1, '进水温度', 'field1', 'Tin|inlet_temperature|temp_in', '℃', '1', '1');
+INSERT INTO `t_sensor_field_mapper` VALUES (2, '出水温度', 'field2', 'Tout|outlet_temperature|temp_out', '℃', '1', '1');
+INSERT INTO `t_sensor_field_mapper` VALUES (3, '管路流量', 'field3', 'Flow|flow|flow_rate', 'L/min', '1', '1');
+INSERT INTO `t_sensor_field_mapper` VALUES (4, '管路压力', 'field4', 'Pressure|pressure', 'kPa', '1', '1');
 
 -- ----------------------------
 -- Table structure for t_behavior_data  行为数据    
@@ -119,10 +119,10 @@ CREATE TABLE `t_behavior_field_mapper`  (
 -- ----------------------------
 -- Records of t_behavior_field_mapper
 -- ----------------------------
-INSERT INTO `t_behavior_field_mapper` VALUES (1, '水泵状态', 'field1', 'pump', '', '1', '1');
-INSERT INTO `t_behavior_field_mapper` VALUES (2, '加热状态', 'field2', 'heater', '', '1', '1');
-INSERT INTO `t_behavior_field_mapper` VALUES (3, '进水继电器', 'field3', 'inlet_valve', '', '1', '1');
-INSERT INTO `t_behavior_field_mapper` VALUES (4, '排水继电器', 'field4', 'drain_valve', NULL, '1', '1');
+INSERT INTO `t_behavior_field_mapper` VALUES (1, '水泵状态', 'field1', 'pump|water_pump', '', '1', '1');
+INSERT INTO `t_behavior_field_mapper` VALUES (2, '加热状态', 'field2', 'heater|heating', '', '1', '1');
+INSERT INTO `t_behavior_field_mapper` VALUES (3, '进水继电器', 'field3', 'inlet_valve|inlet_relay', '', '1', '1');
+INSERT INTO `t_behavior_field_mapper` VALUES (4, '排水继电器', 'field4', 'drain_valve|drain_relay', NULL, '1', '1');
 
 -- ----------------------------
 -- Table structure for t_device
@@ -133,7 +133,7 @@ CREATE TABLE `t_device`  (
   `device_name` varchar(255) CHARACTER SET utf8 COLLATE utf8_general_ci NOT NULL COMMENT '设备名称',
   `remarks` varchar(255) CHARACTER SET utf8 COLLATE utf8_general_ci NULL DEFAULT NULL COMMENT '备注',
   `ctime` datetime NULL DEFAULT NULL COMMENT '创建时间',
-  `number` varchar(255) CHARACTER SET utf8 COLLATE utf8_general_ci NULL DEFAULT NULL COMMENT '电车编号id（唯一）',
+  `number` varchar(255) CHARACTER SET utf8 COLLATE utf8_general_ci NULL DEFAULT NULL COMMENT '设备编号（唯一）',
   PRIMARY KEY (`id`) USING BTREE
 ) ENGINE = InnoDB CHARACTER SET = utf8 COLLATE = utf8_general_ci ROW_FORMAT = Compact;
 
@@ -185,6 +185,24 @@ INSERT INTO `t_direct_config` VALUES (8, 0, 'on', '压力上限阈值', '2', NUL
 INSERT INTO `t_direct_config` VALUES (14, 0, 'off&on', '校准时间', '6', NULL, NULL, NULL, NULL, '14', 'control', 'calibrate', NULL);
 
 -- ----------------------------
+-- Table structure for t_operation_history
+-- ----------------------------
+DROP TABLE IF EXISTS `t_operation_history`;
+CREATE TABLE `t_operation_history` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `d_no` varchar(64) DEFAULT NULL,
+  `config_id` int(11) DEFAULT NULL,
+  `old_value` varchar(255) DEFAULT NULL,
+  `new_value` varchar(255) DEFAULT NULL,
+  `source` varchar(32) DEFAULT NULL COMMENT 'manual/manual_queued/interlock/calibration/auto',
+  `c_time` datetime DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  KEY `idx_d_no` (`d_no`),
+  KEY `idx_c_time` (`c_time`),
+  KEY `idx_config_id` (`config_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+
+-- ----------------------------
 -- Table structure for t_error_msg
 -- ----------------------------
 DROP TABLE IF EXISTS `t_error_msg`;
@@ -207,6 +225,25 @@ INSERT INTO `t_error_msg` VALUES (123, '2021', '2024-06-30 09:22:01', '1', NULL,
 INSERT INTO `t_error_msg` VALUES (124, '2021', '2024-06-30 09:22:09', '2', NULL, NULL);
 INSERT INTO `t_error_msg` VALUES (125, '2022', '2024-06-30 09:22:16', '3', NULL, NULL);
 INSERT INTO `t_error_msg` VALUES (126, '2022', '2024-06-30 09:22:21', '4', NULL, NULL);
+
+-- 智能判定记录（兼容 MySQL 5.5，不使用 JSON 字段）
+DROP TABLE IF EXISTS `t_judgment_record`;
+CREATE TABLE `t_judgment_record` (
+  `id` bigint(20) NOT NULL AUTO_INCREMENT,
+  `d_no` varchar(64) DEFAULT NULL,
+  `data_type` varchar(32) NOT NULL,
+  `source_ids` varchar(1000) DEFAULT NULL,
+  `request_body` longtext,
+  `response_body` longtext,
+  `conclusion` varchar(255) DEFAULT NULL,
+  `confidence` decimal(8,4) DEFAULT NULL,
+  `status` varchar(32) NOT NULL,
+  `error_message` varchar(1000) DEFAULT NULL,
+  `c_time` datetime NOT NULL,
+  PRIMARY KEY (`id`),
+  KEY `idx_judgment_time` (`c_time`),
+  KEY `idx_judgment_device` (`d_no`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8;
 
 
 SET FOREIGN_KEY_CHECKS = 1;

@@ -1,4 +1,6 @@
 const { saveSensorData } = require('./sensorRealtimeRepository')
+const { getReportedTime, getTopic } = require('../../utils/protocol')
+const { evaluateRules } = require('../../service/alarm/evaluateRules')
 
 const SENSOR_TOPIC = 'sensor_data'
 
@@ -49,7 +51,7 @@ function normalizeDateTime(value) {
 }
 
 async function handleMessage(topic, payload) {
-    if (topic !== SENSOR_TOPIC) {
+    if (topic !== getTopic('sensor')) {
         return null
     }
 
@@ -58,12 +60,14 @@ async function handleMessage(topic, payload) {
         return null
     }
 
-    info.c_time = normalizeDateTime(info.Time) || formatDateTime(new Date())
+    info.c_time = normalizeDateTime(getReportedTime(info)) || formatDateTime(new Date())
 
     console.log('[SensorRealtime] Received message:', { topic, data: info })
 
     try {
         await saveSensorData(info)
+        const alarms = await evaluateRules(info)
+        if (alarms.length) info._alarms = alarms
         return info
     } catch (err) {
         console.error('[SensorRealtime] Error processing message:', err.message)

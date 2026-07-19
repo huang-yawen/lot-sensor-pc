@@ -1,16 +1,15 @@
 const promisePool = require('../../config/dbPool')
+const { getDeviceNo: getConfiguredDeviceNo, getReportedTime } = require('../../utils/protocol')
+const systemConfig = require('../../config/systemConfig')
 
-const WARNING_FIELDS = {
-    humi_warn: '湿度',
-    smog_warn: '烟雾',
-    fan_warn: '风机',
-    air_warn: '空调',
-    outage_overtime: '电源'
+function warningFields() {
+    return systemConfig.getConfig().ALARM_FIELD_MAP || {}
 }
 
 function buildErrorType(info) {
+    if (info.type) return String(info.type)
     const types = []
-    for (const [key, label] of Object.entries(WARNING_FIELDS)) {
+    for (const [key, label] of Object.entries(warningFields())) {
         if (info[key] == 1) {
             types.push(label+'异常')
         }
@@ -19,8 +18,9 @@ function buildErrorType(info) {
 }
 
 function buildErrorMessage(info) {
+    if (info.e_msg || info.message) return String(info.e_msg || info.message)
     const messages = []
-    for (const [key, label] of Object.entries(WARNING_FIELDS)) {
+    for (const [key, label] of Object.entries(warningFields())) {
         const value = info[key]
         if (value != null && value !== '') {
             messages.push(value == 1 ? label+'异常' : `${label}正常`)
@@ -30,7 +30,7 @@ function buildErrorMessage(info) {
 }
 
 async function getDeviceNo(info) {
-    const reported = info.VID ?? info.d_no ?? info.DNO ?? info.device_id
+    const reported = getConfiguredDeviceNo(info)
     if (reported !== undefined && reported !== null && String(reported).trim()) {
         return String(reported).trim()
     }
@@ -45,7 +45,7 @@ async function saveErrorMsg(info) {
     const deviceNo = await getDeviceNo(info)
     const params = [
         deviceNo,
-        info.c_time ?? info.Time ?? null,
+        info.c_time ?? getReportedTime(info) ?? null,
         buildErrorMessage(info),
         info.e_no ?? info.error_no ?? null,
         buildErrorType(info),

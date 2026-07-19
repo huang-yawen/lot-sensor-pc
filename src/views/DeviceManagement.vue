@@ -2,7 +2,7 @@
   <div>
     <div class="input">
       <form @submit.prevent>
-        <el-input v-model="input" placeholder="输入电车编号id或者设备名称" style="width: 240px" :suffix-icon="Search" />
+        <el-input v-model="input" placeholder="输入设备编号或设备名称" style="width: 240px" :suffix-icon="Search" />
         <el-button type="primary" :loading="store.loading" @click="handleSearch" class="search-btn">开始查找</el-button>
       </form>
       <el-button type="success" @click="showAddForm" class="add-btn">新增设备</el-button>
@@ -99,7 +99,7 @@ const input = ref('')
 const formData = ref({})
 const editData = ref({})
 const oldId = ref(null)
-const labels = ref(['id', '设备名称', '电车编号id', '备注'])
+const labels = ref(['id', '设备名称', '设备编号', '备注'])
 const showAdd = ref(false)
 const showEdit = ref(false)
 const currentPage = ref(1)
@@ -176,7 +176,7 @@ const handleAdd = async () => {
 const validateForm = (form) => {
   if (!form['id'] || isNaN(Number(form['id']))) { ElMessage.warning('id不能为空且必须为数字'); return false }
   if (!form['设备名称']) { ElMessage.warning('设备名称不能为空'); return false }
-  if (!form['电车编号id']) { ElMessage.warning('电车编号id不能为空'); return false }
+  if (!form['设备编号']) { ElMessage.warning('设备编号不能为空'); return false }
   if (store.deviceData.some(item => Number(item.id) === Number(form['id']) && form !== editData.value)) { ElMessage.warning('id已存在'); return false }
   return true
 }
@@ -222,7 +222,7 @@ const handleUpdate = async () => {
     oldId: oldId.value,
     '备注': editData.value['备注'] ?? null,
     '设备名称': editData.value['设备名称'] ?? '',
-    '电车编号id': editData.value['电车编号id'] ?? '',
+    '设备编号': editData.value['设备编号'] ?? '',
     'id': Number(editData.value['id'])
   }
 

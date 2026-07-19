@@ -19,6 +19,28 @@ const normalizeDeviceNo = (dNo) => {
 }
 
 /**
+ * 查询某设备当前生效的指令值。优先设备专属值，其次全局值。
+ * 操作历史在覆盖 t_direct 之前调用它，以便保存准确的“旧值”。
+ */
+const getDirectValue = async ({ config_id, d_no }) => {
+    const finalDNo = normalizeDeviceNo(d_no)
+    if (finalDNo === null) {
+        const [[row]] = await promisePool.query(
+            'SELECT value FROM t_direct WHERE config_id = ? AND d_no IS NULL LIMIT 1',
+            [config_id]
+        )
+        return row?.value ?? null
+    }
+    const [[row]] = await promisePool.query(
+        `SELECT value FROM t_direct
+         WHERE config_id = ? AND (d_no = ? OR d_no IS NULL)
+         ORDER BY CASE WHEN d_no = ? THEN 0 ELSE 1 END LIMIT 1`,
+        [config_id, finalDNo, finalDNo]
+    )
+    return row?.value ?? null
+}
+
+/**
  * 保存配置数据到数据库
  * 优先更新已存在的配置，不存在则插入新记录
  * @param {Object} params - 参数对象
@@ -90,5 +112,6 @@ const saveDirectData = async ({ config_id, value, d_no }) => {
 
 module.exports = {
     normalizeDeviceNo,
+    getDirectValue,
     saveDirectData
 }

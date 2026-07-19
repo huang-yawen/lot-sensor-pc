@@ -1,12 +1,9 @@
 const promisePool = require('../config/dbPool')
+const { getDeviceNo, aliases } = require('./protocol')
 
 const ALLOWED_DATA_FIELDS = new Set(
   Array.from({ length: 10 }, (_, index) => `field${index + 1}`)
 )
-
-function getDeviceNo(info = {}) {
-  return info.VID ?? info.d_no ?? info.DNO ?? null
-}
 
 function getOnlineLabel(value) {
   return String(value).trim() === '1' || value === true ? '实时数据' : '保存数据'
@@ -32,12 +29,13 @@ async function saveMappedData({ table, mapperTable, info, dateTime }) {
 
   for (const mapper of mappers) {
     const dbName = String(mapper.db_name || '').trim()
-    const physicalName = String(mapper.p_name || '').trim().toLowerCase()
-    if (!ALLOWED_DATA_FIELDS.has(dbName) || !physicalName || !incoming.has(physicalName)) {
+    const physicalNames = aliases(mapper.p_name).map(name => name.toLowerCase())
+    const matchedName = physicalNames.find(name => incoming.has(name))
+    if (!ALLOWED_DATA_FIELDS.has(dbName) || !matchedName) {
       continue
     }
     columns.push(dbName)
-    values.push(incoming.get(physicalName))
+    values.push(incoming.get(matchedName))
   }
 
   columns.push('c_time', 'online')

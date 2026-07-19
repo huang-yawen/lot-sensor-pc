@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS `t_operation_history` (
   `config_id` int(11) DEFAULT NULL COMMENT '指令配置ID，关联t_direct_config.id',
   `old_value` varchar(64) CHARACTER SET utf8 COLLATE utf8_general_ci DEFAULT NULL COMMENT '旧值',
   `new_value` varchar(64) CHARACTER SET utf8 COLLATE utf8_general_ci DEFAULT NULL COMMENT '新值',
-  `source` varchar(32) CHARACTER SET utf8 COLLATE utf8_general_ci DEFAULT NULL COMMENT '来源：manual(前端指令下发) / auto(设备状态变化)',
+  `source` varchar(32) CHARACTER SET utf8 COLLATE utf8_general_ci DEFAULT NULL COMMENT 'manual在线下发/manual_queued离线补发/interlock联锁/calibration校时/auto底层设备',
   `c_time` datetime DEFAULT NULL COMMENT '操作时间',
   PRIMARY KEY (`id`) USING BTREE,
   KEY `idx_d_no` (`d_no`) USING BTREE,

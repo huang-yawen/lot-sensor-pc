@@ -13,6 +13,8 @@ backend/server/data/pending-commands.json
 backend/server/data/pending-commands.json.tmp
 
 node_modules
+backend/server/data/*.json
+backend/server/data/*.tmp
 dist
 dist-ssr
 *.local

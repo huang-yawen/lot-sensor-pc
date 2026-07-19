@@ -1,4 +1,5 @@
 const { saveErrorMsg } = require('./errorHistoryRepository')
+const { getReportedTime, getTopic } = require('../../utils/protocol')
 
 const ERROR_TOPIC = 'abnormal_state'
 
@@ -49,7 +50,7 @@ function normalizeDateTime(value) {
 }
 
 async function handleMessage(topic, payload) {
-    if (topic !== ERROR_TOPIC) {
+    if (topic !== getTopic('alarm')) {
         return null
     }
 
@@ -58,7 +59,7 @@ async function handleMessage(topic, payload) {
         return null
     }
 
-    info.c_time = normalizeDateTime(info.Time) || formatDateTime(new Date())
+    info.c_time = normalizeDateTime(getReportedTime(info)) || formatDateTime(new Date())
 
     console.log('[ErrorHistory] Received message:', { topic, data: info })
 

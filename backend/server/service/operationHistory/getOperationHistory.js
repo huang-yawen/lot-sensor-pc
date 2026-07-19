@@ -5,6 +5,7 @@
  */
 
 const promisePool = require('../../config/dbPool')
+const { ensureOperationHistoryTable } = require('./saveOperationHistory')
 
 /**
  * 查询操作历史列表（分页）
@@ -17,6 +18,7 @@ const promisePool = require('../../config/dbPool')
  * @returns {Promise<{rows: Array, total: number}>}
  */
 async function getOperationHistory({ currentPage = 1, pageSize = 10, startTime = null, endTime = null, config_id = null }) {
+  await ensureOperationHistoryTable()
   const conditions = []
   const queryParams = []
 
@@ -47,10 +49,24 @@ async function getOperationHistory({ currentPage = 1, pageSize = 10, startTime =
   const offset = (currentPage - 1) * pageSize
   const [rows] = await promisePool.query(
     `SELECT h.id, h.d_no AS '设备编号',
-            c.t_name AS '操作名称',
+            COALESCE(c.t_name,
+              CASE h.source
+                WHEN 'interlock' THEN '自动联锁'
+                WHEN 'calibration' THEN '自动校时'
+                ELSE '未知操作'
+              END
+            ) AS '操作名称',
             h.old_value AS '旧值',
             h.new_value AS '新值',
-            h.source AS '来源',
+            CASE h.source
+              WHEN 'manual' THEN '软件下发'
+              WHEN 'manual_queued' THEN '离线补发'
+              WHEN 'interlock' THEN '自动联锁'
+              WHEN 'calibration' THEN '自动校时'
+              WHEN 'auto' THEN '底层设备'
+              WHEN 'device' THEN '底层设备'
+              ELSE h.source
+            END AS '来源',
             h.c_time AS '操作时间'
      FROM t_operation_history h
      LEFT JOIN t_direct_config c ON h.config_id = c.id

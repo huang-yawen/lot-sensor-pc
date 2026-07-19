@@ -129,6 +129,15 @@ class MqttClient extends EventEmitter {
     console.log('[MQTT] 手动触发重新连接...')
   }
 
+  /** 应用新的 Broker/主题配置并重连。 */
+  reconfigure(config) {
+    this.disconnect()
+    this.config = config
+    this._maxReconnectAttempts = config.maxReconnectAttempts || 5
+    this._connect()
+    console.log('[MQTT] 配置已热更新并重新连接')
+  }
+
   /** 订阅所有配置的主题 */
   _subscribeAll() {
     const topics = {}

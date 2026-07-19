@@ -135,11 +135,11 @@ const throttleTimers = {}
 
 // 监听 MQTT 处理后的消息，先缓存最新数据，按节流间隔广播
 mqttClient.on('processedMessage', (topic, data) => {
-    // 根据主题映射消息类型
+    const topics = systemConfig.getConfig().MQTT_TOPICS
     const typeMap = {
-        'sensor_data': 'sensor_data',
-        'behavioral_data': 'behavior_data',
-        'abnormal_state': 'error_data'
+        [topics.sensor]: 'sensor_data',
+        [topics.behavior]: 'behavior_data',
+        [topics.alarm]: 'error_data'
     };
     const type = typeMap[topic] || 'unknown';
 
