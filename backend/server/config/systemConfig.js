@@ -282,6 +282,31 @@ function clone(value) {
   return JSON.parse(JSON.stringify(value))
 }
 
+/** 拒绝拼错的嵌套键和错误类型，避免 API 返回成功但配置被静默忽略。 */
+function assertCompatibleShape(reference, incoming, pathPrefix = '') {
+  if (!incoming || typeof incoming !== 'object' || Array.isArray(incoming)) {
+    throw new Error(`${pathPrefix || '配置'} 必须是 JSON 对象`)
+  }
+  for (const [key, value] of Object.entries(incoming)) {
+    const pathName = pathPrefix ? `${pathPrefix}.${key}` : key
+    if (!Object.prototype.hasOwnProperty.call(reference, key)) {
+      throw new Error(`未知配置项: ${pathName}`)
+    }
+    const expected = reference[key]
+    if (Array.isArray(expected)) {
+      if (!Array.isArray(value)) throw new Error(`${pathName} 必须是数组`)
+    } else if (expected && typeof expected === 'object') {
+      if (['CONTROL_VALUE_MAP', 'ALARM_FIELD_MAP', 'INTELLIGENT_JUDGMENT.headers', 'INTELLIGENT_JUDGMENT.requestTemplate'].includes(pathName)) {
+        if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`${pathName} 必须是 JSON 对象`)
+        continue
+      }
+      assertCompatibleShape(expected, value, pathName)
+    } else if (typeof value !== typeof expected) {
+      throw new Error(`${pathName} 必须是 ${typeof expected} 类型`)
+    }
+  }
+}
+
 function mergeKnown(base, incoming) {
   if (!incoming || typeof incoming !== 'object' || Array.isArray(incoming)) return clone(base)
   const result = clone(base)
@@ -301,6 +326,16 @@ function mergeKnown(base, incoming) {
 
 /** 校验影响稳定性和连接安全的关键字段；校验失败时不会写入配置文件。 */
 function validate(config) {
+  for (const key of ['SCENE_TAG', 'SCENE_DESCRIPTION', 'SYSTEM_TITLE', 'DEVICE_LABEL']) {
+    if (typeof config[key] !== 'string' || !config[key].trim()) throw new Error(`${key} 不能为空`)
+  }
+  for (const key of [
+    'SINGLE_DEVICE_MODE', 'HIDE_ID_FIELDS', 'HIDE_NUMBER_FIELDS', 'HIDE_DEVICE_SELECTOR',
+    'ENABLE_SENSOR_RECOGNIZE', 'ENABLE_BEHAVIOR_RECOGNIZE', 'ENABLE_JUDGMENT_HISTORY',
+    'ENABLE_CHARTS', 'ENABLE_LOCAL_ALARM', 'ENABLE_AUTO_INTERLOCK',
+  ]) {
+    if (typeof config[key] !== 'boolean') throw new Error(`${key} 必须是布尔值`)
+  }
   if (!Number.isInteger(config.DEFAULT_PAGE_SIZE) || config.DEFAULT_PAGE_SIZE < 1 || config.DEFAULT_PAGE_SIZE > 100) throw new Error('DEFAULT_PAGE_SIZE 必须是 1-100 的整数')
   if (!Number.isFinite(config.REALTIME_REFRESH_INTERVAL) || config.REALTIME_REFRESH_INTERVAL < 0) throw new Error('REALTIME_REFRESH_INTERVAL 不能小于 0')
   if (!Number.isFinite(config.HEARTBEAT_TIMEOUT) || config.HEARTBEAT_TIMEOUT < 1000) throw new Error('HEARTBEAT_TIMEOUT 不能小于 1000')
@@ -312,6 +347,10 @@ function validate(config) {
   }
   if (!Array.isArray(config.DEVICE_ID_FIELDS) || config.DEVICE_ID_FIELDS.length === 0) throw new Error('DEVICE_ID_FIELDS 至少需要一个字段')
   if (!Array.isArray(config.TIME_FIELDS) || config.TIME_FIELDS.length === 0) throw new Error('TIME_FIELDS 至少需要一个字段')
+  if (!Array.isArray(config.HEARTBEAT_DEVICE_FIELDS) || config.HEARTBEAT_DEVICE_FIELDS.length === 0) throw new Error('HEARTBEAT_DEVICE_FIELDS 至少需要一个字段')
+  if (!config.INTELLIGENT_JUDGMENT.url || !/^https?:\/\//i.test(config.INTELLIGENT_JUDGMENT.url)) throw new Error('INTELLIGENT_JUDGMENT.url 必须是 http:// 或 https:// 地址')
+  if (!Number.isFinite(config.INTELLIGENT_JUDGMENT.timeoutMs) || config.INTELLIGENT_JUDGMENT.timeoutMs <= 0) throw new Error('INTELLIGENT_JUDGMENT.timeoutMs 必须大于 0')
+  if (!['batch', 'single'].includes(config.INTELLIGENT_JUDGMENT.requestMode)) throw new Error('INTELLIGENT_JUDGMENT.requestMode 只能是 batch 或 single')
   return true
 }
 
@@ -357,8 +396,7 @@ function replaceConfig(next) {
 /** 部分更新：只改变传入字段；未知顶层字段会报错，防止现场拼写错误静默失效。 */
 function updateConfig(partial) {
   if (!partial || typeof partial !== 'object' || Array.isArray(partial)) throw new Error('配置必须是 JSON 对象')
-  const unknown = Object.keys(partial).filter(key => !(key in defaultConfig))
-  if (unknown.length) throw new Error(`未知配置项: ${unknown.join(', ')}`)
+  assertCompatibleShape(defaultConfig, partial)
   return replaceConfig(mergeKnown(currentConfig, partial))
 }
 
@@ -379,6 +417,8 @@ function importConfig(scene) {
   const ignored = new Set(['exportTime', 'schema', 'version', 'metadata'])
   const unknown = Object.keys(source).filter(key => !(key in defaultConfig) && !ignored.has(key))
   if (unknown.length) throw new Error(`场景包含未知配置项: ${unknown.join(', ')}`)
+  const configOnly = Object.fromEntries(Object.entries(source).filter(([key]) => key in defaultConfig))
+  assertCompatibleShape(defaultConfig, configOnly)
   return replaceConfig(mergeKnown(defaultConfig, source))
 }
 

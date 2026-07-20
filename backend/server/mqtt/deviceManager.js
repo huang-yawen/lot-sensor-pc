@@ -54,6 +54,9 @@ class DeviceManager {
     /** @type {Map<string, boolean>} 设备在线状态 */
     this._onlineStatus = new Map()
 
+    /** @type {Map<string, {id: number|null, deviceName: string, deviceNumber: string, displayId: string, issue: string}>} 数据库设备元数据 */
+    this._deviceMeta = new Map()
+
     /** @type {Map<string, NodeJS.Timeout>} 离线检测定时器 */
     this._offlineTimers = new Map()
 
@@ -72,34 +75,90 @@ class DeviceManager {
     /** @type {boolean} 是否已从数据库加载设备列表 */
     this._loaded = false
 
-    // 启动时从数据库加载设备列表
-    this._loadDevicesFromDB()
+    this._syncingDevices = false
+    this._syncTimer = null
+
+    // 启动时加载，并持续与 t_device 同步。数据库晚于后端启动时也能自动恢复。
+    this.refreshDevicesFromDB()
+    this._syncTimer = setInterval(() => this.refreshDevicesFromDB(), 15000)
+    this._syncTimer.unref?.()
   }
 
   /**
    * 从数据库 t_device 表加载所有设备编号
    * 初始化所有设备为离线状态
    */
-  async _loadDevicesFromDB() {
+  async refreshDevicesFromDB() {
+    if (this._syncingDevices) return
+    this._syncingDevices = true
     try {
       const [rows] = await promisePool.query(
-        'SELECT number FROM t_device WHERE number IS NOT NULL AND number != ""'
+        `SELECT id, TRIM(number) AS number, device_name
+         FROM t_device
+         ORDER BY id ASC`
       )
-      if (rows && rows.length > 0) {
-        for (const row of rows) {
-          const deviceId = String(row.number).trim()
-          // 初始化设备为离线状态
-          this._onlineStatus.set(deviceId, false)
+
+      const databaseKeys = new Set()
+      const seenNumbers = new Set()
+      for (const row of rows || []) {
+        const rowId = Number.isInteger(Number(row.id)) ? Number(row.id) : null
+        const deviceNumber = String(row.number || '').trim()
+        let trackingKey = deviceNumber
+        let displayId = deviceNumber
+        let issue = ''
+
+        if (!deviceNumber) {
+          trackingKey = `__missing_number__:${rowId ?? databaseKeys.size}`
+          displayId = `未配置编号（ID: ${rowId ?? '?'}）`
+          issue = 't_device.number 为空，无法匹配 MQTT 心跳'
+          console.warn(`[DeviceManager] t_device.id=${rowId ?? '?'} 未配置 number，将显示为离线`)
+        } else if (seenNumbers.has(deviceNumber)) {
+          trackingKey = `__duplicate_number__:${rowId ?? databaseKeys.size}`
+          displayId = `${deviceNumber}（重复，ID: ${rowId ?? '?'}）`
+          issue = '设备编号重复，无法独立匹配 MQTT 心跳'
+          console.warn(`[DeviceManager] t_device 存在重复设备编号: ${deviceNumber} (id=${rowId ?? '?'})`)
+        } else {
+          seenNumbers.add(deviceNumber)
         }
-        console.log(`[DeviceManager] 从数据库加载了 ${rows.length} 个设备:`, rows.map(r => r.number).join(', '))
+
+        databaseKeys.add(trackingKey)
+        if (!this._onlineStatus.has(trackingKey)) this._onlineStatus.set(trackingKey, false)
+        this._deviceMeta.set(trackingKey, {
+          id: rowId,
+          deviceName: String(row.device_name || '').trim(),
+          deviceNumber,
+          displayId,
+          issue,
+        })
+      }
+
+      // 直接在数据库中删除的设备也要从在线状态中移除。
+      for (const trackingKey of [...this._onlineStatus.keys()]) {
+        if (!databaseKeys.has(trackingKey)) this.removeDevice(trackingKey)
+      }
+
+      if (databaseKeys.size > 0) {
+        console.log(`[DeviceManager] 已从 t_device 同步 ${databaseKeys.size} 条设备记录`)
       } else {
         console.warn('[DeviceManager] 数据库 t_device 表中没有设备数据')
       }
       this._loaded = true
     } catch (err) {
-      console.error('[DeviceManager] 从数据库加载设备列表失败:', err.message)
-      this._loaded = true // 即使失败也标记为已加载，避免阻塞
+      // 保留上一次成功同步的状态，下一轮自动重试。
+      console.error('[DeviceManager] 同步设备列表失败，15 秒后重试:', err.message)
+    } finally {
+      this._syncingDevices = false
     }
+  }
+
+  /** 首次接口/WebSocket 响应前等待正在进行的 t_device 同步，避免短暂误报空列表。 */
+  async waitForDeviceSync(timeoutMs = 15000) {
+    if (!this._loaded && !this._syncingDevices) this.refreshDevicesFromDB()
+    const deadline = Date.now() + timeoutMs
+    while (this._syncingDevices && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 50))
+    }
+    return this._loaded
   }
 
   // ==================== 心跳与在线状态 ====================
@@ -164,12 +223,20 @@ class DeviceManager {
   }
 
   /** 设备 CRUD 后同步内存注册表，无需重启服务。 */
-  registerDevice(deviceId) {
+  registerDevice(deviceId, metadata = {}) {
     const normalized = String(deviceId ?? '').trim()
     if (!normalized) return
     if (!this._onlineStatus.has(normalized)) {
       this._onlineStatus.set(normalized, false)
     }
+    this._deviceMeta.set(normalized, {
+      id: Number.isInteger(Number(metadata.id)) ? Number(metadata.id) : (this._deviceMeta.get(normalized)?.id ?? null),
+      deviceName: String(metadata.deviceName ?? this._deviceMeta.get(normalized)?.deviceName ?? '').trim(),
+      deviceNumber: normalized,
+      displayId: normalized,
+      issue: '',
+    })
+    this._loaded = true
   }
 
   removeDevice(deviceId) {
@@ -180,19 +247,20 @@ class DeviceManager {
     this._offlineTimers.delete(normalized)
     this._lastHeartbeat.delete(normalized)
     this._onlineStatus.delete(normalized)
+    this._deviceMeta.delete(normalized)
     this._pendingCommands.delete(normalized)
     this._persistPendingCommands()
   }
 
-  renameDevice(oldDeviceId, newDeviceId) {
+  renameDevice(oldDeviceId, newDeviceId, metadata = {}) {
     const oldId = String(oldDeviceId ?? '').trim()
     const newId = String(newDeviceId ?? '').trim()
     if (oldId === newId) {
-      this.registerDevice(newId)
+      this.registerDevice(newId, metadata)
       return
     }
     this.removeDevice(oldId)
-    this.registerDevice(newId)
+    this.registerDevice(newId, metadata)
   }
 
   /**
@@ -206,14 +274,21 @@ class DeviceManager {
       return []
     }
 
-    const statusList = []
-    for (const [deviceId] of this._onlineStatus) {
-      statusList.push({
-        deviceId,
-        online: this.isOnline(deviceId)
+    return [...this._onlineStatus.keys()]
+      .sort((left, right) => {
+        const leftId = this._deviceMeta.get(left)?.id
+        const rightId = this._deviceMeta.get(right)?.id
+        if (leftId != null && rightId != null && leftId !== rightId) return leftId - rightId
+        return left.localeCompare(right, 'zh-CN', { numeric: true })
       })
-    }
-    return statusList
+      .map((deviceId) => ({
+        deviceId: this._deviceMeta.get(deviceId)?.displayId || deviceId,
+        deviceNumber: this._deviceMeta.get(deviceId)?.deviceNumber || '',
+        deviceName: this._deviceMeta.get(deviceId)?.deviceName || '',
+        configured: !this._deviceMeta.get(deviceId)?.issue,
+        issue: this._deviceMeta.get(deviceId)?.issue || '',
+        online: !this._deviceMeta.get(deviceId)?.issue && this.isOnline(deviceId),
+      }))
   }
 
   // ==================== 暂存指令 ====================
@@ -392,12 +467,15 @@ class DeviceManager {
 
   /** 清理所有定时器 */
   cleanup() {
+    if (this._syncTimer) clearInterval(this._syncTimer)
+    this._syncTimer = null
     for (const timer of this._offlineTimers.values()) {
       clearTimeout(timer)
     }
     this._offlineTimers.clear()
     this._lastHeartbeat.clear()
     this._onlineStatus.clear()
+    this._deviceMeta.clear()
     this._pendingCommands.clear()
     this._flushingDevices.clear()
   }

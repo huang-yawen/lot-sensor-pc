@@ -5,7 +5,7 @@ import api from '@/api';
 export const DeviceStore = defineStore('deviceStore', () => {
     const deviceData = ref([]);
     const loading = ref(false);
-    const total = ref(5);
+    const total = ref(0);
     const ids = ref([]) 
 
     const fetchDeviceData = async (params = {}) => {
@@ -29,13 +29,13 @@ export const DeviceStore = defineStore('deviceStore', () => {
                 const fullList = Array.isArray(response.data.data.list) ? response.data.data.list : [];
                 console.log('[deviceStore] 原始数据列表:', fullList);
                 
-                ids.value = [];
                 const rawIds = [];
 
                 // 列表数据顺手提取设备编号，供指令设置页选择设备时复用。
                 fullList.forEach(item => {
                     console.log('[deviceStore] 单条数据:', item);
-                    rawIds.push(item['设备编号'])
+                    const deviceNumber = String(item['设备编号'] ?? '').trim()
+                    if (deviceNumber) rawIds.push(deviceNumber)
                     if (item['创建时间']) {
                         try {
                             item['创建时间'] = new Date(item['创建时间']).toLocaleString('zh-CN', {
@@ -53,11 +53,15 @@ export const DeviceStore = defineStore('deviceStore', () => {
                 });
 
                 ids.value = [...new Set(rawIds)];
+                total.value = Number(response.data.data.total) || 0;
                 console.log("[deviceStore] 已获取并去重后的设备ID列表:", ids.value);
                 deviceData.value = fullList;
             }
         } catch (error) {
             console.error('[deviceStore] 请求失败:', error);
+            deviceData.value = [];
+            ids.value = [];
+            total.value = 0;
         } finally {
             loading.value = false;
         }

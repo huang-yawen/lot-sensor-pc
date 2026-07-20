@@ -2,36 +2,54 @@
   <div class="container">
     <div class="right-section">
       <div class="device-status-bar">
-        <span
-          class="device-chip"
-          v-for="device in deviceStatusList"
-          :key="device.deviceId"
-          :class="{ online: device.online, offline: !device.online }"
-        >
-          <span class="chip-dot"></span>
-          <span class="chip-id">{{ device.deviceId }}</span>
-        </span>
-        <span v-if="deviceStatusList.length === 0" class="no-device-text">暂无设备</span>
+        <div class="device-status-list">
+          <span
+            class="device-chip"
+            v-for="device in deviceStatusList"
+            :key="device.deviceId"
+            :class="{ online: device.online, offline: !device.online, invalid: device.configured === false }"
+            :title="device.issue || device.deviceName || device.deviceId"
+          >
+            <span class="chip-dot"></span>
+            <span class="chip-id">{{ device.deviceId }}</span>
+          </span>
+          <span v-if="deviceStatusList.length === 0" class="no-device-text">暂无{{ deviceLabel }}</span>
+        </div>
       </div>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted } from 'vue'
+import { computed, ref, onMounted, onUnmounted } from 'vue'
 import { connect, on, close } from '@/utils/websocket'
+import { useSystemConfigStore } from '@/stores/SystemConfigStore'
+import api from '@/api'
 
 // 设备在线状态列表
 const deviceStatusList = ref([])
+const systemStore = useSystemConfigStore()
+const deviceLabel = computed(() => systemStore.config.DEVICE_LABEL || systemStore.config.TERMINOLOGY?.device || '设备')
 let wsUnsubscribe = null
 
+const applyDeviceStatuses = (payload) => {
+  if (!Array.isArray(payload)) return
+  // 即使后端重连或数据库返回顺序变化，也保持标签位置稳定。
+  deviceStatusList.value = [...payload].sort((a, b) =>
+    String(a.deviceId).localeCompare(String(b.deviceId), 'zh-CN', { numeric: true })
+  )
+}
+
 onMounted(() => {
+    systemStore.load().catch(error => console.error('[TopNav] 配置加载失败:', error))
+    // 先读一次 t_device 同步状态；WebSocket 断开时也不会误报“暂无设备”。
+    api.get('/api/device-status')
+      .then(response => applyDeviceStatuses(response.data?.data))
+      .catch(error => console.error('[TopNav] 设备状态加载失败:', error))
     // 连接 WebSocket，监听设备在线状态
     connect()
     wsUnsubscribe = on('device_status', (payload) => {
-      if (Array.isArray(payload)) {
-        deviceStatusList.value = payload
-      }
+      applyDeviceStatuses(payload)
     })
 })
 
@@ -46,29 +64,48 @@ onUnmounted(() => {
 
 <style scoped>
 .container{
-    height: 50px;
+    width: 100%;
+    height: 70px;
+    min-width: 0;
     background-color: #374270;
     display: flex;
     align-items: center;
-    padding: 0 20px;
+    padding: 0 24px;
+    box-sizing: border-box;
 }
 
 .right-section {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
+  flex: 1;
+  min-width: 0;
   height: 100%;
   margin-left: auto;
-  margin-right: 30px;
 }
 
 .device-status-bar {
+  width: min(720px, 100%);
+  height: 42px;
+  min-width: 0;
   display: flex;
   align-items: center;
-  height: 100%;
-  gap: 8px;
-  flex-wrap: nowrap;
-  max-width: 500px;
   overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+
+.device-status-bar::-webkit-scrollbar { height: 0; }
+
+.device-status-list {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  width: max-content;
+  min-width: 100%;
+  min-height: 36px;
+  margin-left: auto;
 }
 
 .device-chip {
@@ -80,6 +117,7 @@ onUnmounted(() => {
   font-size: 12px;
   font-weight: 600;
   white-space: nowrap;
+  flex: 0 0 auto;
 }
 
 .device-chip.online {
@@ -115,7 +153,14 @@ onUnmounted(() => {
 }
 
 .no-device-text {
+  margin-left: auto;
   font-size: 12px;
   color: #aaa;
+}
+
+.device-chip.invalid {
+  color: #92400e;
+  background: #fef3c7;
+  border-color: #f59e0b;
 }
 </style>

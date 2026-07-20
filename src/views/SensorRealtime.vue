@@ -8,7 +8,7 @@
         />
       </div>
 
-      <div class="chart-wrapper">
+      <div class="chart-wrapper" v-if="chartsEnabled">
         <LineBarCharts :data="data" :settings="store.sensorData?.chartSettings || {}" />
       </div>
     </div>
@@ -19,11 +19,11 @@ import LineBarCharts from '@/components/LineBarCharts.vue'
 import { SensorStore } from '@/stores/SensorStore'
 import { computed, onMounted, onUnmounted } from 'vue'
 import CardContainer from '@/components/CardContainer.vue'
-import { on as wsOn } from '@/utils/websocket'
+import { useSystemConfigStore } from '@/stores/SystemConfigStore'
 
 const store = SensorStore()
-
-let wsUnsubscribe = null
+const systemStore = useSystemConfigStore()
+let refreshTimer = null
 
 const reloadData = async (showLoading = true) => {
   await store.fetchData('实时数据')
@@ -35,20 +35,23 @@ const data = computed(() => {
   console.log('computed data:', result)
   return result
 })
-onMounted(async () => {
-  await reloadData()
+const chartsEnabled = computed(() => systemStore.config.ENABLE_CHARTS !== false)
 
-  // WebSocket 连接由顶层 TopNav 统一维护；这里只订阅一次传感器消息。
-  wsUnsubscribe = wsOn('sensor_data', () => {
-    reloadData(false)
-  })
+const startAutoRefresh = () => {
+  if (refreshTimer) clearInterval(refreshTimer)
+  const interval = Number(systemStore.config.REALTIME_REFRESH_INTERVAL)
+  if (interval > 0) refreshTimer = setInterval(() => reloadData(false), interval)
+}
+
+onMounted(async () => {
+  await systemStore.load()
+  await reloadData()
+  startAutoRefresh()
 })
 
 onUnmounted(() => {
-  if (wsUnsubscribe) {
-    wsUnsubscribe()
-    wsUnsubscribe = null
-  }
+  if (refreshTimer) clearInterval(refreshTimer)
+  refreshTimer = null
 })
 </script>
 

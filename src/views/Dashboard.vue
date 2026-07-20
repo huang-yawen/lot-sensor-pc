@@ -2,21 +2,21 @@
   <div class="dashboard-page" v-loading="loading">
     <section class="hero-panel">
       <div>
-        <p class="eyebrow">2026 物联网技能赛场景</p>
-        <h1>水循环系统运行概览</h1>
-        <p class="hero-copy">集中查看温度、流量、压力、设备在线状态与最近告警。</p>
+        <p class="eyebrow">{{ config.SCENE_TAG || '物联网应用场景' }}</p>
+        <h1>{{ config.SYSTEM_TITLE || '物联网数据管理中心' }}</h1>
+        <p class="hero-copy">{{ config.SCENE_DESCRIPTION || '集中查看实时数据、设备状态与最近告警。' }}</p>
       </div>
       <el-button type="primary" :loading="loading" @click="loadDashboard">刷新数据</el-button>
     </section>
 
     <section class="metric-grid">
       <article class="metric-card">
-        <span>设备总数</span>
+        <span>{{ deviceLabel }}总数</span>
         <strong>{{ deviceTotal }}</strong>
         <small>已登记采集及控制设备</small>
       </article>
       <article class="metric-card online">
-        <span>在线设备</span>
+        <span>在线{{ deviceLabel }}</span>
         <strong>{{ onlineCount }}</strong>
         <small>依据设备心跳实时判断</small>
       </article>
@@ -51,14 +51,14 @@
         </div>
         <el-empty v-else description="暂无传感器数据" :image-size="72" />
         <div v-if="latestSensor" class="updated-at">
-          设备 {{ latestSensor['设备编号'] || '未标识' }} · {{ latestSensor['创立时间'] || '时间未知' }}
+          <template v-if="displayStore.isFieldVisible('设备编号')">{{ deviceLabel }} {{ latestSensor['设备编号'] || '未标识' }} · </template>{{ latestSensor['创立时间'] || '时间未知' }}
         </div>
       </article>
 
       <article class="panel">
         <div class="panel-heading">
           <div>
-            <h2>设备状态</h2>
+            <h2>{{ deviceLabel }}状态</h2>
             <p>心跳状态会通过 WebSocket 自动刷新</p>
           </div>
         </div>
@@ -81,12 +81,18 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import api from '@/api'
 import { connect, on as wsOn } from '@/utils/websocket'
+import { useSystemConfigStore } from '@/stores/SystemConfigStore'
+import { DisplayStore } from '@/stores/DisplayStore'
 
 const loading = ref(false)
 const dashboard = ref({})
 const deviceTotal = ref(0)
 const mqttConnected = ref(false)
 const deviceStatuses = ref([])
+const systemStore = useSystemConfigStore()
+const displayStore = DisplayStore()
+const config = computed(() => systemStore.config)
+const deviceLabel = computed(() => config.value.DEVICE_LABEL || config.value.TERMINOLOGY?.device || '设备')
 let unsubscribeStatus = null
 let unsubscribeSensor = null
 let unsubscribeError = null
@@ -98,8 +104,8 @@ const recentErrors = computed(() => Object.values(dashboard.value.sortedData || 
 const onlineCount = computed(() => deviceStatuses.value.filter((item) => item.online).length)
 const sensorFields = computed(() => {
   if (!latestSensor.value) return []
-  const excluded = new Set(['id', '设备编号', '创立时间', '数据类型'])
-  return Object.keys(latestSensor.value).filter((key) => !excluded.has(key))
+  const excluded = new Set(['创立时间', '数据类型'])
+  return Object.keys(latestSensor.value).filter((key) => !excluded.has(key) && displayStore.isFieldVisible(key))
 })
 
 function displayValue(value, field) {
@@ -128,7 +134,8 @@ async function loadDashboard() {
   }
 }
 
-onMounted(() => {
+onMounted(async () => {
+  await systemStore.load()
   loadDashboard()
   connect()
   unsubscribeStatus = wsOn('device_status', (payload) => {

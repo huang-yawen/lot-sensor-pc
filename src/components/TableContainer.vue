@@ -68,7 +68,7 @@
       <el-pagination
         v-model:current-page="currentPage"
         v-model:page-size="localPageSize"
-        :page-sizes="[5, 10, 15, 20]"
+        :page-sizes="pageSizeOptions"
         :background="true"
         layout="sizes, prev, pager, next"
         :total="total"
@@ -124,6 +124,7 @@ const dateRange = ref([])
 const currentPage = ref(1)
 const localPageSize = ref(props.pageSize)
 const tableRef = ref(null)
+const pageSizeOptions = computed(() => [...new Set([props.pageSize, 5, 10, 15, 20])].sort((a, b) => a - b))
 
 // 从数据中自动提取列，再按全局显示开关过滤 id/编号。
 const computedColumns = computed(() => {

@@ -42,7 +42,7 @@
       </template>
     </el-dialog>
 
-    <div class="chartContainer">
+    <div class="chartContainer" v-if="chartsEnabled && data.length > 0">
       <LineBarCharts :data="data" :pageSize="pageSize" />
     </div>
   </div>
@@ -56,8 +56,10 @@ import TableContainer from '@/components/TableContainer.vue'
 import LineBarCharts from '@/components/LineBarCharts.vue'
 import { transformBehaviorList } from '@/utils/fieldTransform'
 import api from '@/api'
+import { useSystemConfigStore } from '@/stores/SystemConfigStore'
 
 const store = PaginationStore()
+const systemStore = useSystemConfigStore()
 
 const online = '保存数据'
 const selectedRows = ref([])
@@ -70,6 +72,7 @@ const data = computed(() => transformBehaviorList(store.paginationData || []))
 const loading = computed(() => store.loading || false)
 const total = computed(() => store.total || 0)
 const pageSize = computed(() => store.pageSize || 5)
+const chartsEnabled = computed(() => systemStore.config.ENABLE_CHARTS !== false)
 
 const onSelectionChange = (selection) => {
   selectedRows.value = selection
@@ -140,12 +143,10 @@ const handleSizeChange = (size) => {
 }
 
 onMounted(async () => {
-  // 从后端获取系统配置，决定是否显示智能判定按钮
   try {
-    const res = await api.get('/api/system-config')
-    if (res.data.success) {
-      showRecognizeBtn.value = res.data.data.ENABLE_BEHAVIOR_RECOGNIZE === true
-    }
+    const config = await systemStore.load()
+    showRecognizeBtn.value = config.ENABLE_BEHAVIOR_RECOGNIZE === true
+    store.pageSize = config.DEFAULT_PAGE_SIZE || 5
   } catch (err) {
     console.error('[BehaviorHistory] 获取系统配置失败:', err)
     showRecognizeBtn.value = true // 默认显示

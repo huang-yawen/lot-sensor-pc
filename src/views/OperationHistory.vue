@@ -69,7 +69,7 @@
       <el-pagination
         v-model:current-page="currentPage"
         v-model:page-size="localPageSize"
-        :page-sizes="[5, 10, 15, 20]"
+        :page-sizes="pageSizeOptions"
         :background="true"
         layout="sizes, prev, pager, next"
         :total="total"
@@ -83,12 +83,18 @@
 <script setup>
 import { computed, ref, onMounted } from 'vue'
 import api from '@/api'
+import { DisplayStore } from '@/stores/DisplayStore'
+import { useSystemConfigStore } from '@/stores/SystemConfigStore'
+
+const displayStore = DisplayStore()
+const systemStore = useSystemConfigStore()
 
 const data = ref([])
 const total = ref(0)
 const loading = ref(false)
 const currentPage = ref(1)
 const localPageSize = ref(5)
+const pageSizeOptions = computed(() => [...new Set([localPageSize.value, 5, 10, 15, 20])].sort((a, b) => a - b))
 
 const dateRange = ref([])
 const selectedConfigId = ref(null)
@@ -97,7 +103,7 @@ const configOptions = ref([])
 // 从数据中自动提取列名
 const computedColumns = computed(() => {
   if (data.value && data.value.length > 0) {
-    return Object.keys(data.value[0]).filter(key => key !== 'id')
+    return Object.keys(data.value[0]).filter(displayStore.isFieldVisible)
   }
   return []
 })
@@ -156,12 +162,9 @@ const handleSizeChange = (size) => {
 }
 
 onMounted(async () => {
-  // 从后端配置获取默认页码
   try {
-    const res = await api.get('/api/system-config')
-    if (res.data.success && res.data.data.DEFAULT_PAGE_SIZE) {
-      localPageSize.value = res.data.data.DEFAULT_PAGE_SIZE
-    }
+    const config = await systemStore.load()
+    localPageSize.value = config.DEFAULT_PAGE_SIZE || 5
   } catch (err) {
     // 取不到就用默认值 5
   }

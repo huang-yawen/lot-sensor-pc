@@ -12,6 +12,7 @@ function buildMqttConfig(scene) {
   return {
     url: scene.MQTT_URL,
     options: {
+      clientId: process.env.MQTT_CLIENT_ID || undefined,
       username: scene.MQTT_USERNAME || undefined,
       password: scene.MQTT_PASSWORD || undefined,
       connectTimeout: 10000,
@@ -72,8 +73,10 @@ mqttClient.checkIfAlive = (deviceId) => deviceManager.isOnline(deviceId)
 mqttClient.addPendingCommand = (deviceId, configId, value) => deviceManager.addPendingCommand(deviceId, configId, value)
 mqttClient.publishJsonToDevice = (deviceId, topic, payload, options) => mqttClient.publish(topic, payload, options)
 mqttClient.getAllDeviceStatus = () => deviceManager.getAllDeviceStatus()
-mqttClient.registerDevice = (deviceId) => deviceManager.registerDevice(deviceId)
+mqttClient.registerDevice = (deviceId, metadata) => deviceManager.registerDevice(deviceId, metadata)
 mqttClient.removeDevice = (deviceId) => deviceManager.removeDevice(deviceId)
-mqttClient.renameDevice = (oldDeviceId, newDeviceId) => deviceManager.renameDevice(oldDeviceId, newDeviceId)
+mqttClient.renameDevice = (oldDeviceId, newDeviceId, metadata) => deviceManager.renameDevice(oldDeviceId, newDeviceId, metadata)
+mqttClient.refreshDevices = () => deviceManager.refreshDevicesFromDB()
+mqttClient.waitForDeviceSync = (timeoutMs) => deviceManager.waitForDeviceSync(timeoutMs)
 
 module.exports = mqttClient

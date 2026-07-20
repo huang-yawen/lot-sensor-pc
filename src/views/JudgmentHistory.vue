@@ -10,8 +10,8 @@
       <el-button type="primary" @click="load">查询</el-button>
     </div>
     <el-table :data="rows" v-loading="loading" border stripe>
-      <el-table-column prop="id" label="ID" width="80" />
-      <el-table-column prop="d_no" label="设备编号" min-width="120" />
+      <el-table-column v-if="displayStore.isFieldVisible('id')" prop="id" label="ID" width="80" />
+      <el-table-column v-if="displayStore.isFieldVisible('d_no')" prop="d_no" label="设备编号" min-width="120" />
       <el-table-column prop="data_type" label="数据类型" width="100" />
       <el-table-column prop="source_ids" label="原数据ID" min-width="130" show-overflow-tooltip />
       <el-table-column prop="conclusion" label="判定结论" min-width="160" show-overflow-tooltip />
@@ -27,7 +27,7 @@
       :total="total"
       v-model:current-page="page"
       v-model:page-size="pageSize"
-      :page-sizes="[10, 20, 50]"
+      :page-sizes="pageSizeOptions"
       @current-change="load"
       @size-change="page = 1; load()"
     />
@@ -35,9 +35,11 @@
 </template>
 
 <script setup>
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import api from '@/api'
+import { useSystemConfigStore } from '@/stores/SystemConfigStore'
+import { DisplayStore } from '@/stores/DisplayStore'
 
 const rows = ref([])
 const total = ref(0)
@@ -46,6 +48,9 @@ const pageSize = ref(10)
 const deviceNo = ref('')
 const status = ref('')
 const loading = ref(false)
+const systemStore = useSystemConfigStore()
+const displayStore = DisplayStore()
+const pageSizeOptions = computed(() => [...new Set([pageSize.value, 5, 10, 20, 50])].sort((a, b) => a - b))
 
 async function load() {
   loading.value = true
@@ -60,7 +65,11 @@ async function load() {
   }
 }
 
-onMounted(load)
+onMounted(async () => {
+  const config = await systemStore.load()
+  pageSize.value = config.DEFAULT_PAGE_SIZE || 5
+  await load()
+})
 </script>
 
 <style scoped>

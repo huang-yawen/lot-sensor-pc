@@ -1,6 +1,7 @@
 const promisePool = require('../../config/dbPool')
 const { formatDataWithUnit, buildDisplayFieldUnits } = require('../../utils/helper')
 const { getEnabledMetrics, compileMetricSql, chartSettings } = require('../derivedMetric/derivedMetricService')
+const systemConfig = require('../../config/systemConfig')
 
 const isValidDateTime = (dateStr) => {
     if (!dateStr) return true
@@ -39,7 +40,7 @@ module.exports = async function getHistoryDataByType(query) {
     }
 
     const page = parseInt(query.page) || 1
-    const pageSize = parseInt(query.pageSize) || 5
+    const pageSize = Math.min(100, Math.max(1, parseInt(query.pageSize) || systemConfig.getConfig().DEFAULT_PAGE_SIZE))
     const offset = (page - 1) * pageSize
     const keyword = query.keyword || null
     const keywordLike = keyword ? `%${keyword}%` : null

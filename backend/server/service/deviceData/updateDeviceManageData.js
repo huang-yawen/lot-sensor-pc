@@ -12,21 +12,16 @@ const promisePool = require('../../config/dbPool')
  */
 module.exports = async (data) => {
     const oldId = Number(data.oldId)
-    const newId = Number(data.id)
-    const deviceName = data['设备名称'] ?? ''
-    const number = data['设备编号'] ?? data['电车编号id'] ?? ''
-    const remarks = data['备注'] ?? null
+    const deviceName = String(data['设备名称'] ?? '').trim()
+    const number = String(data['设备编号'] ?? data['电车编号id'] ?? '').trim()
+    const remarks = String(data['备注'] ?? '').trim() || null
 
-    if (isNaN(oldId)) {
+    if (!Number.isInteger(oldId) || oldId <= 0) {
         return { success: false, message: 'oldId 无效' }
     }
     if (!deviceName || !number) {
         return { success: false, message: '设备名称和设备编号不能为空' }
     }
-    if (!Number.isInteger(newId)) {
-        return { success: false, message: 'id 无效' }
-    }
-
     const [[existingDevice]] = await promisePool.execute(
         'SELECT `number` FROM `t_device` WHERE `id` = ? LIMIT 1',
         [oldId]
@@ -35,14 +30,19 @@ module.exports = async (data) => {
         return { success: false, message: '未找到该设备' }
     }
 
+    const [[duplicate]] = await promisePool.execute(
+        'SELECT id FROM `t_device` WHERE TRIM(`number`) = ? AND `id` <> ? LIMIT 1',
+        [number, oldId]
+    )
+    if (duplicate) return { success: false, message: `设备编号“${number}”已存在` }
+
     const [result] = await promisePool.execute(
         `UPDATE t_device SET 
             device_name = ?, 
             number = ?,
-            remarks = ?,
-            id = ?
+            remarks = ?
          WHERE id = ?`,
-        [deviceName, number, remarks, newId, oldId]
+        [deviceName, number, remarks, oldId]
     )
 
     if (result.affectedRows === 0) {
@@ -52,7 +52,9 @@ module.exports = async (data) => {
     return {
         success: true,
         message: '修改成功！',
+        id: oldId,
+        deviceName,
         oldDeviceNumber: existingDevice.number,
-        deviceNumber: String(number).trim(),
+        deviceNumber: number,
     }
 }

@@ -49,6 +49,12 @@ app.get('/api/mqtt/status', (req, res) => {
         }
     })
 });
+
+// 设备状态只来源于 DeviceManager 对 t_device 的同步结果。
+app.get('/api/device-status', async (req, res) => {
+    await mqttClient.waitForDeviceSync();
+    res.json({ success: true, data: mqttClient.getAllDeviceStatus() });
+});
         
 const distPath = process.env.FRONTEND_DIST_PATH
   ? path.resolve(process.env.FRONTEND_DIST_PATH)
@@ -61,7 +67,7 @@ app.get('/', (req, res) => {
 console.log('Dist Path:', distPath);
 
 console.log('正在初始化 MQTT 连接...');
-console.log('MQTT Broker URL:', process.env.MQTT_URL || 'mqtt://localhost:1883');
+console.log('MQTT Broker URL:', systemConfig.getConfig().MQTT_URL);
 
 // ==================== WebSocket 服务器 ====================
 const server = http.createServer(app);
@@ -73,6 +79,15 @@ const wsClients = new Set();
 wss.on('connection', (ws, req) => {
     console.log(`[WebSocket] 客户端已连接, IP: ${req.socket.remoteAddress}`);
     wsClients.add(ws);
+    // 首次连接立即发送当前设备状态，避免头部导航等待下一轮定时广播。
+    mqttClient.waitForDeviceSync().then(() => {
+        if (ws.readyState !== 1) return;
+        ws.send(JSON.stringify({
+            type: 'device_status',
+            payload: mqttClient.getAllDeviceStatus(),
+            timestamp: Date.now()
+        }));
+    });
 
     // 处理客户端发来的消息（如心跳 ping）
     ws.on('message', (data) => {
@@ -118,17 +133,13 @@ function broadcast(type, payload) {
 
 // ==================== 消息节流（Throttle） ====================
 // 避免底层高频数据导致前端页面闪烁
-// 传感器/行为/故障数据每 3 秒合并广播一次，设备状态每 2 秒广播一次
+// 传感器/行为/故障数据按场景配置的实时刷新间隔合并广播。
 
 /** 节流缓存：{ type: latestData } */
 const throttleCache = {}
 
 /** 各消息类型的节流间隔（毫秒） */
-const THROTTLE_INTERVALS = {
-    'sensor_data': 3000,
-    'behavior_data': 3000,
-    'error_data': 3000,
-}
+const THROTTLED_TYPES = new Set(['sensor_data', 'behavior_data', 'error_data'])
 
 /** 各消息类型的定时器 */
 const throttleTimers = {}
@@ -143,8 +154,15 @@ mqttClient.on('processedMessage', (topic, data) => {
     };
     const type = typeMap[topic] || 'unknown';
 
-    // 非节流类型（如 unknown）直接广播
-    if (!THROTTLE_INTERVALS[type]) {
+    // 非节流类型（如 unknown）直接广播。
+    if (!THROTTLED_TYPES.has(type)) {
+        broadcast(type, data)
+        return
+    }
+
+    // 0 表示不限制服务端推送；前端实时页同时会关闭自动刷新。
+    const interval = Number(systemConfig.getConfig().REALTIME_REFRESH_INTERVAL)
+    if (!Number.isFinite(interval) || interval <= 0) {
         broadcast(type, data)
         return
     }
@@ -161,7 +179,7 @@ mqttClient.on('processedMessage', (topic, data) => {
                 delete throttleCache[type]
             }
             delete throttleTimers[type]
-        }, THROTTLE_INTERVALS[type])
+        }, interval)
     }
 })
 

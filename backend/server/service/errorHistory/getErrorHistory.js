@@ -1,4 +1,5 @@
 const promisePool = require('../../config/dbPool')
+const systemConfig = require('../../config/systemConfig')
 
 const isValidDateTime = (dateStr) => {
     if (!dateStr) return true
@@ -55,7 +56,7 @@ const buildWhere = (query) => {
 // 查询带分页的故障历史记录，支持关键字和时间筛选。
 module.exports = async function getErrorHistory(query) {
     const page = parseInt(query.page) || 1
-    const pageSize = parseInt(query.pageSize) || 5
+    const pageSize = Math.min(100, Math.max(1, parseInt(query.pageSize) || systemConfig.getConfig().DEFAULT_PAGE_SIZE))
     const offset = (page - 1) * pageSize
     const { whereClause, params } = buildWhere(query)
 

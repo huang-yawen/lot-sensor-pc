@@ -5,7 +5,7 @@
         <CardContainer :data="data || []" />
       </div>
 
-      <div class="chart-wrapper">
+      <div class="chart-wrapper" v-if="chartsEnabled">
         <LineBarCharts :data="data || []" />
       </div>
     </div>
@@ -13,23 +13,38 @@
 </template>
 
 <script setup>
-import { computed, onMounted } from 'vue'
+import { computed, onMounted, onUnmounted } from 'vue'
 import CardContainer from '@/components/CardContainer.vue'
 import LineBarCharts from '@/components/LineBarCharts.vue'
 import { PaginationStore } from '@/stores/PaginationStore.js'
 import { transformBehaviorList } from '@/utils/fieldTransform'
+import { useSystemConfigStore } from '@/stores/SystemConfigStore'
 
 const store = PaginationStore()
+const systemStore = useSystemConfigStore()
 const online = '实时数据'
+let refreshTimer = null
 
 const data = computed(() => transformBehaviorList(store.paginationData || []))
+const chartsEnabled = computed(() => systemStore.config.ENABLE_CHARTS !== false)
+
+const reloadData = () => store.fetchPaginationData({
+  type: 'behavior',
+  online: online,
+  pageSize: systemStore.config.DEFAULT_PAGE_SIZE || 5,
+})
 
 onMounted(async () => {
-  await store.fetchPaginationData({
-    type: 'behavior',
-    online: online
-  })
+  await systemStore.load()
+  await reloadData()
+  const interval = Number(systemStore.config.REALTIME_REFRESH_INTERVAL)
+  if (interval > 0) refreshTimer = setInterval(reloadData, interval)
   console.log("BehaviorRealtime data:", store.paginationData)
+})
+
+onUnmounted(() => {
+  if (refreshTimer) clearInterval(refreshTimer)
+  refreshTimer = null
 })
 </script>
 

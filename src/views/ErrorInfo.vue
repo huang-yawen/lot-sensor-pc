@@ -40,12 +40,12 @@
       </div>
 
       <div class="pagination-wrapper">
-        <el-pagination v-model:current-page="currentPage" v-model:page-size="pageSize" :page-sizes="[5, 10, 15, 20]"
+        <el-pagination v-model:current-page="currentPage" v-model:page-size="pageSize" :page-sizes="pageSizeOptions"
           :background="true" layout="sizes, prev, pager, next" :total="store.total || 0"
           @size-change="handlePageSizeChange" @current-change="handlePageChange" />
       </div>
     </div>
-    <div class="chart-container">
+    <div class="chart-container" v-if="chartsEnabled">
       <div class="chart-panel">
         <PieChart :data="store.errTypeStats" />
       </div>
@@ -59,15 +59,19 @@ import { Search } from "@element-plus/icons-vue";
 import PieChart from "../components/PieChart.vue";
 import { ErrorStore } from "../stores/ErrorStore";
 import { DisplayStore } from "@/stores/DisplayStore";
+import { useSystemConfigStore } from "@/stores/SystemConfigStore";
 
 const store = ErrorStore();
 const displayStore = DisplayStore();
+const systemStore = useSystemConfigStore();
 
 const currentPage = ref(1);
 const pageSize = ref(5);
 const keyword = ref("");
 const dateRange = ref([]);
 const loading = ref(false);
+const chartsEnabled = computed(() => systemStore.config.ENABLE_CHARTS !== false);
+const pageSizeOptions = computed(() => [...new Set([pageSize.value, 5, 10, 15, 20])].sort((a, b) => a - b));
 
 // 故障记录是手写表格，也统一过滤 id/编号列。
 const headers = computed(() => {
@@ -110,6 +114,8 @@ const handlePageSizeChange = (size) => {
 };
 
 onMounted(async () => {
+  const config = await systemStore.load();
+  pageSize.value = config.DEFAULT_PAGE_SIZE || 5;
   await handleSearch();
 });
 </script>

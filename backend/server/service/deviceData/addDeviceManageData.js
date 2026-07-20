@@ -3,7 +3,6 @@ const promisePool = require('../../config/dbPool')
 /**
  * 添加设备记录
  * @param {Object} data - 设备数据
- * @param {number} data.id - 设备ID
  * @param {string} data['设备名称'] - 设备名称
  * @param {string} data['备注'] - 备注
  * @param {string} data['创立时间'] - 创建时间
@@ -11,14 +10,29 @@ const promisePool = require('../../config/dbPool')
  * @returns {Promise<{success: boolean, message: string}>}
  */
 module.exports = async (data) => {
-    const id = Number(data.id)
+    const deviceName = String(data['设备名称'] ?? '').trim()
     const deviceNumber = String(data['设备编号'] ?? data['电车编号id'] ?? '').trim()
-    if (!Number.isInteger(id) || !deviceNumber) {
-        return { success: false, message: 'id 和设备编号必须有效' }
+    const remarks = String(data['备注'] ?? '').trim() || null
+    if (!deviceName || !deviceNumber) {
+        return { success: false, message: '设备名称和设备编号不能为空' }
     }
-    await promisePool.execute(
-        `INSERT INTO \`t_device\` (id, device_name, remarks, ctime, number) VALUES (?, ?, ?, ?, ?)`,
-        [id, data['设备名称'], data['备注'], data['创立时间'], deviceNumber]
+
+    const [[duplicate]] = await promisePool.execute(
+        'SELECT id FROM `t_device` WHERE TRIM(`number`) = ? LIMIT 1',
+        [deviceNumber]
     )
-    return { success: true, message: '成功啦！', deviceNumber }
+    if (duplicate) return { success: false, message: `设备编号“${deviceNumber}”已存在` }
+
+    // id 使用 AUTO_INCREMENT，创建时间以数据库服务器为准，避免浏览器本地格式无法写入。
+    const [result] = await promisePool.execute(
+        'INSERT INTO `t_device` (device_name, remarks, ctime, number) VALUES (?, ?, NOW(), ?)',
+        [deviceName, remarks, deviceNumber]
+    )
+    return {
+        success: true,
+        message: '设备添加成功',
+        id: result.insertId,
+        deviceName,
+        deviceNumber,
+    }
 }

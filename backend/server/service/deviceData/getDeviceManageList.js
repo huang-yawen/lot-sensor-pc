@@ -1,4 +1,5 @@
 const promisePool = require('../../config/dbPool')
+const systemConfig = require('../../config/systemConfig')
 
 const buildDeviceQuery = (searchMode, keywordLike, useCollate = false) => {
     if (searchMode === 'deviceName') {
@@ -26,7 +27,7 @@ module.exports = async function getDeviceManageList(query) {
 
     // 分页参数
     const currentPage = Math.max(1, parseInt(query.currentPage, 10) || 1)
-    const pageSize = Math.max(1, parseInt(query.pageSize, 10) || 5)
+    const pageSize = Math.min(100, Math.max(1, parseInt(query.pageSize, 10) || systemConfig.getConfig().DEFAULT_PAGE_SIZE))
     const offset = (currentPage - 1) * pageSize
 
     const queryFields = buildDeviceQuery(searchMode, keywordLike)

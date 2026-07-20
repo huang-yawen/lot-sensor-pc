@@ -17,7 +17,7 @@
           </tr>
         </thead>
         <tbody>
-          <tr v-for="(item, index) in deviceData" :key="index">
+          <tr v-for="item in deviceData" :key="item.id">
             <td v-for="key in tableColumns" :key="key">{{ item[key] }}</td>
             <td>
               <el-button type="primary" @click="showEditForm(item)">修改</el-button>
@@ -35,7 +35,7 @@
       <el-pagination
         v-model:current-page="currentPage"
         v-model:page-size="pageSize"
-        :page-sizes="[5, 10, 15, 20]"
+        :page-sizes="pageSizeOptions"
         :background="true"
         layout="sizes, prev, pager, next"
         :total="store.total || 0"
@@ -53,7 +53,7 @@
           <div class="card-header"><span>新增数据：</span></div>
         </template>
 
-        <div v-for="(labelName, index) in labels" :key="index" class="form-row">
+        <div v-for="(labelName, index) in addLabels" :key="index" class="form-row">
           <label :for="index">{{ labelName }}:</label>
           <input :id="index" v-model="formData[labelName]" />
         </div>
@@ -73,9 +73,9 @@
           <div class="card-header"><span>修改数据：</span></div>
         </template>
 
-        <div v-for="(labelName, index) in labels" :key="index" class="form-row">
+        <div v-for="(labelName, index) in editLabels" :key="index" class="form-row">
           <label :for="index">{{ labelName }}:</label>
-          <input :id="index" v-model="editData[labelName]" />
+          <input :id="index" v-model="editData[labelName]" :disabled="labelName === 'id'" />
         </div>
 
         <template #footer>
@@ -92,18 +92,22 @@ import { Search } from '@element-plus/icons-vue'
 import { DeviceStore } from '@/stores/DeviceStore.js'
 import { DisplayStore } from '@/stores/DisplayStore'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { useSystemConfigStore } from '@/stores/SystemConfigStore'
 
 const store = DeviceStore()
 const displayStore = DisplayStore()
+const systemStore = useSystemConfigStore()
 const input = ref('')
 const formData = ref({})
 const editData = ref({})
 const oldId = ref(null)
-const labels = ref(['id', '设备名称', '设备编号', '备注'])
+const addLabels = ['设备名称', '设备编号', '备注']
+const editLabels = ['id', '设备名称', '设备编号', '备注']
 const showAdd = ref(false)
 const showEdit = ref(false)
 const currentPage = ref(1)
 const pageSize = ref(5)
+const pageSizeOptions = computed(() => [...new Set([pageSize.value, 5, 10, 15, 20])].sort((a, b) => a - b))
 
 const handlePageChange = (page) => {
   currentPage.value = page
@@ -139,7 +143,7 @@ const fetchData = async () => {
 }
 
 const resetForm = (form) => {
-  labels.value.forEach(label => form[label] = '')
+  addLabels.forEach(label => form[label] = '')
 }
 
 const handleSearch = async () => {
@@ -148,6 +152,7 @@ const handleSearch = async () => {
 }
 
 const showAddForm = () => {
+  resetForm(formData.value)
   showAdd.value = true
   showEdit.value = false
 }
@@ -155,12 +160,10 @@ const showAddForm = () => {
 const handleAdd = async () => {
   if (!validateForm(formData.value)) return
 
-  formData.value['创立时间'] = new Date().toLocaleString('zh-CN', { hour12: false })
-
   try {
     const res = await store.handleAdd(formData.value)
     if (res.data.success) {
-      ElMessage.success('添加成功')
+      ElMessage.success(res.data.message || '添加成功')
       resetForm(formData.value)
       showAdd.value = false
       await fetchData()
@@ -174,10 +177,8 @@ const handleAdd = async () => {
 }
 
 const validateForm = (form) => {
-  if (!form['id'] || isNaN(Number(form['id']))) { ElMessage.warning('id不能为空且必须为数字'); return false }
-  if (!form['设备名称']) { ElMessage.warning('设备名称不能为空'); return false }
-  if (!form['设备编号']) { ElMessage.warning('设备编号不能为空'); return false }
-  if (store.deviceData.some(item => Number(item.id) === Number(form['id']) && form !== editData.value)) { ElMessage.warning('id已存在'); return false }
+  if (!String(form['设备名称'] ?? '').trim()) { ElMessage.warning('设备名称不能为空'); return false }
+  if (!String(form['设备编号'] ?? '').trim()) { ElMessage.warning('设备编号不能为空'); return false }
   return true
 }
 
@@ -223,7 +224,7 @@ const handleUpdate = async () => {
     '备注': editData.value['备注'] ?? null,
     '设备名称': editData.value['设备名称'] ?? '',
     '设备编号': editData.value['设备编号'] ?? '',
-    'id': Number(editData.value['id'])
+    'id': Number(oldId.value)
   }
 
   console.log('准备修改的 payload:', updatePayload)
@@ -235,11 +236,7 @@ const handleUpdate = async () => {
       ElMessage.success('修改成功')
       showEdit.value = false
       oldId.value = null
-      await store.fetchDeviceData({ 
-        input: '', 
-        currentPage: 1, 
-        pageSize: pageSize.value 
-      })
+      await fetchData()
       console.log('刷新后的数据:', store.deviceData)
     } else {
       ElMessage.error('修改失败：' + (res.data.message || '未知错误'))
@@ -250,7 +247,11 @@ const handleUpdate = async () => {
   }
 }
 
-onMounted(() => fetchData())
+onMounted(async () => {
+  const config = await systemStore.load()
+  pageSize.value = config.DEFAULT_PAGE_SIZE || 5
+  await fetchData()
+})
 </script>
 
 <style scoped>
@@ -328,6 +329,12 @@ onMounted(() => fetchData())
   border-color: #374270;
   box-shadow: 0 0 0 3px rgba(55, 66, 112, 0.1);
   background-color: #fff;
+}
+
+.form-row input:disabled {
+  color: #64748b;
+  background-color: #f1f5f9;
+  cursor: not-allowed;
 }
 
 .table {

@@ -17,7 +17,7 @@ const { ensureOperationHistoryTable } = require('./saveOperationHistory')
  * @param {number|null} params.config_id - 指令类型ID（筛选特定指令配置）
  * @returns {Promise<{rows: Array, total: number}>}
  */
-async function getOperationHistory({ currentPage = 1, pageSize = 10, startTime = null, endTime = null, config_id = null }) {
+async function getOperationHistory({ currentPage = 1, pageSize = 5, startTime = null, endTime = null, config_id = null }) {
   await ensureOperationHistoryTable()
   const conditions = []
   const queryParams = []

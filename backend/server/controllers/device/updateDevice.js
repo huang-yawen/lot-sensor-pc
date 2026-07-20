@@ -5,7 +5,10 @@ module.exports = async (req, res) => {
     try {
         const result = await updateDeviceManageData(req.body)
         if (result.success) {
-            mqttClient.renameDevice(result.oldDeviceNumber, result.deviceNumber)
+            mqttClient.renameDevice(result.oldDeviceNumber, result.deviceNumber, {
+                id: result.id,
+                deviceName: result.deviceName,
+            })
         }
         res.json(result)
     } catch (err) {

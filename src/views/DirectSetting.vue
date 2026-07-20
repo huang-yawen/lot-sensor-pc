@@ -9,14 +9,14 @@
 
     <!-- ========== 设备指令配置 ========== -->
     <div class="panel device-panel">
-      <h3 class="panel-title">设备指令配置</h3>
+      <h3 class="panel-title">{{ deviceLabel }}指令配置</h3>
       
       <!-- 设备选择器（单设备模式隐藏） -->
       <div class="device-selector" v-if="!hideDevicePicker">
-        <span class="selector-label">设备编号：</span>
+        <span class="selector-label">{{ deviceLabel }}编号：</span>
         <el-dropdown @command="handleCommand" trigger="click">
           <span class="el-dropdown-link">
-            {{ selectedDeviceId || '请选择设备' }}
+            {{ selectedDeviceId || `请选择${deviceLabel}` }}
             <el-icon class="el-icon--right"><arrow-down /></el-icon>
           </span>
           <template #dropdown>
@@ -29,7 +29,7 @@
         </el-dropdown>
       </div>
 
-      <div class="state" v-if="!selectedDeviceId && !hideDevicePicker">请选择设备以配置指令</div>
+      <div class="state" v-if="!selectedDeviceId && !hideDevicePicker">请选择{{ deviceLabel }}以配置指令</div>
       <div class="state" v-else-if="loading">加载中...</div>
       <div class="device-content" v-else>
         <DeviceSetting :storeData="store.data" :renderData="store.renderData"
@@ -44,25 +44,22 @@
 import DeviceSetting from '@/components/direct/DeviceSetting.vue'
 import { DirectStore } from '@/stores/DirectStore'
 import { DeviceStore } from '@/stores/DeviceStore' 
-import { DisplayStore } from '@/stores/DisplayStore'
+import { useSystemConfigStore } from '@/stores/SystemConfigStore'
 import { computed, ref, onMounted } from 'vue'
 import { ArrowDown } from '@element-plus/icons-vue'
 
 const store = DirectStore()
 const dStore = DeviceStore() 
-const displayStore = DisplayStore()
+const systemStore = useSystemConfigStore()
 
 const selectedDeviceId = ref(null)
 const ids = computed(() => dStore.ids || [])
-const singleDeviceMode = ref(true)
 const loading = ref(false)
+const singleDeviceMode = computed(() => systemStore.config.SINGLE_DEVICE_MODE === true)
+const deviceLabel = computed(() => systemStore.config.DEVICE_LABEL || systemStore.config.TERMINOLOGY?.device || '设备')
 
-// 单设备模式或字段可见性配置决定是否隐藏设备选择器
-const hideDevicePicker = computed(() => {
-  if (singleDeviceMode.value) return true
-  // 多设备模式：根据字段可见性配置决定
-  return !displayStore.isFieldVisible('设备编号')
-})
+// 选择器与编号列是两个独立开关，避免隐藏编号列时意外禁用多设备选择。
+const hideDevicePicker = computed(() => singleDeviceMode.value || systemStore.config.HIDE_DEVICE_SELECTOR === true)
 
 const handleCommand = (command) => {
   selectedDeviceId.value = command
@@ -71,14 +68,10 @@ const handleCommand = (command) => {
 onMounted(async () => {
   loading.value = true
   try {
+    await systemStore.load()
     await dStore.fetchDeviceData({ currentPage: 1, pageSize: 999 })
     await store.fetchDirectData()
-    
-    // 获取单设备模式配置（通过 handleRender 获取）
-    const result = await store.handleRender('null')
-    if (result.singleDeviceMode !== undefined) {
-      singleDeviceMode.value = result.singleDeviceMode
-    }
+    await store.handleRender('null')
     
     // 单设备模式：自动选中第一个设备
     if (singleDeviceMode.value && ids.value.length > 0) {

@@ -7,11 +7,13 @@
 const promisePool = require('../../config/dbPool')
 const { getOperationHistory } = require('../../service/operationHistory/getOperationHistory')
 const { ensureOperationHistoryTable } = require('../../service/operationHistory/saveOperationHistory')
+const systemConfig = require('../../config/systemConfig')
 
 // GET /api/operation-history — 获取操作历史列表
 const getHistoryList = async (req, res) => {
   try {
-    const { currentPage = 1, pageSize = 10, config_id, startTime, endTime } = req.query
+    const { currentPage = 1, config_id, startTime, endTime } = req.query
+    const pageSize = Math.min(100, Math.max(1, Number(req.query.pageSize) || systemConfig.getConfig().DEFAULT_PAGE_SIZE))
     const result = await getOperationHistory({
       currentPage: Number(currentPage),
       pageSize: Number(pageSize),

@@ -33,6 +33,7 @@ export default defineConfig({
       '/api/operation-history': backendProxy,
       '/api/derived-metrics': backendProxy,
       '/api/mqtt/status': backendProxy,
+      '/api/device-status': backendProxy,
       '/ws': {
         ...backendProxy,
         ws: true
