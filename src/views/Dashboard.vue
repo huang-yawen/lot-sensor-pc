@@ -32,6 +32,55 @@
       </article>
     </section>
 
+    <!-- ==================== 累计派生指标独立图表区（standalone / both 模式） ==================== -->
+    <section v-if="cumulativeEntries.length > 0" class="cumulative-section">
+      <h2 class="section-title">累计统计</h2>
+      <div class="cumulative-grid" :style="{ gridTemplateColumns: `repeat(${Math.min(cumulativeEntries.length, 2)}, 1fr)` }">
+        <div v-for="entry in cumulativeEntries" :key="entry.key" class="cumulative-card">
+          <div class="cumulative-card-header">
+            <h3>{{ entry.config.metric_name }}</h3>
+            <el-tag size="small">{{ entry.config.unit }}</el-tag>
+          </div>
+          <div class="cumulative-chart-wrapper">
+            <div v-if="entry.rows.length === 0" class="empty-chart">
+              <el-empty description="暂无累计数据" :image-size="60" />
+            </div>
+            <div
+              v-else
+              :ref="(el) => setChartRef(entry.key, el)"
+              class="cumulative-chart"
+            ></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==================== 时间窗口派生指标独立图表区（standalone / both 模式） ==================== -->
+    <section v-if="timeWindowEntries.length > 0" class="cumulative-section">
+      <h2 class="section-title">滑动统计</h2>
+      <div class="cumulative-grid" :style="{ gridTemplateColumns: `repeat(${Math.min(timeWindowEntries.length, 2)}, 1fr)` }">
+        <div v-for="entry in timeWindowEntries" :key="entry.key" class="cumulative-card">
+          <div class="cumulative-card-header">
+            <h3>{{ entry.config.metric_name }}</h3>
+            <el-tag size="small" :type="entry.config.aggregation === 'avg' ? 'success' : entry.config.aggregation === 'volatility' ? 'warning' : 'info'">
+              {{ entry.config.aggregation === 'avg' ? '平滑' : entry.config.aggregation === 'volatility' ? '波动' : '变化率' }}
+            </el-tag>
+            <el-tag size="small">{{ entry.config.unit }}</el-tag>
+          </div>
+          <div class="cumulative-chart-wrapper">
+            <div v-if="entry.rows.length === 0" class="empty-chart">
+              <el-empty description="暂无窗口数据" :image-size="60" />
+            </div>
+            <div
+              v-else
+              :ref="(el) => setChartRef(entry.key, el)"
+              class="cumulative-chart"
+            ></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
     <section class="dashboard-grid">
       <article class="panel sensor-panel">
         <div class="panel-heading">
@@ -78,8 +127,9 @@
 </template>
 
 <script setup>
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch, nextTick } from 'vue'
 import api from '@/api'
+import * as echarts from 'echarts'
 import { connect, on as wsOn } from '@/utils/websocket'
 import { useSystemConfigStore } from '@/stores/SystemConfigStore'
 import { DisplayStore } from '@/stores/DisplayStore'
@@ -112,6 +162,105 @@ function displayValue(value, field) {
   if (value === null || value === undefined || value === '') return '--'
   const unit = fieldUnits.value[field]
   return unit ? `${value} ${unit}` : value
+}
+
+// ==================== 累计 + 时间窗口派生指标（共用的图表渲染引擎） ====================
+const cumulativeEntries = computed(() => {
+  const data = dashboard.value.cumulativeData || {}
+  return Object.entries(data)
+    .filter(([, v]) => v.rows && v.rows.length > 0)
+    .map(([key, v]) => ({ key, config: v.config, rows: v.rows }))
+})
+
+const timeWindowEntries = computed(() => {
+  const data = dashboard.value.timeWindowData || {}
+  return Object.entries(data)
+    .filter(([, v]) => v.rows && v.rows.length > 0)
+    .map(([key, v]) => ({ key, config: v.config, rows: v.rows }))
+})
+
+/** 存放每个图表的 ECharts 实例 */
+const chartInstances = {}
+/** element refs 的 map */
+const chartRefs = {}
+
+function setChartRef(key, el) {
+  if (el && !chartRefs[key]) {
+    chartRefs[key] = el
+    nextTick(() => renderEntryChart(key))
+  }
+}
+
+function renderEntryChart(key) {
+  // 同时搜索两个 entry 列表
+  let entry = cumulativeEntries.value.find(e => e.key === key)
+  if (!entry) entry = timeWindowEntries.value.find(e => e.key === key)
+  if (!entry) return
+  const el = chartRefs[key]
+  if (!el || el.offsetWidth === 0) {
+    setTimeout(() => renderEntryChart(key), 50)
+    return
+  }
+  if (chartInstances[key]) chartInstances[key].dispose()
+  const chart = echarts.init(el)
+  chartInstances[key] = chart
+  const rows = entry.rows
+  const name = entry.config.metric_name
+  const unit = entry.config.unit || ''
+  const color = entry.config.color || '#0ea5e9'
+  const type = entry.config.chart_type || 'line'
+
+  // 累计指标数据在 r.cumulative，时间窗口在 r.value
+  const isCumulative = cumulativeEntries.value.some(e => e.key === key)
+  const data = isCumulative ? rows.map(r => r.cumulative) : rows.map(r => r.value)
+
+  const times = rows.map(r => r.c_time
+    ? new Date(r.c_time).toLocaleString('zh-CN', {
+        year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', second: '2-digit',
+        hour12: false,
+      })
+    : '')
+  chart.setOption({
+    tooltip: { trigger: 'axis' },
+    toolbox: {
+      feature: {
+        magicType: { type: ['line', 'bar'] },
+        saveAsImage: { title: '下载图片' },
+      },
+      right: 10,
+      top: 0,
+    },
+    grid: { left: 14, right: 60, top: 40, bottom: 50 },
+    xAxis: { type: 'category', data: times, axisLabel: { rotate: 15, fontSize: 10 } },
+    yAxis: { type: 'value', name: unit, nameTextStyle: { fontSize: 11 } },
+    series: [
+      {
+        name,
+        type,
+        data,
+        itemStyle: { color },
+        lineStyle: { color },
+        smooth: true,
+      }
+    ]
+  }, true)
+}
+
+// 监听两个列表变化
+const allEntries = computed(() => [...cumulativeEntries.value, ...timeWindowEntries.value])
+watch(allEntries, () => {
+  nextTick(() => {
+    allEntries.value.forEach(e => {
+      if (chartRefs[e.key]) renderEntryChart(e.key)
+    })
+  })
+}, { deep: true })
+
+function disposeAllCharts() {
+  Object.values(chartInstances).forEach(c => c?.dispose())
+  for (const key in chartInstances) delete chartInstances[key]
+  for (const key in chartRefs) delete chartRefs[key]
 }
 
 async function loadDashboard() {
@@ -149,6 +298,7 @@ onUnmounted(() => {
   unsubscribeStatus?.()
   unsubscribeSensor?.()
   unsubscribeError?.()
+  disposeAllCharts()
 })
 </script>
 
@@ -180,6 +330,18 @@ onUnmounted(() => {
 .status-row { display: grid; grid-template-columns: 12px 1fr auto; align-items: center; gap: 9px; padding: 12px; border-radius: 10px; background: #f8fafc; }
 .status-dot { width: 10px; height: 10px; border-radius: 50%; background: #94a3b8; }
 .status-dot.active { background: #10b981; box-shadow: 0 0 0 4px #d1fae5; }
-@media (max-width: 1050px) { .metric-grid { grid-template-columns: repeat(2, 1fr); } .dashboard-grid { grid-template-columns: 1fr; } }
+
+/* ===== 累计图表区 ===== */
+.cumulative-section { margin: 0 0 16px; }
+.section-title { margin: 0 0 12px; font-size: 20px; color: #0f172a; }
+.cumulative-grid { display: grid; gap: 14px; }
+.cumulative-card { border: 1px solid #e5e7eb; border-radius: 14px; background: #fff; box-shadow: 0 6px 20px rgba(15, 23, 42, .05); padding: 20px; }
+.cumulative-card-header { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.cumulative-card-header h3 { margin: 0; font-size: 16px; color: #0f172a; }
+.cumulative-chart-wrapper { min-height: 240px; }
+.cumulative-chart { width: 100%; height: 240px; }
+.empty-chart { display: flex; align-items: center; justify-content: center; min-height: 240px; }
+
+@media (max-width: 1050px) { .metric-grid { grid-template-columns: repeat(2, 1fr); } .dashboard-grid { grid-template-columns: 1fr; } .cumulative-grid { grid-template-columns: 1fr !important; } }
 @media (max-width: 700px) { .hero-panel { align-items: flex-start; flex-direction: column; } .metric-grid, .reading-grid { grid-template-columns: 1fr; } }
 </style>

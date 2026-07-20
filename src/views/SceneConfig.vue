@@ -95,6 +95,10 @@
         <DerivedMetricConfig class="embedded-config" />
       </el-tab-pane>
 
+      <el-tab-pane label="累计与滑动统计" name="aggregation">
+        <AggregationMetricConfig class="embedded-config" />
+      </el-tab-pane>
+
       <el-tab-pane label="完整字段说明" name="reference">
         <div class="reference-toolbar">
           <el-input v-model="helpKeyword" clearable placeholder="搜索配置名、中文用途、示例或注意事项，例如：operation、主题、超时" />
@@ -120,6 +124,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import api from '@/api'
 import { useSystemConfigStore } from '@/stores/SystemConfigStore'
 import DerivedMetricConfig from '@/views/DerivedMetricConfig.vue'
+import AggregationMetricConfig from '@/views/AggregationMetricConfig.vue'
 
 const text = ref('')
 const saving = ref(false)
@@ -128,7 +133,7 @@ const jsonEditor = ref(null)
 const helpKeyword = ref('')
 const route = useRoute()
 const router = useRouter()
-const validTabs = ['guide', 'scene', 'formula', 'reference']
+const validTabs = ['guide', 'scene', 'formula', 'aggregation', 'reference']
 const activeTab = ref(validTabs.includes(route.query.tab) ? route.query.tab : 'guide')
 const systemStore = useSystemConfigStore()
 
@@ -137,6 +142,7 @@ const quickGuide = [
   { title: 'MQTT 与设备字段', tab: 'scene', description: '系统固定使用 MQTT，但现场 Broker、主题和上报 JSON 字段仍可能变化。', items: ['核对 Broker、QoS 和五类主题', '配置设备编号、时间字段候选名', '统一 open/close 与 on/off 控制值'] },
   { title: '字段、控制、告警与判定', tab: 'scene', description: '这些内容随任务书变化最大，都包含在同一个场景包的 config 和 metadata 中。', items: ['传感字段和运行状态映射', '按钮、开关、滑块等控制项', '本地告警、联锁和 HTTP 智能判定'] },
   { title: 'SQL 公式与 ECharts', tab: 'formula', description: '用可视化表单建立派生指标，查询时由 MySQL 计算，再自动加入实时、历史和图表。', items: ['支持公式验证和测试值试算', '配置单位、精度和显示页面', '配置折线/柱状、左右轴、颜色和范围'] },
+  { title: '累计与滑动统计', tab: 'aggregation', description: '用统一表单配置累计值、滑动平均、波动幅度和相邻变化量。', items: ['可选择传感数据或运行状态字段', '可仅在首页、仅在历史页或两处显示', '保存时统一校验字段、精度、窗口和图表参数'] },
 ]
 
 const configHelp = [
@@ -157,6 +163,8 @@ const configHelp = [
   { group: '功能开关', key: 'ENABLE_CHARTS', description: '是否显示实时和历史 ECharts 图表。', example: 'true', notice: '重点考 ECharts 时保持开启。' },
   { group: '功能开关', key: 'ENABLE_LOCAL_ALARM', description: '是否由服务端根据规则计算告警。', example: 'true', notice: '不影响设备主动上报告警。' },
   { group: '功能开关', key: 'ENABLE_AUTO_INTERLOCK', description: '告警触发后是否自动执行控制动作。', example: 'false', notice: '危险项；实机协议和接线确认前必须为 false。' },
+  { group: '统计指标', key: 'CUMULATIVE_METRICS', description: '从第一条匹配数据开始累计数值字段。', example: 'field3 → 累计流量', notice: '建议在“累计与滑动统计”页可视化修改。' },
+  { group: '统计指标', key: 'TIME_WINDOW_METRICS', description: '按最近 N 条计算滑动平均、波动幅度或相邻变化量。', example: 'field2 / 5 条 / avg', notice: '建议在“累计与滑动统计”页可视化修改。' },
   { group: '刷新分页', key: 'DEFAULT_PAGE_SIZE', description: '历史列表默认每页条数，范围 1-100。', example: '10', notice: '只影响默认分页大小。' },
   { group: '刷新分页', key: 'REALTIME_REFRESH_INTERVAL', description: '实时数据刷新间隔，单位毫秒；0 表示关闭自动刷新。', example: '3000', notice: '过小会增加数据库和网络负担。' },
   { group: '刷新分页', key: 'HEARTBEAT_TIMEOUT', description: '多久未收到心跳即判定设备离线，单位毫秒。', example: '10000', notice: '必须不小于 1000，通常取心跳周期的 2-3 倍。' },
@@ -178,8 +186,21 @@ const configHelp = [
   { group: '告警联锁', key: 'ALARM_RULES', description: '配置字段、比较符、阈值、前置条件、冷却时间及可选联锁动作。', example: 'flow < 0.5 时关闭 heater', notice: 'action 仅在自动联锁开启时执行。' },
   { group: '数据库映射', key: 'metadata.t_sensor_field_mapper', description: '传感数据中文名、field1-field10、MQTT 属性名、单位和显示开关。', example: 'field1 = 进水温度 = Tin', notice: '赛题换字段时重点修改。' },
   { group: '数据库映射', key: 'metadata.t_behavior_field_mapper', description: '水泵、加热、阀门等运行状态字段映射。', example: 'field1 = 水泵 = pump', notice: '属性名要与设备状态上报一致。' },
-  { group: '数据库映射', key: 'metadata.t_direct_config', description: '控制项名称、控件类型、范围、下发字段和值。', example: '水泵开关 / switch / pump', notice: '保存后决定“指令配置”页面生成哪些控件。' },
-  { group: 'SQL与图表', key: 'metadata.t_derived_metric', description: '派生指标公式、单位、精度和 ECharts 样式。', example: 'field2-field1 = 温差', notice: '建议在“公式与图表”页可视化编辑。' },
+  { group: '数据库映射', key: 'metadata.t_direct_config', description: '控制项名称、控件类型、范围、下发字段和值。', example: '水泵开关 / switch / pump', notice: '保存后决定\u201c指令配置\u201d页面生成哪些控件。' },
+  { group: 'SQL与图表', key: 'metadata.t_derived_metric', description: '派生指标公式、单位、精度和 ECharts 样式。', example: 'field2-field1 = 温差', notice: '建议在\u201c公式与图表\u201d页可视化编辑。' },
+  { group: '2026水循环\u00b7传感字段映射', key: 'field1 (进水温度)', description: '进水口温度传感器，MQTT属性名建议 Tin 或 inlet_temperature，单位 \u2103。', example: 'Tin', notice: '请确认现场实际属性名。' },
+  { group: '2026水循环\u00b7传感字段映射', key: 'field2 (出水温度)', description: '出水口温度传感器，MQTT属性名建议 Tout 或 outlet_temperature，单位 \u2103。', example: 'Tout', notice: '与进水温度分属不同位置。' },
+  { group: '2026水循环\u00b7传感字段映射', key: 'field3 (循环流量)', description: '流量传感器，MQTT属性名建议 Flow 或 flow_rate，单位 L/min。', example: 'Flow', notice: '可能有累计值需求。' },
+  { group: '2026水循环\u00b7传感字段映射', key: 'field4 (管路压力)', description: '压力传感器，MQTT属性名建议 Pressure 或 pressure，单位 kPa。', example: 'Pressure', notice: '管路过压需告警。' },
+  { group: '2026水循环\u00b7行为字段映射', key: 'behavior field1 (水泵)', description: '水泵状态，MQTT属性名建议 pump。', example: 'pump', notice: '确认与CONTROL_VALUE_MAP一致。' },
+  { group: '2026水循环\u00b7行为字段映射', key: 'behavior field2 (加热模块)', description: '加热模块状态，MQTT属性名建议 heater。', example: 'heater', notice: '水泵未开时禁止加热。' },
+  { group: '2026水循环\u00b7控制项', key: 'd_config 水泵开关', description: '控件类型 switch，下发属性 pump，值 on/off。', example: 'preffix: pump', notice: '经CONTROL_VALUE_MAP转换为设备真实值。' },
+  { group: '2026水循环\u00b7控制项', key: 'd_config 加热开关', description: '控件类型 switch，下发属性 heater，值 on/off。', example: 'preffix: heater', notice: '联锁时自动关闭。' },
+  { group: '2026水循环\u00b7派生指标', key: 't_derived_metric 温差', description: '进出水温差 = field2 - field1，精度1位。', example: 'delta_temp / 温差 / field2 - field1', notice: '折线图左轴展示。' },
+  { group: '2026水循环\u00b7派生指标', key: 't_derived_metric 平均温度', description: '平均温度 = (field1 + field2) / 2，精度1位。', example: 'avg_temp / 平均温度 / (field1+field2)/2', notice: '折线图左轴展示。' },
+  { group: '2026水循环\u00b7告警配置', key: 'ALARM_RULES 温度过高', description: '出水温度 > 80\u2103 告警，可选联锁关闭加热。', example: 'field: Tout, >, 80', notice: '联锁前必须ENABLE_AUTO_INTERLOCK=false。' },
+  { group: '2026水循环\u00b7告警配置', key: 'ALARM_RULES 流量过低', description: '水泵开启时流量 < 0.5 L/min 告警。', example: 'require: pump values: [open]', notice: '水泵未开时不触发。' },
+  { group: '2026水循环\u00b7告警配置', key: 'ALARM_RULES 压力过高', description: '管路压力 > 500 kPa 告警，可选联锁关闭水泵。', example: 'field: Pressure, >, 500', notice: '防止管路破裂。' },
 ]
 
 const filteredHelp = computed(() => {
@@ -237,7 +258,7 @@ async function readFile(event) {
     const content = await file.text()
     JSON.parse(content)
     text.value = content
-    ElMessage.success('场景文件已载入，请检查后点击“校验并应用”')
+    ElMessage.success('场景文件已载入，请检查后点击\u201c校验并应用\u201d')
   } catch (error) { ElMessage.error(`文件不是有效 JSON：${error.message}`) }
   event.target.value = ''
 }

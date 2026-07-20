@@ -22,9 +22,13 @@
       </el-collapse-item>
     </el-collapse>
     <div class="examples">
-      <span>示例：</span>
-      <code>field2 - field1</code><span>温差</span>
-      <code>field3 * (field2 - field1) * 0.0697</code><span>估算换热功率(kW)</span>
+      <span>2026水循环示例：</span>
+      <code>field2 - field1</code><span>进出水温差(℃)</span>
+      <code>(field1 + field2) / 2</code><span>平均温度(℃)</span>
+      <code>abs(field2 - field1)</code><span>温差绝对值(℃)</span>
+      <code>field3</code><span>循环流量(L/min，直接映射用柱状图)</span>
+      <code>max(field2, field1)</code><span>最高温度(℃)</span>
+      <code>round(field2 - field1, 1)</code><span>温差四舍五入到1位小数</span>
     </div>
     <div class="toolbar">
       <el-button type="primary" @click="openCreate">新增公式指标</el-button>

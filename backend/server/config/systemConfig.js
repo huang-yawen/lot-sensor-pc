@@ -114,7 +114,166 @@ const defaultConfig = {
   ENABLE_AUTO_INTERLOCK: false,
 
   // --------------------------------------------------------------------------
-  // 4. 分页、刷新与在线判定（单位：毫秒）
+  // 4. 累计与滑动统计指标
+  // --------------------------------------------------------------------------
+  // 每条配置代表一个“累计某字段”的指标，后端用 MySQL 窗口函数 SUM/AVG/COUNT
+  // OVER (ORDER BY c_time ROWS UNBOUNDED PRECEDING) 计算累加值。
+  // 字段说明：
+  //   metric_key   - 数据库标识（小写字母+下划线），如 cumulative_flow
+  //   metric_name  - 页面显示中文名，如“累计流量”
+  //   source_table - 源表：t_sensor_data 或 t_behavior_data
+  //   source_field - 源表中的数值字段（如 field3）
+  //   unit         - 单位，如 L、min
+  //   enabled      - true 启用累计计算；false 仅保留配置不查询
+  //   mode         - "inline"=合入历史表/图表，"standalone"=仅首页独立展示，"both"=两者同时
+  //   precision    - 小数位数
+  //   chart_type   - ECharts 图表类型：line 或 bar
+  //   color        - 图表系列颜色
+  // 2026 水循环示例：累计流量、累计加热时长、累计水泵运行时长
+  CUMULATIVE_METRICS: [
+    {
+      metric_key: 'cumulative_flow',
+      metric_name: '累计流量',
+      source_table: 't_sensor_data',
+      source_field: 'field3',
+      unit: 'L',
+      enabled: false,
+      mode: 'standalone',
+      precision: 2,
+      chart_type: 'bar',
+      color: '#0ea5e9',
+    },
+    {
+      metric_key: 'cumulative_heat_time',
+      metric_name: '累计加热时长',
+      source_table: 't_behavior_data',
+      source_field: 'heater_on_seconds',
+      unit: 'min',
+      enabled: false,
+      mode: 'standalone',
+      precision: 1,
+      chart_type: 'line',
+      color: '#f59e0b',
+    },
+    {
+      metric_key: 'cumulative_pump_time',
+      metric_name: '累计水泵运行时长',
+      source_table: 't_behavior_data',
+      source_field: 'pump_on_seconds',
+      unit: 'min',
+      enabled: false,
+      mode: 'standalone',
+      precision: 1,
+      chart_type: 'line',
+      color: '#10b981',
+    },
+  ],
+
+  // --------------------------------------------------------------------------
+  // 时间窗口指标使用 MySQL 窗口函数实时计算滑动平均、波动幅度和相邻变化量。
+  // 每条配置使用 MySQL LAG + 窗口函数实时计算滑动统计指标。
+  // 字段说明：
+  //   metric_key    - 数据库标识（小写字母+下划线）
+  //   metric_name   - 页面显示中文名
+  //   source_table  - 源表：t_sensor_data 或 t_behavior_data
+  //   source_field  - 源字段 db_name（如 field2）
+  //   aggregation   - 聚合类型：avg(滑动平均) | volatility(MAX-MIN波动) | rate(变化率)
+  //   window_size   - 滑动窗口行数（rate类型固定为2行差值）
+  //   unit          - 单位
+  //   enabled       - true 启用
+  //   mode          - "standalone"=仅首页独立展示，"inline"=合入历史图表，"both"=两者同时
+  //   chart_type    - ECharts 图表类型：line 或 bar
+  //   color         - 图表系列颜色
+  // 王玺博士关注的：滑动平均（热惯性）、波动幅度（湍流/水锤）、变化率（升温速率/堵塞检测）
+  TIME_WINDOW_METRICS: [
+    {
+      metric_key: 'rolling_avg_temp',
+      metric_name: '出水温度滑动平均(5点)',
+      source_table: 't_sensor_data',
+      source_field: 'field2',
+      aggregation: 'avg',
+      window_size: 5,
+      unit: '℃',
+      precision: 2,
+      enabled: false,
+      mode: 'standalone',
+      chart_type: 'line',
+      color: '#3b82f6',
+    },
+    {
+      metric_key: 'rolling_avg_flow',
+      metric_name: '流量滑动平均(5点)',
+      source_table: 't_sensor_data',
+      source_field: 'field3',
+      aggregation: 'avg',
+      window_size: 5,
+      unit: 'L/min',
+      precision: 2,
+      enabled: false,
+      mode: 'standalone',
+      chart_type: 'line',
+      color: '#0ea5e9',
+    },
+    {
+      metric_key: 'flow_volatility',
+      metric_name: '流量波动幅度(10点)',
+      source_table: 't_sensor_data',
+      source_field: 'field3',
+      aggregation: 'volatility',
+      window_size: 10,
+      unit: 'L/min',
+      precision: 2,
+      enabled: false,
+      mode: 'standalone',
+      chart_type: 'bar',
+      color: '#f59e0b',
+    },
+    {
+      metric_key: 'pressure_pulsation',
+      metric_name: '压力脉动(20点)',
+      source_table: 't_sensor_data',
+      source_field: 'field4',
+      aggregation: 'volatility',
+      window_size: 20,
+      unit: 'kPa',
+      precision: 2,
+      enabled: false,
+      mode: 'standalone',
+      chart_type: 'bar',
+      color: '#ef4444',
+    },
+    {
+      metric_key: 'temp_rising_rate',
+      metric_name: '升温速率',
+      source_table: 't_sensor_data',
+      source_field: 'field2',
+      aggregation: 'rate',
+      window_size: 2,
+      unit: '℃/次',
+      precision: 2,
+      enabled: false,
+      mode: 'standalone',
+      chart_type: 'line',
+      color: '#f97316',
+    },
+    {
+      metric_key: 'flow_decay_rate',
+      metric_name: '流量衰减率',
+      source_table: 't_sensor_data',
+      source_field: 'field3',
+      aggregation: 'rate',
+      window_size: 2,
+      unit: 'L/min/次',
+      precision: 2,
+      enabled: false,
+      mode: 'standalone',
+      chart_type: 'line',
+      color: '#8b5cf6',
+    },
+  ],
+
+  // --------------------------------------------------------------------------
+  // 5. 分页、刷新与在线判定（单位：毫秒）
   // --------------------------------------------------------------------------
   // 历史表格默认每页条数，允许 1-100。
   DEFAULT_PAGE_SIZE: 5,
@@ -126,7 +285,7 @@ const defaultConfig = {
   HEARTBEAT_TIMEOUT: 10000,
 
   // --------------------------------------------------------------------------
-  // 5. MQTT 连接与主题
+  // 6. MQTT 连接与主题
   // --------------------------------------------------------------------------
   // Broker 地址，必须以 mqtt:// 或 mqtts:// 开头，例如 mqtt://192.168.1.10:1883。
   MQTT_URL: process.env.MQTT_URL || 'mqtt://localhost:1883',
@@ -155,7 +314,7 @@ const defaultConfig = {
   },
 
   // --------------------------------------------------------------------------
-  // 6. 上报协议兼容
+  // 7. 上报协议兼容
   // --------------------------------------------------------------------------
   // 普通数据包中“设备编号”的候选字段，按数组顺序查找，大小写不敏感。
   // 例如设备上报 {"deviceId":"water-01"} 时会命中 deviceId。
@@ -184,7 +343,7 @@ const defaultConfig = {
   },
 
   // --------------------------------------------------------------------------
-  // 7. 页面术语
+  // 8. 页面术语
   // --------------------------------------------------------------------------
   // 只改变页面名称，不影响 MQTT、数据库表名或 API 路径。
   TERMINOLOGY: {
@@ -196,7 +355,7 @@ const defaultConfig = {
   },
 
   // --------------------------------------------------------------------------
-  // 8. HTTP 智能判定适配器
+  // 9. HTTP 智能判定适配器
   // --------------------------------------------------------------------------
   INTELLIGENT_JUDGMENT: {
     // true 才请求现场 HTTP 服务；false 时根据 mockWhenDisabled 决定是否返回占位结果。
@@ -237,7 +396,7 @@ const defaultConfig = {
   },
 
   // --------------------------------------------------------------------------
-  // 9. 本地告警与安全联锁规则
+  // 10. 本地告警与安全联锁规则
   // --------------------------------------------------------------------------
   // 每条规则字段说明：
   // id：稳定且唯一的英文编号，也作为告警编号；name：页面显示名称；
@@ -327,6 +486,44 @@ function mergeKnown(base, incoming) {
   return result
 }
 
+const METRIC_TABLES = new Set(['t_sensor_data', 't_behavior_data'])
+const METRIC_MODES = new Set(['standalone', 'inline', 'both'])
+const IDENTIFIER_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/
+
+function validateMetricBase(metric, pathName) {
+  if (!metric || typeof metric !== 'object' || Array.isArray(metric)) throw new Error(`${pathName} 必须是 JSON 对象`)
+  for (const key of ['metric_key', 'metric_name', 'source_table', 'source_field']) {
+    if (typeof metric[key] !== 'string' || !metric[key].trim()) throw new Error(`${pathName}.${key} 不能为空`)
+  }
+  if (!IDENTIFIER_PATTERN.test(metric.metric_key)) throw new Error(`${pathName}.metric_key 只能包含字母、数字和下划线，且不能以数字开头`)
+  if (!METRIC_TABLES.has(metric.source_table)) throw new Error(`${pathName}.source_table 只能是 t_sensor_data 或 t_behavior_data`)
+  if (!IDENTIFIER_PATTERN.test(metric.source_field)) throw new Error(`${pathName}.source_field 必须是合法字段名`)
+  if (typeof metric.enabled !== 'boolean') throw new Error(`${pathName}.enabled 必须是布尔值`)
+  if (!METRIC_MODES.has(metric.mode)) throw new Error(`${pathName}.mode 只能是 standalone、inline 或 both`)
+  if (metric.precision !== undefined && (!Number.isInteger(metric.precision) || metric.precision < 0 || metric.precision > 6)) throw new Error(`${pathName}.precision 必须是 0-6 的整数`)
+  if (!['line', 'bar'].includes(metric.chart_type)) throw new Error(`${pathName}.chart_type 只能是 line 或 bar`)
+  if (typeof metric.color !== 'string' || !/^#[0-9a-f]{6}$/i.test(metric.color)) throw new Error(`${pathName}.color 必须是 #RRGGBB 颜色`)
+  if (typeof metric.unit !== 'string') throw new Error(`${pathName}.unit 必须是字符串`)
+}
+
+function validateAggregationMetrics(config) {
+  const keys = new Set()
+  config.CUMULATIVE_METRICS.forEach((metric, index) => {
+    const pathName = `CUMULATIVE_METRICS[${index}]`
+    validateMetricBase(metric, pathName)
+    if (keys.has(metric.metric_key)) throw new Error(`指标标识重复: ${metric.metric_key}`)
+    keys.add(metric.metric_key)
+  })
+  config.TIME_WINDOW_METRICS.forEach((metric, index) => {
+    const pathName = `TIME_WINDOW_METRICS[${index}]`
+    validateMetricBase(metric, pathName)
+    if (keys.has(metric.metric_key)) throw new Error(`指标标识重复: ${metric.metric_key}`)
+    keys.add(metric.metric_key)
+    if (!['avg', 'volatility', 'rate'].includes(metric.aggregation)) throw new Error(`${pathName}.aggregation 只能是 avg、volatility 或 rate`)
+    if (!Number.isInteger(metric.window_size) || metric.window_size < 2 || metric.window_size > 100) throw new Error(`${pathName}.window_size 必须是 2-100 的整数`)
+  })
+}
+
 /** 校验影响稳定性和连接安全的关键字段；校验失败时不会写入配置文件。 */
 function validate(config) {
   for (const key of ['SCENE_TAG', 'SCENE_DESCRIPTION', 'SYSTEM_TITLE', 'DEVICE_LABEL']) {
@@ -355,6 +552,7 @@ function validate(config) {
   if (!config.INTELLIGENT_JUDGMENT.url || !/^https?:\/\//i.test(config.INTELLIGENT_JUDGMENT.url)) throw new Error('INTELLIGENT_JUDGMENT.url 必须是 http:// 或 https:// 地址')
   if (!Number.isFinite(config.INTELLIGENT_JUDGMENT.timeoutMs) || config.INTELLIGENT_JUDGMENT.timeoutMs <= 0) throw new Error('INTELLIGENT_JUDGMENT.timeoutMs 必须大于 0')
   if (!['batch', 'single'].includes(config.INTELLIGENT_JUDGMENT.requestMode)) throw new Error('INTELLIGENT_JUDGMENT.requestMode 只能是 batch 或 single')
+  validateAggregationMetrics(config)
   return true
 }
 

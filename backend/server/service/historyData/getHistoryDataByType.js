@@ -2,6 +2,8 @@ const promisePool = require('../../config/dbPool')
 const { formatDataWithUnit, buildDisplayFieldUnits } = require('../../utils/helper')
 const { getEnabledMetrics, compileMetricSql, chartSettings } = require('../derivedMetric/derivedMetricService')
 const systemConfig = require('../../config/systemConfig')
+const { buildInlineCumulativeSql } = require('../cumulative/cumulativeService')
+const { buildInlineTimeWindowSql } = require('../timeWindow/timeWindowService')
 
 const isValidDateTime = (dateStr) => {
     if (!dateStr) return true
@@ -87,6 +89,16 @@ module.exports = async function getHistoryDataByType(query) {
             fieldUnit[metric.metric_key] = metric.unit || ''
         }
     }
+    const cumulative = buildInlineCumulativeSql(dataTable)
+    const timeWindow = buildInlineTimeWindowSql(dataTable)
+    const inlineMetrics = [...cumulative.metrics, ...timeWindow.metrics]
+    for (const result of [cumulative, timeWindow]) {
+        if (result.selectFragment) searchMapper.push(result.selectFragment.replace(/^,\s*/, ''))
+    }
+    for (const metric of inlineMetrics) {
+        fieldMapping[metric.metric_key] = metric.metric_name
+        fieldUnit[metric.metric_key] = metric.unit || ''
+    }
     // if (type === 'behavior') {
     //     searchMapper.push('field5 AS 采集时间')
     // }如果要有采集时间
@@ -133,7 +145,19 @@ module.exports = async function getHistoryDataByType(query) {
         data: {
             list: processedData,
             fieldUnits,
-            chartSettings: chartSettings(derivedMetrics),
+            chartSettings: {
+                ...chartSettings(derivedMetrics),
+                ...Object.fromEntries(inlineMetrics.map(metric => [metric.metric_name, {
+                    metricKey: metric.metric_key,
+                    visible: true,
+                    type: metric.chart_type,
+                    yAxis: 'left',
+                    color: metric.color,
+                    min: null,
+                    max: null,
+                    unit: metric.unit || '',
+                }])),
+            },
             total: countResult[0].total,
             page,
             size: pageSize,

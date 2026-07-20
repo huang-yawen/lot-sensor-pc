@@ -14,7 +14,7 @@ const port = Number(process.env.PORT) || 3000;
 // 如确需局域网访问，显式设置 HOST，并同时配置严格的 CORS_ORIGINS。
 const host = process.env.HOST || '127.0.0.1';
 const allowedOrigins = new Set(
-  (process.env.CORS_ORIGINS || 'http://localhost:3000,http://127.0.0.1:3000,http://localhost:5173,http://127.0.0.1:5173')
+  (process.env.CORS_ORIGINS || 'http://localhost:3000,http://127.0.0.1:3000,http://localhost:5173,http://127.0.0.1:5173,http://localhost:5174,http://127.0.0.1:5174')
     .split(',')
     .map((origin) => origin.trim())
     .filter(Boolean)
@@ -49,6 +49,14 @@ app.get('/api/mqtt/status', (req, res) => {
         }
     })
 });
+
+// 累计派生指标接口（窗口函数累加计算）
+const cumulativeController = require('./controllers/cumulative/cumulativeController')
+app.get('/api/cumulative', cumulativeController)
+
+// 时间窗口派生指标接口（滑动平均/波动/变化率）
+const timeWindowController = require('./controllers/timeWindow/timeWindowController')
+app.get('/api/time-window', timeWindowController)
 
 // 设备状态只来源于 DeviceManager 对 t_device 的同步结果。
 app.get('/api/device-status', async (req, res) => {

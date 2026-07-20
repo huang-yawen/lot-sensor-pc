@@ -1,6 +1,7 @@
 const promisePool = require('../../config/dbPool')
 const { buildDisplayFieldUnits } = require('../../utils/helper')
 const { getEnabledMetrics, compileMetricSql, chartSettings } = require('../../service/derivedMetric/derivedMetricService')
+const systemConfig = require('../../config/systemConfig')
 
 /**
  * 首页仪表盘数据接口
@@ -86,6 +87,80 @@ module.exports = async (req, res) => {
             `SELECT ${searchBehavior.join(',')} FROM t_behavior_data ORDER BY id desc LIMIT 20`
         )
 
+        // ==================== 累计/时间窗口派生指标（standalone/both 模式） ====================
+        let cumulativeData = {}
+        let timeWindowData = {}
+        const config = systemConfig.getConfig()
+
+        // 单设备模式下自动取数据库第一条设备编号（两个模块共用）
+        let d_no = req.query.d_no || null
+        if (!d_no && config.SINGLE_DEVICE_MODE) {
+            try {
+                const [first] = await promisePool.query(
+                    'SELECT d_no FROM t_sensor_data ORDER BY id DESC LIMIT 1'
+                )
+                if (first.length > 0) d_no = first[0].d_no
+            } catch (e) { /* 忽略 */ }
+        }
+
+        // 累计指标
+        const enabledCumulative = (config.CUMULATIVE_METRICS || [])
+            .filter(m => m.enabled && (m.mode === 'standalone' || m.mode === 'both'))
+        if (enabledCumulative.length > 0) {
+            const cumulativeService = require('../../service/cumulative/cumulativeService')
+            for (const metric of enabledCumulative) {
+                try {
+                    cumulativeData[metric.metric_key] = {
+                        config: {
+                            metric_key: metric.metric_key,
+                            metric_name: metric.metric_name,
+                            unit: metric.unit,
+                            chart_type: metric.chart_type,
+                            color: metric.color,
+                            precision: metric.precision,
+                            mode: metric.mode,
+                        },
+                        rows: await cumulativeService.querySingleCumulative(
+                            metric, { d_no, limit: 30 }
+                        ),
+                    }
+                } catch (err) {
+                    console.error(`[Dashboard] 累计指标 ${metric.metric_key} 查询失败:`, err.message)
+                    cumulativeData[metric.metric_key] = { config: metric, rows: [], error: err.message }
+                }
+            }
+        }
+
+        // 时间窗口指标
+        const enabledTimeWindow = (config.TIME_WINDOW_METRICS || [])
+            .filter(m => m.enabled && (m.mode === 'standalone' || m.mode === 'both'))
+        if (enabledTimeWindow.length > 0) {
+            const timeWindowService = require('../../service/timeWindow/timeWindowService')
+            for (const metric of enabledTimeWindow) {
+                try {
+                    timeWindowData[metric.metric_key] = {
+                        config: {
+                            metric_key: metric.metric_key,
+                            metric_name: metric.metric_name,
+                            unit: metric.unit,
+                            chart_type: metric.chart_type,
+                            color: metric.color,
+                            precision: metric.precision,
+                            mode: metric.mode,
+                            aggregation: metric.aggregation,
+                            window_size: metric.window_size,
+                        },
+                        rows: await timeWindowService.querySingleTimeWindow(
+                            metric, { d_no, limit: 30 }
+                        ),
+                    }
+                } catch (err) {
+                    console.error(`[Dashboard] 时间窗口指标 ${metric.metric_key} 查询失败:`, err.message)
+                    timeWindowData[metric.metric_key] = { config: metric, rows: [], error: err.message }
+                }
+            }
+        }
+
         res.json({
             success: true,
             message: '成功',
@@ -94,6 +169,8 @@ module.exports = async (req, res) => {
             chartSettings: chartSettings(derivedMetrics),
             sortedData,
             behaviorOutcome,
+            cumulativeData,
+            timeWindowData,
         })
     } catch (err) {
         console.error('处理失败:', err)
