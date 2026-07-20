@@ -32,7 +32,7 @@ let options = ref([])
 const selectedValue = ref('')
 
 const formatValue = (key, value) => {
-  if (key === '创立时间') return new Date(value).toLocaleString('zh-CN')
+  if (key === '创立时间') return displayStore.formatTime(value)
   const unit = props.fieldUnits[key]
   return unit ? `${value} ${unit}` : value
 }

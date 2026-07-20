@@ -79,6 +79,9 @@ const defaultConfig = {
   // 是否隐藏设备编号列（设备编号、d_no、deviceId 等）。
   HIDE_NUMBER_FIELDS: false,
 
+  // 时间格式是否显示秒：true 显示为 "2026/07/20 11:51:03"，false 显示为 "2026/07/20 11:51"。
+  SHOW_SECONDS: true,
+
   // 在多设备模式下强制隐藏设备选择器。单设备模式下选择器始终隐藏。
   HIDE_DEVICE_SELECTOR: false,
 
@@ -331,6 +334,7 @@ function validate(config) {
   }
   for (const key of [
     'SINGLE_DEVICE_MODE', 'HIDE_ID_FIELDS', 'HIDE_NUMBER_FIELDS', 'HIDE_DEVICE_SELECTOR',
+    'SHOW_SECONDS',
     'ENABLE_SENSOR_RECOGNIZE', 'ENABLE_BEHAVIOR_RECOGNIZE', 'ENABLE_JUDGMENT_HISTORY',
     'ENABLE_CHARTS', 'ENABLE_LOCAL_ALARM', 'ENABLE_AUTO_INTERLOCK',
   ]) {

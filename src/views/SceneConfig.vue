@@ -149,6 +149,7 @@ const configHelp = [
   { group: '设备显示', key: 'HIDE_ID_FIELDS', description: '是否隐藏数据库自增主键 id。', example: 'true', notice: '只影响显示，不影响查询和存储。' },
   { group: '设备显示', key: 'HIDE_NUMBER_FIELDS', description: '是否隐藏设备编号列。', example: 'false', notice: '多设备场景通常保持 false。' },
   { group: '设备显示', key: 'HIDE_DEVICE_SELECTOR', description: '是否强制隐藏设备选择器。', example: 'false', notice: '开启后多设备也无法在页面选择设备。' },
+  { group: '设备显示', key: 'SHOW_SECONDS', description: '时间格式是否显示秒。true 时显示为 "2026/07/20 11:51:03"，false 时显示为 "2026/07/20 11:51"。', example: 'true', notice: '保存后立即生效，影响所有页面的时间显示。' },
   { group: '功能开关', key: 'ENABLE_SENSOR_RECOGNIZE', description: '传感器历史页是否显示智能判定按钮。', example: 'true', notice: '仅控制入口显示。' },
   { group: '功能开关', key: 'ENABLE_BEHAVIOR_RECOGNIZE', description: '运行状态历史页是否显示智能判定按钮。', example: 'true', notice: '题目不要求时可关闭。' },
   { group: '功能开关', key: 'ENABLE_JUDGMENT_HISTORY', description: '是否显示智能判定记录菜单。', example: 'true', notice: '若评分要求记录查询必须开启。' },

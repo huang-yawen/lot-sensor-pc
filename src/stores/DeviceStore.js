@@ -1,6 +1,7 @@
 import { defineStore } from "pinia";
 import { ref } from 'vue';
 import api from '@/api';
+import { DisplayStore } from '@/stores/DisplayStore';
 
 export const DeviceStore = defineStore('deviceStore', () => {
     const deviceData = ref([]);
@@ -38,14 +39,8 @@ export const DeviceStore = defineStore('deviceStore', () => {
                     if (deviceNumber) rawIds.push(deviceNumber)
                     if (item['创建时间']) {
                         try {
-                            item['创建时间'] = new Date(item['创建时间']).toLocaleString('zh-CN', {
-                                year: 'numeric',
-                                month: '2-digit',
-                                day: '2-digit',
-                                hour: '2-digit',
-                                minute: '2-digit',
-                                hour12: false
-                            });
+                            const displayStore = DisplayStore()
+                            item['创建时间'] = displayStore.formatTime(item['创建时间'])
                         } catch (e) {
                             console.error("日期格式化错误:", e);
                         }

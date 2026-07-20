@@ -1,6 +1,7 @@
 import { defineStore } from "pinia";
 import { ref } from "vue";
 import api from '@/api';
+import { DisplayStore } from '@/stores/DisplayStore';
 
 export const ErrorStore = defineStore("ErrorStore", () => {
   const errData = ref([]);
@@ -41,18 +42,10 @@ export const ErrorStore = defineStore("ErrorStore", () => {
         const list = res.data?.list || [];
 
         // 时间格式化
+        const displayStore = DisplayStore()
         errData.value = list.map((item) => ({
           ...item,
-          "报错时间": item["报错时间"]
-            ? new Date(item["报错时间"]).toLocaleString("zh-CN", {
-                year: "numeric",
-                month: "2-digit",
-                day: "2-digit",
-                hour: "2-digit",
-                minute: "2-digit",
-                hour12: false,
-              })
-            : "未知时间",
+          "报错时间": displayStore.formatTime(item["报错时间"]),
         }));
 
         total.value = res.data?.total || list.length;

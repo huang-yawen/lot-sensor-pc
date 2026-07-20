@@ -1,6 +1,7 @@
 import { defineStore } from "pinia";
 import { ref } from 'vue'
 import api from '@/api'
+import { DisplayStore } from '@/stores/DisplayStore'
 
 export const PaginationStore = defineStore("paginationStore", () => {
     const paginationData = ref([])
@@ -43,18 +44,10 @@ export const PaginationStore = defineStore("paginationStore", () => {
                 }
 
                 // 后端返回数据库时间，Store 统一格式化后再交给表格展示。
+                const displayStore = DisplayStore()
                 paginationData.value = paginationData.value.map(item => ({
                     ...item,
-                    '创立时间': item['创立时间']
-                        ? new Date(item['创立时间']).toLocaleString('zh-CN', {
-                            year: 'numeric',
-                            month: '2-digit',
-                            day: '2-digit',
-                            hour: '2-digit',
-                            minute: '2-digit',
-                            hour12: false
-                        })
-                        : '未知时间'
+                    '创立时间': displayStore.formatTime(item['创立时间'])
                 }));
             }
         } catch (error) {

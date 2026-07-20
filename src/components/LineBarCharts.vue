@@ -9,6 +9,7 @@
 
 import { ref, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
 import * as echarts from 'echarts'
+import { DisplayStore } from '@/stores/DisplayStore'
 
 /**
  * @description ECharts 实例引用
@@ -107,16 +108,10 @@ const updateChart = (source) => {
     const fields = elemKeys.filter(k => !exclude.includes(k) && props.settings[k]?.visible !== false)
 
     // 处理时间数据，格式化为可读字符串
+    const displayStore = DisplayStore()
     const times = json.map(item => {
       if (item['创立时间']) {
-        return new Date(item['创立时间']).toLocaleString('zh-CN', {
-          year: 'numeric',
-          month: '2-digit',
-          day: '2-digit',
-          hour: '2-digit',
-          minute: '2-digit',
-          hour12: false
-        })
+        return displayStore.formatTime(item['创立时间'])
       }
       return '未知时间'
     })
