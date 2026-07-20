@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
-const PageStore = defineStore('page', {
-  currentPage: ref('home'),
+import { ref } from 'vue'
+const PageStore = defineStore('page', () => {
+  return { currentPage: ref('home') }
 })
 export default PageStore
