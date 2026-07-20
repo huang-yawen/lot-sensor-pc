@@ -1,5 +1,6 @@
 const promisePool = require('../../config/dbPool')
 const { formatDataWithUnit, buildDisplayFieldUnits } = require('../../utils/helper')
+const { getEnabledMetrics, compileMetricSql, chartSettings } = require('../derivedMetric/derivedMetricService')
 
 const isValidDateTime = (dateStr) => {
     if (!dateStr) return true
@@ -75,6 +76,16 @@ module.exports = async function getHistoryDataByType(query) {
     for (const key in fieldMapping) {
         searchMapper.push(`${key} AS \`${fieldMapping[key]}\``)
     }
+    let derivedMetrics = []
+    if (type === 'sensor') {
+        derivedMetrics = await getEnabledMetrics('history')
+        for (const metric of derivedMetrics) {
+            const alias = String(metric.metric_name).replace(/`/g, '``')
+            searchMapper.push(`${compileMetricSql(metric)} AS \`${alias}\``)
+            fieldMapping[metric.metric_key] = metric.metric_name
+            fieldUnit[metric.metric_key] = metric.unit || ''
+        }
+    }
     // if (type === 'behavior') {
     //     searchMapper.push('field5 AS 采集时间')
     // }如果要有采集时间
@@ -121,6 +132,7 @@ module.exports = async function getHistoryDataByType(query) {
         data: {
             list: processedData,
             fieldUnits,
+            chartSettings: chartSettings(derivedMetrics),
             total: countResult[0].total,
             page,
             size: pageSize,

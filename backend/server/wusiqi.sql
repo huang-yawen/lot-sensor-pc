@@ -203,6 +203,30 @@ CREATE TABLE `t_operation_history` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
 
 -- ----------------------------
+-- Table structure for t_derived_metric  SQL派生指标与ECharts配置
+-- ----------------------------
+DROP TABLE IF EXISTS `t_derived_metric`;
+CREATE TABLE `t_derived_metric` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `metric_key` varchar(64) NOT NULL,
+  `metric_name` varchar(255) NOT NULL,
+  `formula` varchar(1000) NOT NULL,
+  `unit` varchar(64) DEFAULT NULL,
+  `precision_digits` int(11) NOT NULL DEFAULT 2,
+  `enabled` tinyint(1) NOT NULL DEFAULT 1,
+  `show_realtime` tinyint(1) NOT NULL DEFAULT 1,
+  `show_history` tinyint(1) NOT NULL DEFAULT 1,
+  `show_chart` tinyint(1) NOT NULL DEFAULT 1,
+  `chart_type` varchar(16) NOT NULL DEFAULT 'line',
+  `y_axis` varchar(16) NOT NULL DEFAULT 'left',
+  `color` varchar(16) DEFAULT NULL,
+  `y_min` decimal(20,6) DEFAULT NULL,
+  `y_max` decimal(20,6) DEFAULT NULL,
+  `sort_order` int(11) NOT NULL DEFAULT 0,
+  PRIMARY KEY (`id`), UNIQUE KEY `uk_metric_key` (`metric_key`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+
+-- ----------------------------
 -- Table structure for t_error_msg
 -- ----------------------------
 DROP TABLE IF EXISTS `t_error_msg`;

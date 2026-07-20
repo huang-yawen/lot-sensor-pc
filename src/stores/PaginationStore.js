@@ -8,6 +8,7 @@ export const PaginationStore = defineStore("paginationStore", () => {
     const currentPage = ref(1) 
     const pageSize = ref(5)
     const fieldUnits = ref({})
+    const chartSettings = ref({})
     const loading = ref(false)
     const type = ref('数据监测中心')
 
@@ -30,6 +31,7 @@ export const PaginationStore = defineStore("paginationStore", () => {
             if (response.data.success) {
                 paginationData.value = response.data.data.list || []
                 fieldUnits.value = response.data.data.fieldUnits || {}
+                chartSettings.value = response.data.data.chartSettings || {}
                 total.value = response.data.data.total || 0
                 currentPage.value = response.data.data.page || 1
                 pageSize.value = response.data.data.size || pageSize.value
@@ -68,6 +70,7 @@ export const PaginationStore = defineStore("paginationStore", () => {
         currentPage,
         pageSize,
         fieldUnits,
+        chartSettings,
         loading,
         type
     }

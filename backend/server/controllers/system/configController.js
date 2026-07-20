@@ -8,8 +8,9 @@
  */
 const systemConfig = require('../../config/systemConfig')
 const promisePool = require('../../config/dbPool')
+const { ensureTable: ensureDerivedMetricTable } = require('../../service/derivedMetric/derivedMetricService')
 
-const METADATA_TABLES = ['t_sensor_field_mapper', 't_behavior_field_mapper', 't_direct_config']
+const METADATA_TABLES = ['t_sensor_field_mapper', 't_behavior_field_mapper', 't_direct_config', 't_derived_metric']
 
 async function readMetadata(connection = promisePool) {
   const metadata = {}
@@ -92,6 +93,7 @@ const resetConfig = (req, res) => {
 // GET /api/system-config/export — 导出配置
 const exportConfig = async (req, res) => {
   try {
+    await ensureDerivedMetricTable()
     const config = systemConfig.exportConfig()
     config.metadata = await readMetadata()
     res.json({
@@ -119,6 +121,7 @@ const importConfig = async (req, res) => {
       })
     }
 
+    await ensureDerivedMetricTable()
     const connection = await promisePool.getConnection()
     const previous = systemConfig.exportConfig()
     try {

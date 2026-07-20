@@ -79,7 +79,7 @@
                     </el-menu-item>
                     <el-menu-item index="/scene-config" to="/scene-config">
                         <el-icon><Setting /></el-icon>
-                        <span>场景配置</span>
+                        <span>配置中心</span>
                     </el-menu-item>
                 </el-menu>
             </el-col>

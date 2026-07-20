@@ -25,6 +25,7 @@ const judgmentRecords = require('../controllers/intelligent/records')
 
 // 操作历史控制器
 const operationHistoryController = require('../controllers/operationHistory/operationHistoryController')
+const derivedMetricController = require('../controllers/derivedMetric/derivedMetricController')
 
 // 测试图表数据控制器
 const testChartData = require('../controllers/chart/testChartData')
@@ -56,6 +57,12 @@ router.get('/intelligent/records', judgmentRecords)
 // 操作历史接口
 router.get('/api/operation-history', operationHistoryController.getHistoryList)
 router.get('/api/operation-history/configs', operationHistoryController.getConfigOptions)
+
+// SQL 派生指标与 ECharts 配置
+router.get('/api/derived-metrics', derivedMetricController.list)
+router.post('/api/derived-metrics', derivedMetricController.save)
+router.delete('/api/derived-metrics/:id', derivedMetricController.remove)
+router.post('/api/derived-metrics/preview', derivedMetricController.preview)
 
 // 测试图表数据接口
 router.get('/chart/test-data', testChartData)

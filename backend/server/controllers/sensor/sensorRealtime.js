@@ -1,5 +1,6 @@
 const promisePool = require('../../config/dbPool')
 const { buildDisplayFieldUnits } = require('../../utils/helper')
+const { getEnabledMetrics, compileMetricSql, chartSettings } = require('../../service/derivedMetric/derivedMetricService')
 
 // 组装传感器实时数据和前端需要的字段元信息。
 module.exports = async (req, res) => {
@@ -22,6 +23,13 @@ module.exports = async (req, res) => {
         searchMapper.push('d_no AS 设备编号')
         for (const key in fieldMapping) {
             searchMapper.push(`${key} AS \`${fieldMapping[key]}\``)
+        }
+        const derivedMetrics = await getEnabledMetrics('realtime')
+        for (const metric of derivedMetrics) {
+            const alias = String(metric.metric_name).replace(/`/g, '``')
+            searchMapper.push(`${compileMetricSql(metric)} AS \`${alias}\``)
+            if (metric.unit) fieldUnit[metric.metric_key] = metric.unit
+            fieldMapping[metric.metric_key] = metric.metric_name
         }
         searchMapper.push('c_time AS 创立时间')
         searchMapper.push('online AS 数据类型')
@@ -89,6 +97,7 @@ module.exports = async (req, res) => {
             message: '成功',
             processedData,
             fieldUnits,
+            chartSettings: chartSettings(derivedMetrics),
             sortedData,
             behaviorOutcome,
         })

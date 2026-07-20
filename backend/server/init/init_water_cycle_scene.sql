@@ -19,6 +19,26 @@ CREATE TABLE IF NOT EXISTS t_judgment_record (
   PRIMARY KEY (id), KEY idx_judgment_time (c_time), KEY idx_judgment_device (d_no)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
 
+CREATE TABLE IF NOT EXISTS t_derived_metric (
+  id INT NOT NULL AUTO_INCREMENT,
+  metric_key VARCHAR(64) NOT NULL,
+  metric_name VARCHAR(255) NOT NULL,
+  formula VARCHAR(1000) NOT NULL,
+  unit VARCHAR(64) DEFAULT NULL,
+  precision_digits INT NOT NULL DEFAULT 2,
+  enabled TINYINT(1) NOT NULL DEFAULT 1,
+  show_realtime TINYINT(1) NOT NULL DEFAULT 1,
+  show_history TINYINT(1) NOT NULL DEFAULT 1,
+  show_chart TINYINT(1) NOT NULL DEFAULT 1,
+  chart_type VARCHAR(16) NOT NULL DEFAULT 'line',
+  y_axis VARCHAR(16) NOT NULL DEFAULT 'left',
+  color VARCHAR(16) DEFAULT NULL,
+  y_min DECIMAL(20,6) DEFAULT NULL,
+  y_max DECIMAL(20,6) DEFAULT NULL,
+  sort_order INT NOT NULL DEFAULT 0,
+  PRIMARY KEY (id), UNIQUE KEY uk_metric_key (metric_key)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+
 CREATE TABLE IF NOT EXISTS t_sensor_field_mapper_before_water LIKE t_sensor_field_mapper;
 INSERT IGNORE INTO t_sensor_field_mapper_before_water SELECT * FROM t_sensor_field_mapper;
 CREATE TABLE IF NOT EXISTS t_behavior_field_mapper_before_water LIKE t_behavior_field_mapper;

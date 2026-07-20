@@ -27,8 +27,11 @@ export default defineConfig({
       '/multipleDirectData': backendProxy,
       '/directData/update': backendProxy,
       '/intelligent/recognize': backendProxy,
+      '/intelligent/judge': backendProxy,
+      '/intelligent/records': backendProxy,
       '/api/system-config': backendProxy,
       '/api/operation-history': backendProxy,
+      '/api/derived-metrics': backendProxy,
       '/api/mqtt/status': backendProxy,
       '/ws': {
         ...backendProxy,

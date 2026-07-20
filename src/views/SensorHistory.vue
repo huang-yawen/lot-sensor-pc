@@ -43,7 +43,7 @@
     </el-dialog>
 
     <div class="chartContainer" v-if="data.length > 0">
-      <LineBarCharts :data="data" :pageSize="pageSize" />
+      <LineBarCharts :data="data" :pageSize="pageSize" :settings="store.chartSettings" />
     </div>
   </div>
 </template>

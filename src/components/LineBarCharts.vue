@@ -27,7 +27,9 @@ let mychart = null
  */
 const props = defineProps({
   data: { type: Array, default: () => [] },
-  pageSize: { type: Number, default: 5 }
+  pageSize: { type: Number, default: 5 },
+  // 由公式指标配置生成：{ 指标显示名: { visible,type,yAxis,color,min,max,unit } }
+  settings: { type: Object, default: () => ({}) }
 })
 
 /**
@@ -102,7 +104,7 @@ const updateChart = (source) => {
     // 获取数据字段（排除指定的关键字段）
     const elemKeys = Object.keys(json[0])
     const exclude = ['id', '设备编号', '数据类型', '创立时间', '采集时间','储运箱ID','物体编号']
-    const fields = elemKeys.filter(k => !exclude.includes(k))
+    const fields = elemKeys.filter(k => !exclude.includes(k) && props.settings[k]?.visible !== false)
 
     // 处理时间数据，格式化为可读字符串
     const times = json.map(item => {
@@ -120,9 +122,14 @@ const updateChart = (source) => {
     })
 
     // 构建 series 数据，每个字段对应一条折线
-    const series = fields.map(field => ({
+    const series = fields.map(field => {
+      const setting = props.settings[field] || {}
+      return {
       name: field,
-      type: 'line',
+      type: setting.type || 'line',
+      yAxisIndex: setting.yAxis === 'right' ? 1 : 0,
+      itemStyle: setting.color ? { color: setting.color } : undefined,
+      lineStyle: setting.color ? { color: setting.color } : undefined,
       data: json.map(item => {
         const raw = item[field]
         if (!raw) return 0
@@ -130,7 +137,21 @@ const updateChart = (source) => {
         const num = parseFloat(raw.toString().replace(/[^\d.-]/g, ''))
         return isNaN(num) ? 0 : num
       })
-    }))
+    }})
+
+    const axisConfig = (side) => {
+      const configured = fields.map(field => props.settings[field]).filter(setting => setting?.yAxis === side)
+      const units = [...new Set(configured.map(setting => setting.unit).filter(Boolean))]
+      const min = configured.find(setting => setting.min != null)?.min
+      const max = configured.find(setting => setting.max != null)?.max
+      return {
+        type: 'value',
+        name: units.join('/'),
+        position: side,
+        min: min ?? undefined,
+        max: max ?? undefined,
+      }
+    }
 
     // 设置图表配置项（使用 notMerge: true 完全替换配置，确保 restore 正常工作）
     mychart.setOption({
@@ -169,7 +190,7 @@ const updateChart = (source) => {
         data: times,
         axisLabel: { rotate: 20, interval: 0 }
       },
-      yAxis: { type: 'value' },
+      yAxis: [axisConfig('left'), axisConfig('right')],
       series
     }, true)
   } catch (err) {
@@ -181,7 +202,7 @@ const updateChart = (source) => {
  * @description 监听数据变化，自动更新图表
  */
 watch(
-  () => [props.data, props.pageSize],
+  () => [props.data, props.pageSize, props.settings],
   ([newData]) => {
     if (mychart) {
       updateChart(newData)

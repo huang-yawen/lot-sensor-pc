@@ -51,7 +51,11 @@ const routes=[
             },{
                 path:'/scene-config',
                 component:()=>import('@/views/SceneConfig.vue'),
-                meta: { title: '场景配置' }
+                meta: { title: '配置中心' }
+            },{
+                path:'/derived-metrics',
+                redirect: { path: '/scene-config', query: { tab: 'formula' } },
+                meta: { title: '配置中心/公式与图表' }
             }
         ]
     }

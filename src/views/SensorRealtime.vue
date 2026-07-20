@@ -9,7 +9,7 @@
       </div>
 
       <div class="chart-wrapper">
-        <LineBarCharts :data="data" />
+        <LineBarCharts :data="data" :settings="store.sensorData?.chartSettings || {}" />
       </div>
     </div>
   </div>
