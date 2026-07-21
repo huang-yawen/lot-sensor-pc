@@ -42,7 +42,7 @@ async function evaluateRules(info) {
     const message = `${rule.name}：当前值 ${actual} ${rule.operator} 阈值 ${threshold}`
     await promisePool.execute(
       'INSERT INTO t_error_msg (d_no, c_time, e_msg, e_no, type) VALUES (?, ?, ?, ?, ?)',
-      [deviceNo === 'default' ? null : deviceNo, info.c_time || null, message, rule.id, '1']
+      [deviceNo === 'default' ? null : deviceNo, info.c_time || null, message, rule.id, rule.name]
     )
     let interlock = null
     if (config.ENABLE_AUTO_INTERLOCK && rule.action?.field) {

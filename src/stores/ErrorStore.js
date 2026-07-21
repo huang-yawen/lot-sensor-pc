@@ -45,7 +45,7 @@ export const ErrorStore = defineStore("ErrorStore", () => {
         const displayStore = DisplayStore()
         errData.value = list.map((item) => ({
           ...item,
-          "报错时间": displayStore.formatTime(item["报错时间"]),
+          "报警时间": displayStore.formatTime(item["报警时间"]),
         }));
 
         total.value = res.data?.total || list.length;

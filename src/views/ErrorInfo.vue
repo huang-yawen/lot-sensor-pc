@@ -18,22 +18,23 @@
         </div>
       </div>
       <div class="table-wrapper">
-        <table v-if="store.errData.length > 0">
-          <thead>
-            <tr>
-              <th v-for="col in headers" :key="col">
-                {{ col }}
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="(row, idx) in store.errData" :key="idx">
-              <td v-for="col in headers" :key="col">
-                {{ row[col] }}
-              </td>
-            </tr>
-          </tbody>
-        </table>
+        <el-table
+          :data="store.errData"
+          style="width: 100%"
+          v-if="store.errData.length > 0"
+          border
+          stripe
+          :header-cell-style="{ background: '#f8fafc', color: '#475569', fontWeight: 600 }"
+        >
+          <el-table-column
+            v-for="col in headers"
+            :key="col"
+            :prop="col"
+            :label="col"
+            show-overflow-tooltip
+            align="center"
+          />
+        </el-table>
         <div v-else class="empty-state">
           {{ loading ? '加载中...' : '暂无错误数据' }}
         </div>
@@ -114,8 +115,8 @@ const handlePageSizeChange = (size) => {
 };
 
 onMounted(async () => {
-  const config = await systemStore.load();
-  pageSize.value = config.DEFAULT_PAGE_SIZE || 5;
+  await Promise.all([systemStore.load(), displayStore.loadDisplayConfig()]);
+  pageSize.value = systemStore.config.DEFAULT_PAGE_SIZE || 5;
   await handleSearch();
 });
 </script>
@@ -184,46 +185,10 @@ onMounted(async () => {
 
 .table-wrapper {
   background: white;
-  border-radius: 12px;
+  border-radius: 4px;
   border: 1px solid #e2e8f0;
   box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
   overflow: auto;
-}
-
-.table-wrapper table {
-  width: 100%;
-  text-align: center;
-  border-collapse: collapse;
-  font-size: 14px;
-}
-
-.table-wrapper th {
-  background: linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%);
-  color: #475569;
-  font-weight: 600;
-  padding: 14px 16px;
-  border-bottom: 2px solid #e2e8f0;
-  font-size: 13px;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-
-.table-wrapper td {
-  padding: 14px 16px;
-  border-bottom: 1px solid #f1f5f9;
-  color: #334155;
-}
-
-.table-wrapper tbody tr {
-  transition: background-color 0.2s ease;
-}
-
-.table-wrapper tbody tr:hover {
-  background-color: #f8fafc;
-}
-
-.table-wrapper tbody tr:hover td {
-  color: #1e293b;
 }
 
 .empty-state {
