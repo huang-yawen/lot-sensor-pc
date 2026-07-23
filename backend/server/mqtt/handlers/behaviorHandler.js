@@ -61,3 +61,5 @@ async function handleBehaviorData(topic, payload) {
 }
 
 module.exports = { handleBehaviorData, BEHAVIOR_TOPIC }
+/** 【文件职责】行为状态消息适配器，衔接 Topic 路由和行为实时处理模块。
+ * 【配置中心关联】行为主题来自 MQTT_TOPICS.behavior，配置变更由 mqtt/index.js 重新注册。 */

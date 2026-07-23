@@ -1,5 +1,5 @@
 /**
- * 设备管理器
+ * 【文件职责】设备在线状态与离线指令队列管理器。
  * 
  * 职责：
  * 1. 从数据库 t_device 表加载所有设备编号（以 number 字段为唯一标识）
@@ -14,6 +14,10 @@
  *   deviceManager.addPendingCommand('device001', config_id, value)  // 暂存指令
  *   deviceManager.getAllDeviceStatus()      // 获取所有设备在线状态
  * 
+ * 【配置中心关联】HEARTBEAT_TIMEOUT 决定离线阈值；MQTT_TOPICS.control、
+ * CONTROL_VALUE_MAP 与 t_direct_config.preffix 决定补发消息内容；每次检查或发送
+ * 都重新读取，因此保存配置中心后会立即影响后续行为。
+ *
  * 设备编号说明：
  *   - 设备以 t_device 表的 number 字段作为唯一标识
  *   - 如果 number 为 NULL 或空字符串，该设备不会被加载

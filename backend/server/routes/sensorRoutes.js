@@ -1,3 +1,5 @@
+/** 【文件职责】后端业务 API 路由总表。
+ * 【配置中心关联】路由不缓存配置，控制器和服务按请求动态读取。 */
 const express = require('express')
 const router = express.Router()
 
@@ -76,3 +78,5 @@ router.post('/multipleDirectData', updateMultipleDirectConfigs)
 router.post('/directData/update', updateDirectConfigAndPublish)
 
 module.exports = router
+/** 【文件职责】业务 API 路由总表，将 URL 映射到各领域控制器。
+ * 【配置中心关联】路由本身不保存配置；被调用的控制器/服务按需要动态读取配置中心。 */

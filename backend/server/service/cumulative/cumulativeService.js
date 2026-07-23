@@ -126,3 +126,5 @@ module.exports = {
   queryAllCumulative,
   buildInlineCumulativeSql,
 }
+/** 【文件职责】累计派生指标计算服务，按配置定义的字段和窗口汇总历史数据。
+ * 【配置中心关联】CUMULATIVE_METRICS；每次请求动态读取，场景保存后无需重启。 */

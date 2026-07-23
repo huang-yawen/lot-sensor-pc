@@ -1,3 +1,6 @@
+-- 【文件职责】操作历史表及相关数据库结构初始化脚本。
+-- 【配置中心关联】OPERATION_HISTORY_MODE 只决定后端是否写入；本脚本不读取配置中心。
+
 -- ----------------------------
 -- Table structure for t_operation_history  操作历史
 -- 关联 t_direct_config.id 获取操作名称和值含义，保证通过改数据库就能适配不同赛题
@@ -15,3 +18,5 @@ CREATE TABLE IF NOT EXISTS `t_operation_history` (
   KEY `idx_c_time` (`c_time`) USING BTREE,
   KEY `idx_config_id` (`config_id`) USING BTREE
 ) ENGINE = InnoDB CHARACTER SET = utf8 COLLATE = utf8_general_ci ROW_FORMAT = Compact;
+-- 【文件职责】操作历史表及相关数据库结构初始化脚本。
+-- 【配置中心关联】OPERATION_HISTORY_MODE 只决定后端是否写入；本脚本不读取配置中心。

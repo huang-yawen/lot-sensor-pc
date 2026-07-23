@@ -1,3 +1,5 @@
+/** 【文件职责】行为实时数据仓储层。
+ * 【配置中心关联】无直接读取。 */
 const promisePool = require('../../config/dbPool')
 const { saveMappedData } = require('../../utils/mappedData')
 const { saveOperationHistory } = require('../../service/operationHistory/saveOperationHistory')
@@ -175,3 +177,5 @@ module.exports = {
     saveBehaviorData,
     getBehaviorDataByDevice
 }
+/** 【文件职责】行为实时数据仓储层，集中执行行为表的查询和写入 SQL。
+ * 【配置中心关联】无直接读取；字段解析已在 Handler 层按配置完成。 */

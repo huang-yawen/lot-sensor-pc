@@ -61,3 +61,5 @@ async function handleSensorData(topic, payload) {
 }
 
 module.exports = { handleSensorData, SENSOR_TOPIC }
+/** 【文件职责】传感器消息适配器，衔接 Topic 路由和实时传感器处理模块。
+ * 【配置中心关联】传感器主题来自 MQTT_TOPICS.sensor，设备/时间字段由协议配置解析。 */

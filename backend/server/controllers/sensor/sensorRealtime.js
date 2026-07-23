@@ -1,3 +1,5 @@
+/** 【文件职责】实时传感器数据 API 控制器。
+ * 【配置中心关联】不缓存场景；实时刷新周期由 app.js 读取 REALTIME_REFRESH_INTERVAL。 */
 const promisePool = require('../../config/dbPool')
 const { buildDisplayFieldUnits } = require('../../utils/helper')
 const { getEnabledMetrics, compileMetricSql, chartSettings } = require('../../service/derivedMetric/derivedMetricService')
@@ -106,3 +108,5 @@ module.exports = async (req, res) => {
         res.status(500).send('数据处理失败')
     }
 }
+/** 【文件职责】实时传感器数据接口，为首次加载页面提供最新一批数据。
+ * 【配置中心关联】无直接读取；实时推送间隔由 app.js 使用 REALTIME_REFRESH_INTERVAL 控制。 */

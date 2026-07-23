@@ -1,3 +1,5 @@
+/** 【文件职责】按类型查询传感器历史数据的服务。
+ * 【配置中心关联】无直接读取。 */
 const promisePool = require('../../config/dbPool')
 const { formatDataWithUnit, buildDisplayFieldUnits } = require('../../utils/helper')
 const { getEnabledMetrics, compileMetricSql, chartSettings } = require('../derivedMetric/derivedMetricService')
@@ -164,3 +166,5 @@ module.exports = async function getHistoryDataByType(query) {
         },
     }
 }
+/** 【文件职责】按传感器类型和时间范围查询历史数据的服务。
+ * 【配置中心关联】无直接读取；时间字段已在 MQTT 入库时按 TIME_FIELDS 规范化。 */

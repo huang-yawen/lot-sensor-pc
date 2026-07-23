@@ -1,3 +1,5 @@
+/** 【文件职责】新增设备的数据访问服务。
+ * 【配置中心关联】无直接读取。 */
 const promisePool = require('../../config/dbPool')
 
 /**
@@ -36,3 +38,5 @@ module.exports = async (data) => {
         deviceNumber,
     }
 }
+/** 【文件职责】新增设备的数据访问服务。
+ * 【配置中心关联】无直接读取；设备唯一编号由 t_device.number 管理。 */

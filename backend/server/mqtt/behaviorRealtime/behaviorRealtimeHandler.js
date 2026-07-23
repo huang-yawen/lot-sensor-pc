@@ -1,3 +1,5 @@
+/** 【文件职责】行为 MQTT 消息处理器。
+ * 【配置中心关联】DEVICE_ID_FIELDS、TIME_FIELDS 由协议工具动态读取。 */
 const { saveBehaviorData } = require('./behaviorRealtimeRepository')
 const { getReportedTime, getTopic } = require('../../utils/protocol')
 const { evaluateRules } = require('../../service/alarm/evaluateRules')
@@ -5,7 +7,7 @@ const { evaluateRules } = require('../../service/alarm/evaluateRules')
 const BEHAVIOR_TOPIC = 'behavioral_data'
 
 function parsePayload(payload) {
-    // MQTT payloads arrive as Buffer objects, so decode and parse them first.
+    // MQTT 载荷以 Buffer 对象到达，必须先解码为文本再解析，避免把二进制直接写库。
     try {
         return JSON.parse(payload.toString())
     } catch (err) {
@@ -81,3 +83,5 @@ module.exports = {
     parsePayload,
     normalizeDateTime
 }
+/** 【文件职责】处理行为/运行状态 MQTT 消息：解析、校验并交给仓储层落库。
+ * 【配置中心关联】DEVICE_ID_FIELDS、TIME_FIELDS 通过协议工具解析，配置热更新后新消息立即采用新规则。 */

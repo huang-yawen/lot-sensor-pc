@@ -144,3 +144,5 @@ function evaluate(ast, values) {
 }
 
 module.exports = { parseExpression, compileSql, evaluate }
+/** 【文件职责】受限表达式计算引擎，为派生指标执行经过校验的数学表达式。
+ * 【配置中心关联】不直接读取；由 DERIVED_METRICS 提供表达式，调用方必须先校验。 */

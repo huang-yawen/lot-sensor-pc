@@ -1,3 +1,5 @@
+/** 【文件职责】派生指标计算服务。
+ * 【配置中心关联】DERIVED_METRICS 定义表达式和依赖字段，按请求动态读取。 */
 const promisePool = require('../../config/dbPool')
 const { parseExpression, compileSql, evaluate } = require('./expressionEngine')
 
@@ -120,3 +122,5 @@ function chartSettings(metrics) {
 }
 
 module.exports = { BASE_FIELDS, ensureTable, validateMetric, listMetrics, saveMetric, deleteMetric, getEnabledMetrics, compileMetricSql, previewMetric, chartSettings }
+/** 【文件职责】派生指标服务，读取原始指标并调用表达式引擎生成计算结果。
+ * 【配置中心关联】DERIVED_METRICS；配置项定义名称、依赖字段和计算表达式。 */

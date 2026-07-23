@@ -1,10 +1,12 @@
+/** 【文件职责】告警 MQTT 消息处理器。
+ * 【配置中心关联】MQTT_TOPICS.alarm 及协议字段配置在消息处理时生效。 */
 const { saveErrorMsg } = require('./errorHistoryRepository')
 const { getReportedTime, getTopic } = require('../../utils/protocol')
 
 const ERROR_TOPIC = 'abnormal_state'
 
 function parsePayload(payload) {
-    // MQTT payloads arrive as Buffer objects, so decode and parse them first.
+    // MQTT 载荷以 Buffer 对象到达，必须先解码为文本再解析，避免把二进制直接写库。
     try {
         return JSON.parse(payload.toString())
     } catch (err) {
@@ -78,3 +80,5 @@ module.exports = {
     parsePayload,
     normalizeDateTime
 }
+/** 【文件职责】处理异常/告警 MQTT 消息，并保存异常历史和触发后续告警逻辑。
+ * 【配置中心关联】MQTT_TOPICS.alarm 决定消息来源；字段解析使用 DEVICE_ID_FIELDS、TIME_FIELDS。 */

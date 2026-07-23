@@ -1,3 +1,5 @@
+/** 【文件职责】异常历史数据仓储层。
+ * 【配置中心关联】无直接读取。 */
 const promisePool = require('../../config/dbPool')
 const { getDeviceNo: getConfiguredDeviceNo, getReportedTime } = require('../../utils/protocol')
 const systemConfig = require('../../config/systemConfig')
@@ -81,3 +83,5 @@ module.exports = {
     saveErrorMsg,
     getErrorMsgByDevice
 }
+/** 【文件职责】异常历史仓储层，封装异常记录的数据库读写。
+ * 【配置中心关联】无直接读取；只保存上游已解析的业务数据。 */

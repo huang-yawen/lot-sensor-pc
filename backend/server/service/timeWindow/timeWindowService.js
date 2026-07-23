@@ -78,3 +78,5 @@ module.exports = {
   queryAllTimeWindow,
   buildInlineTimeWindowSql,
 }
+/** 【文件职责】时间窗口派生指标计算服务，如滑动平均、波动和变化率。
+ * 【配置中心关联】TIME_WINDOW_METRICS 定义计算字段、窗口和算法；保存后下次请求生效。 */

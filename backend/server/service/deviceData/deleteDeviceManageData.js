@@ -1,3 +1,5 @@
+/** 【文件职责】删除设备的数据访问服务。
+ * 【配置中心关联】无直接读取。 */
 const promisePool = require('../../config/dbPool')
 
 /**
@@ -20,3 +22,5 @@ module.exports = async (data) => {
     const [result] = await promisePool.execute('DELETE FROM `t_device` WHERE `id` = ?', [deleteId])
     return { success: result.affectedRows > 0, deviceNumber: device.number }
 }
+/** 【文件职责】删除设备的数据访问服务。
+ * 【配置中心关联】无直接读取；调用方需同步清理设备运行时状态。 */

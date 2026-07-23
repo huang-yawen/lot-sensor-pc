@@ -1,3 +1,5 @@
+/** 【文件职责】更新设备资料的数据访问服务。
+ * 【配置中心关联】无直接读取。 */
 const promisePool = require('../../config/dbPool')
 
 /**
@@ -58,3 +60,5 @@ module.exports = async (data) => {
         deviceNumber: number,
     }
 }
+/** 【文件职责】更新设备管理资料的数据访问服务。
+ * 【配置中心关联】无直接读取；编号更新后调用方需刷新 MQTT 设备追踪。 */

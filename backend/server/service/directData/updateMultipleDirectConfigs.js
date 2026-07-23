@@ -1,6 +1,8 @@
+/** 【文件职责】批量更新控制配置服务。
+ * 【配置中心关联】单条下发时读取 MQTT_TOPICS、CONTROL_VALUE_MAP 等最新配置。 */
 const { saveDirectData } = require('./saveDirectConfig')
 
-// Reuse the single-save logic so bulk updates follow the same rules.
+// 批量更新复用单条保存逻辑，确保权限校验、离线暂存和发布规则完全一致。
 module.exports = async (req, res) => {
     try {
         const { config_id, value, d_no } = req.body
@@ -23,3 +25,5 @@ module.exports = async (req, res) => {
         res.status(500).json({ success: false, message: 'Server error' })
     }
 }
+/** 【文件职责】批量更新控制配置服务，保证同一批页面修改按统一规则处理。
+ * 【配置中心关联】控制主题和值转换由单条发布服务按 MQTT_TOPICS/CONTROL_VALUE_MAP 读取。 */

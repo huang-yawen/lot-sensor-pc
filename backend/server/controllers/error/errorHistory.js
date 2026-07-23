@@ -1,3 +1,5 @@
+/** 【文件职责】异常历史 API 控制器。
+ * 【配置中心关联】无直接读取。 */
 const getErrorHistory = require('../../service/errorHistory/getErrorHistory')
 
 // 控制器只负责接收请求、调用 service，然后返回 JSON。
@@ -13,3 +15,5 @@ module.exports = async (req, res) => {
         })
     }
 }
+/** 【文件职责】告警/异常历史查询接口。
+ * 【配置中心关联】告警主题和规则影响数据来源，但本控制器只负责查询已落库记录。 */

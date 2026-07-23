@@ -1,3 +1,5 @@
+/** 【文件职责】操作历史记录策略。
+ * 【配置中心关联】OPERATION_HISTORY_MODE 每次策略判断时动态读取。 */
 const systemConfig = require('../../config/systemConfig')
 
 const DEVICE_SOURCES = new Set(['auto', 'device'])
@@ -16,3 +18,5 @@ function shouldRecord(source) {
 }
 
 module.exports = { shouldRecord }
+/** 【文件职责】定义操作历史的记录策略和可读描述。
+ * 【配置中心关联】OPERATION_HISTORY_MODE 决定记录范围；每次判定读取最新值。 */

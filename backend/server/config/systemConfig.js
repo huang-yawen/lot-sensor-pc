@@ -1,8 +1,16 @@
+/** 【文件职责】配置中心核心模块：默认值、持久化、校验和热更新通知均在此实现。
+ * 【配置中心关联】本文件定义所有场景项；调用 getConfig() 必须实时取值，不要复制后长期缓存。 */
 const fs = require('fs')
 const path = require('path')
 const EventEmitter = require('events')
 
 /**
+ * 【文件职责】配置中心的唯一数据源与热更新发布器。
+ * 维护默认场景、读取和原子保存 system-config.json、校验配置，并通过 onChange
+ * 让 MQTT、告警、页面接口等模块即时应用新场景。
+ * 【配置中心关联】本文件定义全部配置项；MQTT_URL/MQTT_TOPICS/MQTT_QOS 驱动 MQTT
+ * 重连订阅，HEARTBEAT_TIMEOUT 驱动在线判定，CONTROL_VALUE_MAP/字段数组驱动协议适配。
+ *
  * ============================================================================
  * 系统配置中心 / 场景配置说明
  * ============================================================================
@@ -560,7 +568,8 @@ function validate(config) {
 function persist(config) {
   fs.mkdirSync(path.dirname(CONFIG_FILE), { recursive: true })
   const temp = `${CONFIG_FILE}.tmp`
-  fs.writeFileSync(temp, `${JSON.stringify(config, null, 2)}\n`, 'utf8')
+  fs.writeFileSync(temp, `${JSON.stringify(config, null, 2)}
+`, 'utf8')
   fs.renameSync(temp, CONFIG_FILE)
 }
 

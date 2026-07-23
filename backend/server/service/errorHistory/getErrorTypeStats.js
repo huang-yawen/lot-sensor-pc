@@ -1,3 +1,5 @@
+/** 【文件职责】异常类型统计服务。
+ * 【配置中心关联】无直接读取。 */
 const promisePool = require('../../config/dbPool')
 
 // 统计故障类型数量，供图表展示使用。
@@ -26,3 +28,5 @@ module.exports = async function getErrorTypeStats(query) {
         total: rows.reduce((sum, item) => sum + item.count, 0),
     }
 }
+/** 【文件职责】异常类型统计查询服务。
+ * 【配置中心关联】无直接读取；基于已保存的异常历史进行统计。 */

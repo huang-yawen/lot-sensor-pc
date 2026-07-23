@@ -1,3 +1,6 @@
+-- 【文件职责】将旧控制配置迁移为基于 preffix 的语义化协议字段映射。
+-- 【配置中心关联】preffix 会被指令下发链路直接使用；执行前创建备份，执行后可在配置中心调整。
+
 CREATE TABLE IF NOT EXISTS t_direct_config_backup_20260723_mapping LIKE t_direct_config;
 INSERT INTO t_direct_config_backup_20260723_mapping
 SELECT source.* FROM t_direct_config AS source
@@ -24,3 +27,5 @@ WHERE id BETWEEN 0 AND 9
 UPDATE t_direct_config SET topic = 'control' WHERE id BETWEEN 0 AND 9;
 
 SELECT id, t_name, f_type, topic, preffix FROM t_direct_config ORDER BY id;
+-- 【文件职责】将旧控制配置迁移为基于 preffix 的语义化协议字段映射。
+-- 【配置中心关联】preffix 会被指令下发链路直接使用；执行前创建备份，执行后可在配置中心调整。

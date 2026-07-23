@@ -1,3 +1,5 @@
+/** 【文件职责】传感器历史数据 API 控制器。
+ * 【配置中心关联】无直接读取；入库解析使用 TIME_FIELDS。 */
 const getHistoryDataByType = require('../../service/historyData/getHistoryDataByType')
 
 // 控制器只负责接收请求、调用 service，然后返回 JSON。
@@ -10,3 +12,5 @@ module.exports = async (req, res) => {
         res.status(500).json({ success: false, message: err.message })
     }
 }
+/** 【文件职责】传感器历史数据 HTTP 接口，校验筛选条件后查询历史表。
+ * 【配置中心关联】TIME_FIELDS 影响入库解析；本接口只读取已规范化的数据。 */

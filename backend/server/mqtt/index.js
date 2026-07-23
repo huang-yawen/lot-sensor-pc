@@ -1,3 +1,10 @@
+/**
+ * 【文件职责】MQTT 业务总线入口。
+ * 根据配置中心创建客户端、订阅传感器/行为/告警/心跳主题，将消息路由到处理器；当 MQTT
+ * 参数或主题变化时重新注册路由和连接。
+ * 【配置中心关联】MQTT_URL、MQTT_USERNAME、MQTT_PASSWORD、MQTT_QOS、MQTT_TOPICS、
+ * HEARTBEAT_DEVICE_FIELDS 均由本模块读取，并通过 systemConfig.onChange 热更新。
+ */
 const MqttClient = require('./mqttClient')
 const MessageRouter = require('./messageRouter')
 const DeviceManager = require('./deviceManager')

@@ -115,3 +115,5 @@ module.exports = {
     getDirectValue,
     saveDirectData
 }
+/** 【文件职责】保存和读取控制配置当前值的基础数据服务。
+ * 【配置中心关联】无直接读取；控制字段含义由 t_direct_config.preffix 与 f_type 决定。 */

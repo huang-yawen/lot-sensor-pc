@@ -42,3 +42,5 @@ async function handleErrorData(topic, payload) {
 }
 
 module.exports = { handleErrorData, ERROR_TOPIC }
+/** 【文件职责】告警消息适配器，衔接 Topic 路由和异常历史处理模块。
+ * 【配置中心关联】告警主题来自 MQTT_TOPICS.alarm，配置保存后由 MQTT 总线热更新。 */

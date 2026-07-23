@@ -1,3 +1,5 @@
+/** 【文件职责】传感器 MQTT 消息处理器。
+ * 【配置中心关联】DEVICE_ID_FIELDS、TIME_FIELDS 等协议项在每条消息处理时读取。 */
 const { saveSensorData } = require('./sensorRealtimeRepository')
 const { getReportedTime, getTopic } = require('../../utils/protocol')
 const { evaluateRules } = require('../../service/alarm/evaluateRules')
@@ -5,7 +7,7 @@ const { evaluateRules } = require('../../service/alarm/evaluateRules')
 const SENSOR_TOPIC = 'sensor_data'
 
 function parsePayload(payload) {
-    // MQTT payloads arrive as Buffer objects, so decode and parse them first.
+    // MQTT 载荷以 Buffer 对象到达，必须先解码为文本再解析，避免把二进制直接写库。
     try {
         return JSON.parse(payload.toString())
     } catch (err) {
@@ -81,3 +83,5 @@ module.exports = {
     parsePayload,
     normalizeDateTime
 }
+/** 【文件职责】处理传感器 MQTT 消息：解析设备号和时间、规范化字段并写入实时/历史数据。
+ * 【配置中心关联】DEVICE_ID_FIELDS、TIME_FIELDS、字段映射在每条消息处理时读取，支持热更新。 */

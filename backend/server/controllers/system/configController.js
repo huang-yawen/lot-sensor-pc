@@ -1,4 +1,10 @@
 /**
+ * 【文件职责】配置中心 HTTP 控制器。
+ * 提供查询、局部更新、恢复默认、导入、导出接口；导入时将场景 metadata 与数据库元数据
+ * 放在事务中校验和写入，失败会回滚。
+ * 【配置中心关联】直接读写 systemConfig 全部顶层项，并校验 t_direct_config 的 id、
+ * preffix、f_type、parent_id，保证控制字段映射有效。
+ *
  * 系统配置 API 控制器
  * GET    /api/system-config          — 获取当前配置
  * POST   /api/system-config          — 更新配置（部分更新，热更新）

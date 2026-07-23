@@ -1,3 +1,5 @@
+/** 【文件职责】首页仪表盘数据聚合 API。
+ * 【配置中心关联】字段映射、派生指标等由下游按最新配置读取。 */
 const promisePool = require('../../config/dbPool')
 const { buildDisplayFieldUnits } = require('../../utils/helper')
 const { getEnabledMetrics, compileMetricSql, chartSettings } = require('../../service/derivedMetric/derivedMetricService')
@@ -177,3 +179,5 @@ module.exports = async (req, res) => {
         res.status(500).send('数据处理失败')
     }
 }
+/** 【文件职责】仪表盘聚合接口，整合实时传感器、设备与告警展示数据。
+ * 【配置中心关联】页面字段/名称相关配置在下游读取，控制器不保存配置副本。 */

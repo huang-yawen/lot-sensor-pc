@@ -62,3 +62,5 @@ async function handleAbnormalStateData(topic, payload) {
 }
 
 module.exports = { handleAbnormalStateData, ABNORMAL_STATE_TOPIC }
+/** 【文件职责】异常状态消息适配器，协调异常 MQTT 消息与异常历史处理模块。
+ * 【配置中心关联】告警主题来自 MQTT_TOPICS.alarm；具体字段规则由协议工具读取配置。 */

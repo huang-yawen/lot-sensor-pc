@@ -1,3 +1,7 @@
+/**
+ * 【文件职责】提供兼容旧业务代码的 MySQL 连接池导出。
+ * 【配置中心关联】无；数据库连接由 .env 决定，不会随配置中心热更新。
+ */
 require('./env')
 const mysql = require('mysql2')
 

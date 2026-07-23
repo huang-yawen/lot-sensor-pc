@@ -1,3 +1,5 @@
+/** 【文件职责】告警规则评估与自动联锁服务。
+ * 【配置中心关联】ALARM_RULES、ENABLE_LOCAL_ALARM、ENABLE_AUTO_INTERLOCK 每次评估读取。 */
 const promisePool = require('../../config/dbPool')
 const systemConfig = require('../../config/systemConfig')
 const { firstValue, getDeviceNo, getTopic, toWireValue } = require('../../utils/protocol')
@@ -81,3 +83,6 @@ async function evaluateRules(info) {
 }
 
 module.exports = { evaluateRules }
+/** 【文件职责】告警规则计算与可选自动联锁服务。
+ * 【配置中心关联】ALARM_RULES、ENABLE_LOCAL_ALARM、ENABLE_AUTO_INTERLOCK、CONTROL_VALUE_MAP；
+ * 每次评估都读取最新配置，自动联锁默认应保持关闭。 */

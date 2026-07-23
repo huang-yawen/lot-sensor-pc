@@ -1,3 +1,5 @@
+/** 【文件职责】智能判定 API 控制器。
+ * 【配置中心关联】INTELLIGENT_JUDGMENT 及相关开关由处理链路读取。 */
 const promisePool = require('../../config/dbPool')
 const systemConfig = require('../../config/systemConfig')
 const { getDeviceNo } = require('../../utils/protocol')
@@ -140,3 +142,5 @@ module.exports = async (req, res) => {
 }
 
 module.exports.ensureTable = ensureTable
+/** 【文件职责】智能判定接口，发起一次传感器或行为数据的分析流程。
+ * 【配置中心关联】INTELLIGENT_JUDGMENT 与功能开关由下层服务/调用链读取。 */
