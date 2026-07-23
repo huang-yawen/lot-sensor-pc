@@ -8,7 +8,6 @@
         <component :is="getComponent(node.f_type)" :node="node" :model-value="formData[node.id]"
           :is-manual-mode="isManualMode"
           @update:modelValue="val => handleLocalUpdate(node.id, val)"
-          @change="val => $emit('update:modelValue', node.id, val)"
           @save="val => $emit('save', node.id, val)" />
       </div>
     </div>
@@ -17,7 +16,6 @@
       <div v-for="([refKey, children]) in matchedChildGroups" :key="refKey">
         <DynamicNode v-for="child in sortNodes(children)" :key="child.id" :node="child" :form-data="formData"
           :icons="icons" :id="props.id" :is-manual-mode="isManualMode"
-          @update:modelValue="(id, val) => $emit('update:modelValue', id, val)"
           @save="(id, val) => $emit('save', id, val)" />
       </div>
     </div>
@@ -41,7 +39,7 @@ const props = defineProps({
   }
 })
 
-const emit = defineEmits(['update:modelValue', 'save'])
+const emit = defineEmits(['save'])
 
 // 本地暂存表单值
 const handleLocalUpdate = (id, val) => {

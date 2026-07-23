@@ -4,8 +4,7 @@
  * 支持自动重连机制
  */
 
-const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
-const WS_BASE_URL = import.meta.env.VITE_WS_URL || `${wsProtocol}//${location.host}`
+import { getWebSocketBaseUrl } from '@/utils/runtimeEndpoint'
 
 let ws = null
 let reconnectTimer = null
@@ -32,7 +31,7 @@ export function connect(options = {}) {
   }
 
   isManualClose = false
-  const url = options.url || `${WS_BASE_URL}/ws`
+  const url = options.url || `${getWebSocketBaseUrl()}/ws`
 
   try {
     ws = new WebSocket(url)

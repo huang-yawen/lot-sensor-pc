@@ -2,7 +2,6 @@
   <div class="container">
     <DynamicNode v-for="node in data" :key="node.id" :node="node" :form-data="formData" :icons="icons"
       :is-manual-mode="isManualMode"
-      @update:modelValue="handleUpdate"
       @save="handleSave"
       :id="prop.id" />
   </div>
@@ -26,6 +25,7 @@ const prop = defineProps({
 
 const data = computed(() => prop.storeData || []);
 const formData = reactive({});
+const pendingUpdates = new Set();
 let unsubscribePendingCommands = null;
 const icons = markRaw({
   0: Icons.Pointer, 1: Icons.SwitchButton, 2: Icons.Edit,
@@ -83,6 +83,13 @@ const initializeForm = async () => {
 
 const handleUpdate = async (id, value) => {
   formData[id] = value;
+  const updateKey = String(id) + ":" + JSON.stringify(value);
+  if (pendingUpdates.has(updateKey)) {
+    console.warn("[Frontend] 忽略重复提交: " + updateKey);
+    return;
+  }
+
+  pendingUpdates.add(updateKey);
   try {
     console.log("[Frontend] 开始保存配置: id=" + id + ", value=" + value + ", d_no=" + prop.id);
     const result = await prop.handleUpdateData({ id, value, d_no: prop.id });
@@ -104,6 +111,8 @@ const handleUpdate = async (id, value) => {
   } catch (err) {
     console.error("[Frontend] 保存失败:", err);
     ElMessage.error(err.message || "更新失败");
+  } finally {
+    pendingUpdates.delete(updateKey);
   }
 };
 

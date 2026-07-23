@@ -1,13 +1,18 @@
 import axios from 'axios'
+import { getApiBaseUrl } from '@/utils/runtimeEndpoint'
 
-// 统一 API 实例；生产环境可通过 VITE_API_BASE_URL 指向后端地址。
+// 每次请求时读取当前连接模式，避免切换后仍使用旧地址。
 const api = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE_URL || '',
   timeout: 10000,
   headers: {
     'Cache-Control': 'no-cache',
     Pragma: 'no-cache'
   }
+})
+
+api.interceptors.request.use((config) => {
+  config.baseURL = getApiBaseUrl()
+  return config
 })
 
 export default api

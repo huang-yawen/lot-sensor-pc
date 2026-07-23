@@ -4,6 +4,39 @@
       <template #title>这里是唯一的赛场配置入口：页面名称、设备模式、MQTT、字段映射、控制项、告警、智能判定、SQL 公式和 ECharts 均集中在此。</template>
     </el-alert>
 
+    <el-card shadow="never" class="connection-card">
+      <div class="connection-row">
+        <div>
+          <div class="connection-title">运行连接模式</div>
+          <div class="connection-description">
+            {{ connectionMode === CONNECTION_MODES.LOCAL
+              ? '本地模式：前端连接当前电脑的后端'
+              : '远程模式：前端连接公网服务器' }}
+          </div>
+          <div class="connection-address"><span>API</span><code>{{ connectionEndpoint }}</code></div>
+          <div class="connection-address"><span>WebSocket</span><code>{{ webSocketEndpoint }}/ws</code></div>
+          <div class="connection-address"><span>MQTT</span><code>{{ mqttEndpoint }}</code></div>
+        </div>
+        <el-switch
+          v-model="connectionMode"
+          :active-value="CONNECTION_MODES.REMOTE"
+          :inactive-value="CONNECTION_MODES.LOCAL"
+          active-text="远程联调"
+          inactive-text="本地比赛"
+          size="large"
+          :loading="switchingMode"
+          @change="changeConnectionMode"
+        />
+      </div>
+      <el-alert
+        class="connection-tip"
+        type="warning"
+        :closable="false"
+        show-icon
+        title="此开关会同时切换 HTTP API、WebSocket 和 MQTT Broker。后端确认 MQTT 配置已持久化后，页面才会重载。"
+      />
+    </el-card>
+
     <el-tabs v-model="activeTab" class="center-tabs">
       <el-tab-pane label="赛场配置向导" name="guide">
         <el-steps :active="0" align-center class="steps">
@@ -125,6 +158,14 @@ import api from '@/api'
 import { useSystemConfigStore } from '@/stores/SystemConfigStore'
 import DerivedMetricConfig from '@/views/DerivedMetricConfig.vue'
 import AggregationMetricConfig from '@/views/AggregationMetricConfig.vue'
+import {
+  CONNECTION_MODES,
+  getApiBaseUrl,
+  getConnectionMode,
+  getMqttBrokerUrl,
+  getWebSocketBaseUrl,
+  setConnectionMode,
+} from '@/utils/runtimeEndpoint'
 
 const text = ref('')
 const saving = ref(false)
@@ -136,6 +177,38 @@ const router = useRouter()
 const validTabs = ['guide', 'scene', 'formula', 'aggregation', 'reference']
 const activeTab = ref(validTabs.includes(route.query.tab) ? route.query.tab : 'guide')
 const systemStore = useSystemConfigStore()
+const connectionMode = ref(getConnectionMode())
+const switchingMode = ref(false)
+const connectionEndpoint = computed(() => getApiBaseUrl(connectionMode.value))
+const webSocketEndpoint = computed(() => getWebSocketBaseUrl(connectionMode.value))
+const mqttEndpoint = computed(() => getMqttBrokerUrl(connectionMode.value))
+
+async function changeConnectionMode(nextMode) {
+  const previousMode = nextMode === CONNECTION_MODES.LOCAL
+    ? CONNECTION_MODES.REMOTE
+    : CONNECTION_MODES.LOCAL
+  const targetName = nextMode === CONNECTION_MODES.LOCAL ? '本地比赛' : '远程联调'
+
+  try {
+    switchingMode.value = true
+    await ElMessageBox.confirm(
+      `将切换到“${targetName}”：API 使用 ${getApiBaseUrl(nextMode)}，MQTT 使用 ${getMqttBrokerUrl(nextMode)}。`,
+      '切换运行模式',
+      { type: 'warning', confirmButtonText: '确认切换', cancelButtonText: '取消' }
+    )
+    await api.post('/api/system-config', { MQTT_URL: getMqttBrokerUrl(nextMode) })
+    setConnectionMode(nextMode)
+    ElMessage.success(`已切换到${targetName}，正在重新连接`)
+    window.setTimeout(() => window.location.reload(), 350)
+  } catch (error) {
+    connectionMode.value = previousMode
+    if (error !== 'cancel' && error !== 'close') {
+      ElMessage.error(error.message || '连接模式切换失败')
+    }
+  } finally {
+    switchingMode.value = false
+  }
+}
 
 const quickGuide = [
   { title: '基础页面与运行参数', tab: 'scene', description: '决定系统叫什么、显示哪些页面、单设备还是多设备，以及刷新、分页和离线时间。', items: ['SYSTEM_TITLE 与 TERMINOLOGY 控制页面文字', '功能开关控制判定、图表和操作历史', '时间参数统一使用毫秒'] },
@@ -285,6 +358,14 @@ onMounted(() => load().catch(error => ElMessage.error(error.response?.data?.mess
 
 <style scoped>
 .config-center { min-width: 0; }
+.connection-card { margin-top: 14px; }
+.connection-row { display: flex; align-items: center; justify-content: space-between; gap: 24px; }
+.connection-title { color: #1f2937; font-size: 17px; font-weight: 600; margin-bottom: 6px; }
+.connection-description { color: #64748b; margin-bottom: 7px; }
+.connection-address { display: flex; align-items: baseline; gap: 8px; margin-top: 5px; }
+.connection-address span { color: #64748b; min-width: 76px; }
+.connection-row code { color: #2563eb; word-break: break-all; }
+.connection-tip { margin-top: 14px; }
 .center-tabs { margin-top: 14px; }
 .steps { margin: 24px 0 28px; }
 .guide-cards { margin-bottom: 16px; }
@@ -301,5 +382,7 @@ onMounted(() => load().catch(error => ElMessage.error(error.response?.data?.mess
 .reference-toolbar .el-input { max-width: 620px; }
 .reference-toolbar code, :deep(.el-table code) { color: #c7254e; }
 :deep(textarea) { font-family: Consolas, Monaco, monospace; font-size: 13px; }
-@media (max-width: 900px) { .reference-toolbar { align-items: stretch; flex-direction: column; } }
+@media (max-width: 900px) {
+  .connection-row, .reference-toolbar { align-items: stretch; flex-direction: column; }
+}
 </style>
