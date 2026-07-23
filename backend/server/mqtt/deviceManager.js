@@ -353,34 +353,39 @@ class DeviceManager {
     try {
       for (const cmd of [...commands]) {
         const payload = await this._buildPayload(cmd.config_id, cmd.value)
-        if (payload) {
-          const oldValue = await getDirectValue({ config_id: cmd.config_id, d_no: deviceId })
-          // 每条指令发送两次以确保设备可靠接收
-          await this.mqttClient.publish(getTopic('control'), payload)
-          await new Promise(resolve => setTimeout(resolve, 200))
-          await this.mqttClient.publish(getTopic('control'), payload)
-
-          // 发送成功后保存到数据库
-          await saveDirectData({ config_id: cmd.config_id, value: cmd.value, d_no: deviceId })
-          const historyResult = await saveOperationHistory({
-            d_no: deviceId,
-            config_id: Number(cmd.config_id),
-            old_value: oldValue,
-            new_value: cmd.value,
-            source: 'manual_queued'
-          })
-          if (!historyResult.success) {
-            console.error(`[DeviceManager] 离线补发历史记录失败 (config_id=${cmd.config_id}):`, historyResult.error)
-          }
-          const remaining = (this._pendingCommands.get(deviceId) || []).filter(
-            (item) => String(item.config_id) !== String(cmd.config_id)
-          )
-          if (remaining.length > 0) this._pendingCommands.set(deviceId, remaining)
-          else this._pendingCommands.delete(deviceId)
-          this._persistPendingCommands()
-          console.log(`[DeviceManager] 暂存指令已发送并保存到数据库 (config_id=${cmd.config_id})`)
+        if (!payload) {
+          throw new Error(`无法构建暂存指令 (config_id=${cmd.config_id})`)
         }
+        const oldValue = await getDirectValue({ config_id: cmd.config_id, d_no: deviceId })
+        // 每条指令发送两次以确保设备可靠接收
+        await this.mqttClient.publish(getTopic('control'), payload)
+        await new Promise(resolve => setTimeout(resolve, 200))
+        await this.mqttClient.publish(getTopic('control'), payload)
+
+        // 发送成功后保存到数据库
+        await saveDirectData({ config_id: cmd.config_id, value: cmd.value, d_no: deviceId })
+        const historyResult = await saveOperationHistory({
+          d_no: deviceId,
+          config_id: Number(cmd.config_id),
+          old_value: oldValue,
+          new_value: cmd.value,
+          source: 'manual_queued'
+        })
+        if (!historyResult.success) {
+          console.error(`[DeviceManager] 离线补发历史记录失败 (config_id=${cmd.config_id}):`, historyResult.error)
+        }
+        const remaining = (this._pendingCommands.get(deviceId) || []).filter(
+          (item) => String(item.config_id) !== String(cmd.config_id)
+        )
+        if (remaining.length > 0) this._pendingCommands.set(deviceId, remaining)
+        else this._pendingCommands.delete(deviceId)
+        this._persistPendingCommands()
+        console.log(`[DeviceManager] 暂存指令已发送并保存到数据库 (config_id=${cmd.config_id})`)
       }
+      this.mqttClient.emit('pendingCommandsFlushed', {
+        deviceId,
+        count: commands.length,
+      })
     } catch (err) {
       // 保留失败指令及其后的指令，等待下一次心跳或重连后重试。
       console.error(`[DeviceManager] 暂存指令处理失败，队列已保留:`, err.message)

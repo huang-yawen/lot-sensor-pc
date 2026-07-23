@@ -139,6 +139,11 @@ function broadcast(type, payload) {
     deadClients.forEach((client) => wsClients.delete(client));
 }
 
+// 只在后端确认整批暂存指令都已发送并入库后通知页面。
+mqttClient.on('pendingCommandsFlushed', (payload) => {
+    broadcast('pending_commands_flushed', payload);
+});
+
 // ==================== 消息节流（Throttle） ====================
 // 避免底层高频数据导致前端页面闪烁
 // 传感器/行为/故障数据按场景配置的实时刷新间隔合并广播。

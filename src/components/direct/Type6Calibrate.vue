@@ -44,7 +44,6 @@
 
 <script setup>
 import { ref, onMounted, onUnmounted } from 'vue'
-import { ElMessage } from 'element-plus'
 
 const props = defineProps({
   node: Object,
@@ -117,8 +116,6 @@ const onCalibrateSubmit = async () => {
     const payload = { set: timeStr }
     emit('update:modelValue', JSON.stringify(payload))
     emit('save', JSON.stringify(payload))
-    
-    ElMessage.success('指令已发送')
   } catch (err) {
     console.error('[Calibrate] 提交失败:', err)
   } finally {

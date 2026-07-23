@@ -27,7 +27,6 @@
 <script setup>
 import { computed, markRaw, defineAsyncComponent } from 'vue'
 import { DisplayStore } from '@/stores/DisplayStore'
-import { ElMessage } from 'element-plus'
 
 const visibility = DisplayStore()
 
@@ -47,7 +46,8 @@ const emit = defineEmits(['update:modelValue', 'save'])
 // 本地暂存表单值
 const handleLocalUpdate = (id, val) => {
   props.formData[id] = val
-  ElMessage({ message: '指令已暂存', type: 'success', duration: 1500 })
+  // 开关没有独立的 save 事件，值变化即表示用户已确认。
+  if (String(props.node.f_type) === '1') emit('save', id, val)
 }
 
 // 与移动端 DirectNodeMobile.vue 一致的字段可见性判断
