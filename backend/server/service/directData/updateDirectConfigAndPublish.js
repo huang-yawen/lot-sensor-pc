@@ -43,17 +43,6 @@ const isSingleDeviceMode = () => systemConfig.getConfig().SINGLE_DEVICE_MODE ===
 /** 单设备模式下的默认设备编号（从 t_device 表获取的第一个设备） */
 const DEFAULT_DEVICE_ID = null // 将在启动时从数据库加载
 
-/** config_id 到 MQTT 属性名的映射 */
-const CONFIG_MAP = {
-  0: 'mode', 1: 'air', 2: 'fan', 3: 'speed_fan', 4: 'acMode',
-  5: 'power_air', 6: 'TG', 7: 'TinDH', 8: 'TinDL', 9: 'led',
-  10: 'LXD', 11: 'bright_led', 12: 'TBegin', 13: 'TEnd', 14: 'calibrate'
-}
-
-/** 开关类型的 config_id 列表（值需要映射 on->open, off->close） */
-const SWITCH_IDS = [0, 1, 2, 4, 9]
-
-/** 开关值映射 */
 /**
  * 构建 MQTT 消息 payload
  * 所有值统一转为字符串，确保整体为 JSON 格式
@@ -63,22 +52,28 @@ const SWITCH_IDS = [0, 1, 2, 4, 9]
  */
 async function buildPayload(configId, value) {
   const [rows] = await promisePool.query(
-    'SELECT preffix, f_type FROM t_direct_config WHERE id = ? LIMIT 1',
+    'SELECT preffix, f_type, t_name FROM t_direct_config WHERE id = ? LIMIT 1',
     [configId]
   )
-  const key = String(rows[0]?.preffix || '').trim() || CONFIG_MAP[configId] || `unknown_${configId}`
+  if (!rows.length) throw new Error(`指令配置 ID ${configId} 不存在`)
 
-  // 校准时间特殊处理：value 是 JSON 字符串
-  if (Number(configId) === 14) {
+  const config = rows[0]
+  const key = String(config.preffix || '').trim()
+  if (!key) throw new Error(`指令“${config.t_name || configId}”未配置 MQTT 字段 preffix`)
+
+  // 校准组件由 f_type=6 识别，不再依赖某个固定 ID。
+  if (String(config.f_type) === '6') {
     try {
-      return typeof value === 'string' ? JSON.parse(value) : value
+      const parsed = typeof value === 'string' ? JSON.parse(value) : value
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('校准值必须是 JSON 对象')
+      return parsed
     } catch {
-      return { [key]: String(value) }
+      throw new Error(`指令“${config.t_name || configId}”的校准值不是有效 JSON`)
     }
   }
 
-  // 开关类型值映射（on->open, off->close）
-  const isSwitch = String(rows[0]?.f_type) === '1' || SWITCH_IDS.includes(Number(configId))
+  // 只按数据库控件类型判断开关，不再使用旧项目的硬编码 ID。
+  const isSwitch = String(config.f_type) === '1'
   const mappedValue = isSwitch
     ? toWireValue(value)
     : String(value)

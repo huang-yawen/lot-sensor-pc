@@ -123,6 +123,55 @@
         <el-input ref="jsonEditor" v-model="text" type="textarea" :autosize="{ minRows: 24, maxRows: 40 }" spellcheck="false" placeholder="场景 JSON" />
       </el-tab-pane>
 
+      <el-tab-pane label="指令映射" name="mapping">
+        <el-alert
+          type="warning"
+          :closable="false"
+          show-icon
+          title="MQTT 字段是硬件控制 JSON 的属性名。修改前请与硬件协议核对，保存后新指令立即生效。"
+        />
+        <div class="mapping-toolbar">
+          <div>
+            <strong>下发主题：</strong><code>{{ currentControlTopic }}</code>
+            <span class="mapping-hint">开关值会按 CONTROL_VALUE_MAP 转换</span>
+          </div>
+          <div>
+            <el-button @click="load">重新加载</el-button>
+            <el-button type="primary" :loading="mappingSaving" @click="saveDirectMappings">保存指令映射</el-button>
+          </div>
+        </div>
+        <el-table :data="directMappings" border stripe row-key="id" class="mapping-table">
+          <el-table-column prop="id" label="ID" width="64" fixed />
+          <el-table-column label="页面名称" min-width="150">
+            <template #default="scope"><el-input v-model="scope.row.t_name" /></template>
+          </el-table-column>
+          <el-table-column label="控件类型" width="135">
+            <template #default="scope">
+              <el-select v-model="scope.row.f_type">
+                <el-option v-for="item in controlTypes" :key="item.value" :label="item.label" :value="item.value" />
+              </el-select>
+            </template>
+          </el-table-column>
+          <el-table-column label="MQTT 字段" min-width="180">
+            <template #default="scope">
+              <el-input v-model="scope.row.preffix" placeholder="例如 pump" clearable />
+            </template>
+          </el-table-column>
+          <el-table-column label="选项 / 默认值" min-width="210">
+            <template #default="scope"><el-input v-model="scope.row.f_value" placeholder="例如 关:off|开:on" clearable /></template>
+          </el-table-column>
+          <el-table-column label="显示条件" min-width="145">
+            <template #default="scope">
+              <span v-if="scope.row.ref_id === null || scope.row.ref_id === ''">顶层</span>
+              <code v-else>{{ scope.row.ref_id }} = {{ scope.row.ref_value }}</code>
+            </template>
+          </el-table-column>
+          <el-table-column label="下发 JSON 预览" min-width="260">
+            <template #default="scope"><code class="payload-preview">{{ mappingPreview(scope.row) }}</code></template>
+          </el-table-column>
+        </el-table>
+      </el-tab-pane>
+
       <el-tab-pane label="公式与图表" name="formula">
         <el-alert type="info" :closable="false" show-icon title="这是配置功能，不是数据展示页。公式保存后，系统会在实时、历史和 ECharts 查询中自动使用，无需修改 Vue 或 Node.js 代码。" />
         <DerivedMetricConfig class="embedded-config" />
@@ -172,9 +221,11 @@ const saving = ref(false)
 const fileInput = ref(null)
 const jsonEditor = ref(null)
 const helpKeyword = ref('')
+const directMappings = ref([])
+const mappingSaving = ref(false)
 const route = useRoute()
 const router = useRouter()
-const validTabs = ['guide', 'scene', 'formula', 'aggregation', 'reference']
+const validTabs = ['guide', 'scene', 'mapping', 'formula', 'aggregation', 'reference']
 const activeTab = ref(validTabs.includes(route.query.tab) ? route.query.tab : 'guide')
 const systemStore = useSystemConfigStore()
 const connectionMode = ref(getConnectionMode())
@@ -182,6 +233,14 @@ const switchingMode = ref(false)
 const connectionEndpoint = computed(() => getApiBaseUrl(connectionMode.value))
 const webSocketEndpoint = computed(() => getWebSocketBaseUrl(connectionMode.value))
 const mqttEndpoint = computed(() => getMqttBrokerUrl(connectionMode.value))
+const currentControlTopic = computed(() => parseSafe()?.config?.MQTT_TOPICS?.control || 'control')
+const controlTypes = [
+  { value: '1', label: '开关' },
+  { value: '2', label: '数字输入' },
+  { value: '3', label: '滑块' },
+  { value: '4', label: '时间' },
+  { value: '6', label: '校准' },
+]
 
 async function changeConnectionMode(nextMode) {
   const previousMode = nextMode === CONNECTION_MODES.LOCAL
@@ -289,7 +348,57 @@ watch(activeTab, tab => {
 
 async function load() {
   const response = await api.get('/api/system-config/export')
-  text.value = JSON.stringify(response.data.data, null, 2)
+  const scene = response.data.data
+  text.value = JSON.stringify(scene, null, 2)
+  directMappings.value = JSON.parse(JSON.stringify(scene.metadata?.t_direct_config || []))
+}
+
+function parseSafe() {
+  try { return JSON.parse(text.value) } catch { return null }
+}
+
+function mappingPreview(row) {
+  if (String(row.f_type) === '6') return JSON.stringify({ set: '校准时间' })
+  const key = String(row.preffix || '').trim() || '未配置字段'
+  let value = '值'
+  if (String(row.f_type) === '1') {
+    const options = String(row.f_value || '').split('|').map(item => item.split(':')[1]).filter(Boolean)
+    const pageValue = options[1] || options[0] || 'on'
+    value = parseSafe()?.config?.CONTROL_VALUE_MAP?.[pageValue] ?? pageValue
+  } else if (String(row.f_type) === '4') {
+    value = '08:00:00'
+  } else if (String(row.f_type) === '2' || String(row.f_type) === '3') {
+    value = row.min ?? '0'
+  }
+  return JSON.stringify({ [key]: String(value) })
+}
+
+async function saveDirectMappings() {
+  try {
+    const prefixes = new Set()
+    for (const row of directMappings.value) {
+      row.t_name = String(row.t_name || '').trim()
+      row.preffix = String(row.preffix || '').trim()
+      row.topic = row.topic || 'control'
+      if (!row.t_name) throw new Error(`ID ${row.id} 的页面名称不能为空`)
+      if (!row.preffix) throw new Error(`指令“${row.t_name}”的 MQTT 字段不能为空`)
+      if (prefixes.has(row.preffix)) throw new Error(`MQTT 字段重复：${row.preffix}`)
+      prefixes.add(row.preffix)
+    }
+    await ElMessageBox.confirm('保存后新的 MQTT 字段映射立即用于指令下发，是否继续？', '保存指令映射', { type: 'warning' })
+    mappingSaving.value = true
+    const scene = parse()
+    if (!scene.metadata) scene.metadata = {}
+    scene.metadata.t_direct_config = JSON.parse(JSON.stringify(directMappings.value))
+    const response = await api.post('/api/system-config/import', scene)
+    ElMessage.success(response.data.message || '指令映射已保存')
+    await load()
+  } catch (error) {
+    if (error === 'cancel' || error === 'close') return
+    ElMessage.error(error.response?.data?.message || error.message || '指令映射保存失败')
+  } finally {
+    mappingSaving.value = false
+  }
 }
 
 function parse() {
@@ -378,11 +487,16 @@ onMounted(() => load().catch(error => ElMessage.error(error.response?.data?.mess
 .toolbar { display: flex; gap: 10px; margin: 16px 0; flex-wrap: wrap; }
 .hidden { display: none; }
 .embedded-config { margin-top: 14px; }
+.mapping-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 16px 0; }
+.mapping-toolbar code { color: #2563eb; }
+.mapping-hint { color: #64748b; margin-left: 16px; }
+.mapping-table :deep(.el-input), .mapping-table :deep(.el-select) { width: 100%; }
+.payload-preview { color: #047857; white-space: normal; word-break: break-all; }
 .reference-toolbar { display: flex; align-items: center; gap: 16px; margin-bottom: 14px; color: #64748b; }
 .reference-toolbar .el-input { max-width: 620px; }
 .reference-toolbar code, :deep(.el-table code) { color: #c7254e; }
 :deep(textarea) { font-family: Consolas, Monaco, monospace; font-size: 13px; }
 @media (max-width: 900px) {
-  .connection-row, .reference-toolbar { align-items: stretch; flex-direction: column; }
+  .connection-row, .reference-toolbar, .mapping-toolbar { align-items: stretch; flex-direction: column; }
 }
 </style>

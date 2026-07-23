@@ -12,6 +12,30 @@ const { ensureTable: ensureDerivedMetricTable } = require('../../service/derived
 
 const METADATA_TABLES = ['t_sensor_field_mapper', 't_behavior_field_mapper', 't_direct_config', 't_derived_metric']
 
+function validateDirectMappings(rows) {
+  if (!Array.isArray(rows) || rows.length === 0) throw new Error('t_direct_config 至少需要一条指令映射')
+  const ids = new Set()
+  const prefixes = new Set()
+  for (const [index, row] of rows.entries()) {
+    const label = `t_direct_config[${index}]`
+    const id = Number(row.id)
+    if (!Number.isInteger(id) || id < 0) throw new Error(`${label}.id 必须是非负整数`)
+    if (ids.has(id)) throw new Error(`t_direct_config.id 重复: ${id}`)
+    ids.add(id)
+    if (!String(row.t_name || '').trim()) throw new Error(`${label}.t_name 不能为空`)
+    if (!['1', '2', '3', '4', '6'].includes(String(row.f_type))) throw new Error(`${label}.f_type 只能是 1、2、3、4、6`)
+    const prefix = String(row.preffix || '').trim()
+    if (!prefix) throw new Error(`${label}.preffix 不能为空`)
+    if (prefixes.has(prefix)) throw new Error(`MQTT 字段重复: ${prefix}`)
+    prefixes.add(prefix)
+  }
+  for (const row of rows) {
+    if (row.ref_id !== null && row.ref_id !== undefined && row.ref_id !== '' && !ids.has(Number(row.ref_id))) {
+      throw new Error(`指令 ${row.id} 的父级 ref_id=${row.ref_id} 不存在`)
+    }
+  }
+}
+
 async function readMetadata(connection = promisePool) {
   const metadata = {}
   for (const table of METADATA_TABLES) {
@@ -27,6 +51,7 @@ async function replaceMetadata(connection, metadata) {
     if (!Object.prototype.hasOwnProperty.call(metadata, table)) continue
     const rows = metadata[table]
     if (!Array.isArray(rows)) throw new Error(`${table} 必须是数组`)
+    if (table === 't_direct_config') validateDirectMappings(rows)
     const [description] = await connection.query(`DESCRIBE ${table}`)
     const allowed = new Set(description.map(column => column.Field))
     await connection.query(`DELETE FROM ${table}`)

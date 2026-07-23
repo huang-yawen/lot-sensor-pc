@@ -29,12 +29,6 @@ const fs = require('fs')
 const path = require('path')
 const { toWireValue, getTopic } = require('../utils/protocol')
 
-const configIdMapping = {
-  0: 'mode', 1: 'air', 2: 'fan', 3: 'speed_fan', 4: 'acMode',
-  5: 'power_air', 6: 'TG', 7: 'TinDH', 8: 'TinDL', 9: 'led',
-  10: 'LXD', 11: 'bright_led', 12: 'TBegin', 13: 'TEnd', 14: 'calibrate'
-}
-
 /** 动态读取超时配置，确保热更新立即生效。 */
 function getOfflineTimeout() {
   const timeout = Number(systemConfig.getConfig().HEARTBEAT_TIMEOUT)
@@ -446,23 +440,27 @@ class DeviceManager {
    */
   async _buildPayload(configId, value) {
     const [rows] = await promisePool.query(
-      'SELECT preffix, f_type FROM t_direct_config WHERE id = ? LIMIT 1',
+      'SELECT preffix, f_type, t_name FROM t_direct_config WHERE id = ? LIMIT 1',
       [configId]
     )
-    const propertyName = String(rows[0]?.preffix || '').trim() || configIdMapping[configId] || `unknown_${configId}`
+    if (!rows.length) throw new Error(`指令配置 ID ${configId} 不存在`)
 
-    // 校准时间特殊处理
-    if (Number(configId) === 14) {
+    const config = rows[0]
+    const propertyName = String(config.preffix || '').trim()
+    if (!propertyName) throw new Error(`指令“${config.t_name || configId}”未配置 MQTT 字段 preffix`)
+
+    // 校准组件由 f_type=6 识别，不再依赖某个固定 ID。
+    if (String(config.f_type) === '6') {
       try {
-        return typeof value === 'string' ? JSON.parse(value) : value
+        const parsed = typeof value === 'string' ? JSON.parse(value) : value
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('校准值必须是 JSON 对象')
+        return parsed
       } catch {
-        return { [propertyName]: String(value) }
+        throw new Error(`指令“${config.t_name || configId}”的校准值不是有效 JSON`)
       }
     }
 
-    // 开关类型值映射（on->open, off->close）
-    const SWITCH_TYPES = [0, 1, 2, 4, 9]
-    const isSwitch = String(rows[0]?.f_type) === '1' || SWITCH_TYPES.includes(Number(configId))
+    const isSwitch = String(config.f_type) === '1'
     const mappedValue = isSwitch
       ? toWireValue(value)
       : String(value)
