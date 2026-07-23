@@ -1,3 +1,9 @@
+/**
+ * 【文件职责】
+ * Vue 组合式函数，封装可复用的状态监听和生命周期清理逻辑。
+ * 【配置中心关联】
+ * 需要配置时由调用页面或状态仓库传入，避免在组合函数内写死场景值。
+ * */
 import { ref, onUnmounted, watch } from "vue";
 import { ElMessage } from "element-plus";
 import { DirectStore } from "@/stores/DirectStore";

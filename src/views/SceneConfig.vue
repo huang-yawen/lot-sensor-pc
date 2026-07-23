@@ -1,3 +1,9 @@
+<!--
+ * 【文件职责】配置中心与远程联调总页面。
+ * 集中编辑场景参数、MQTT、字段映射、控制项、告警、派生指标和智能判定，并提供导入导出。
+ * 【配置中心关联】通过 /api/system-config 读写后端配置中心；“本地比赛/远程联调”开关使用
+ * runtimeEndpoint 同时切换 HTTP、WebSocket、MQTT 地址，只有后端确认 MQTT 配置保存成功才重载页面。
+ * -->
 <template>
   <div class="config-center">
     <el-alert type="info" :closable="false" show-icon>

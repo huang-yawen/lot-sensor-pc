@@ -1,3 +1,9 @@
+/**
+ * 【文件职责】
+ * 前端路由定义，负责页面地址、组件懒加载和导航结构。
+ * 【配置中心关联】
+ * 路由不保存配置中心；页面根据最新场景配置决定可见内容。
+ * */
 import { createRouter, createWebHashHistory } from 'vue-router'
 const routes=[
     {

@@ -1,3 +1,10 @@
+/**
+ * 【文件职责】指令配置与下发状态仓库。
+ * 加载控制树和设备渲染值，提交单条/批量控制命令，并把后端返回的“已发送/已暂存”结果
+ * 交给组件显示。它是避免多个控件重复下发、重复弹出消息的前端统一入口。
+ * 【配置中心关联】SINGLE_DEVICE_MODE 由 /directRender 返回；实际 MQTT 主题、值转换和
+ * t_direct_config.preffix 字段映射均在后端配置中心/数据库完成，前端只传 config_id、value、d_no。
+ * */
 import { defineStore } from "pinia";
 import { ref } from "vue";
 import api from "@/api";
@@ -43,6 +50,7 @@ export const DirectStore = defineStore("DirectStore", () => {
     try {
       console.log("[DirectStore] 开始更新数据:", { id, value, d_no });
 
+      // 以后端响应为准：在线设备立即发送，离线设备仅暂存，组件不能自行二次发布 MQTT。
       const res = await api.post("/directData/update", {
         config_id: id,
         value,

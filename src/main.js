@@ -1,3 +1,9 @@
+/**
+ * 【文件职责】
+ * 前端启动入口，创建 Vue 应用并注册路由、状态仓库及全局样式。
+ * 【配置中心关联】
+ * 不写死场景业务配置；运行模式与配置中心由运行时模块和状态仓库负责。
+ * */
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'
 import './style.css'

@@ -1,3 +1,9 @@
+<!--
+ * 【文件职责】
+ * 业务页面，负责组合数据、状态和用户操作，呈现完整功能界面。
+ * 【配置中心关联】
+ * 页面通过状态仓库读取配置中心；场景开关保存后，相关显示与交互按最新配置更新。
+ * -->
 <template>
   <div class="aggregation-config" v-loading="loading">
     <el-alert type="info" :closable="false" show-icon title="累计与滑动指标统一在这里维护。保存后，首页独立图表和历史页内嵌列会按显示位置立即生效。" />

@@ -1,3 +1,10 @@
+<!--
+ * 【文件职责】递归控制节点渲染器。
+ * 根据 t_direct_config 的 f_type 动态选择开关、输入框、滑块、时间或校准控件，并递归渲染
+ * parent_id 子节点；本组件只向上冒泡一次保存事件。
+ * 【配置中心关联】f_type、parent_id、preffix 来自控制配置元数据；DisplayStore 控制字段可见性。
+ * 真实协议字段转换在后端完成，前端不可根据显示名称自行拼装 MQTT 载荷。
+ * -->
 <template>
   <div class="dynamic-node" v-if="!shouldHideField(node?.t_name, visibility)">
     <div class="node-row">

@@ -1,3 +1,9 @@
+<!--
+ * 【文件职责】
+ * 可复用界面组件，负责展示数据或组织页面布局。
+ * 【配置中心关联】
+ * 不持久化配置中心；需要展示场景信息时由父组件或状态仓库传入。
+ * -->
 <template>
   <div id="container">
     <el-select v-model="selectedValue" placeholder="请选择" style="margin-bottom: 20px; width: 200px;">

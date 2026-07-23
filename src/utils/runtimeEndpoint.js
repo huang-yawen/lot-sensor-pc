@@ -1,3 +1,9 @@
+/**
+ * 【文件职责】运行模式与端点地址解析器。
+ * 统一提供 HTTP、WebSocket、MQTT Broker 地址，避免页面分别硬编码 localhost 或公网 IP。
+ * 【配置中心关联】不保存后端场景配置；连接模式仅存浏览器 localStorage。环境变量
+ * VITE_LOCAL_*、VITE_REMOTE_* 可覆盖默认地址，切换后由 API/WebSocket/MQTT 调用方即时读取。
+ * */
 const STORAGE_KEY = 'lot-connection-mode'
 const LOCAL_MODE = 'local'
 const REMOTE_MODE = 'remote'
@@ -33,6 +39,7 @@ export function getApiBaseUrl(mode = getConnectionMode()) {
     return trimTrailingSlash(import.meta.env.VITE_LOCAL_API_BASE_URL || 'http://localhost:3000')
   }
 
+  // 部署在公网 Nginx 时优先复用当前页面来源，避免把协议或端口写死。
   const deployedOnRemoteHost = !isLocalHostname(window.location.hostname)
   const fallback = deployedOnRemoteHost ? window.location.origin : 'http://101.133.232.20'
   return trimTrailingSlash(
