@@ -1,6 +1,6 @@
 <!--
  * 【文件职责】递归控制节点渲染器。
- * 根据 t_direct_config 的 f_type 动态选择开关、输入框、滑块、时间或校准控件，并递归渲染
+ * 根据 t_direct_config 的 f_type 动态选择开关、输入框、滑块或时间控件，并递归渲染
  * parent_id 子节点；本组件只向上冒泡一次保存事件。
  * 【配置中心关联】f_type、parent_id、preffix 来自控制配置元数据；DisplayStore 控制字段可见性。
  * 真实协议字段转换在后端完成，前端不可根据显示名称自行拼装 MQTT 载荷。
@@ -13,7 +13,6 @@
       </div>
       <div class="node-component">
         <component :is="getComponent(node.f_type)" :node="node" :model-value="formData[node.id]"
-          :is-manual-mode="isManualMode"
           @update:modelValue="val => handleLocalUpdate(node.id, val)"
           @save="val => $emit('save', node.id, val)" />
       </div>
@@ -22,7 +21,7 @@
     <div class="node-children" v-if="matchedChildGroups.length">
       <div v-for="([refKey, children]) in matchedChildGroups" :key="refKey">
         <DynamicNode v-for="child in sortNodes(children)" :key="child.id" :node="child" :form-data="formData"
-          :icons="icons" :id="props.id" :is-manual-mode="isManualMode"
+          :icons="icons" :id="props.id"
           @save="(id, val) => $emit('save', id, val)" />
       </div>
     </div>
@@ -37,13 +36,9 @@ const visibility = DisplayStore()
 
 const props = defineProps({
   node: Object,
-  formData: Object, 
+  formData: Object,
   icons: Object,
-  id: [Number, String],
-  isManualMode: {
-    type: Boolean,
-    default: false
-  }
+  id: [Number, String]
 })
 
 const emit = defineEmits(['save'])
@@ -66,7 +61,6 @@ const compMap = markRaw({
   2: defineAsyncComponent(() => import('./Type2Input.vue')),
   3: defineAsyncComponent(() => import('./Type3Slider.vue')),
   4: defineAsyncComponent(() => import('./Type4Time.vue')),
-  6: defineAsyncComponent(() => import('./Type6Calibrate.vue')),
   default: defineAsyncComponent(() => import('./TypeDefault.vue'))
 })
 

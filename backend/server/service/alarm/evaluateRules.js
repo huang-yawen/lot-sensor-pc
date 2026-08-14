@@ -2,7 +2,8 @@
  * 【配置中心关联】ALARM_RULES、ENABLE_LOCAL_ALARM、ENABLE_AUTO_INTERLOCK 每次评估读取。 */
 const promisePool = require('../../config/dbPool')
 const systemConfig = require('../../config/systemConfig')
-const { firstValue, getDeviceNo, getTopic, toWireValue } = require('../../utils/protocol')
+const { firstValue, getTopic, toWireValue, buildSwitchPayload } = require('../../utils/protocol')
+const { resolveDeviceNo } = require('../../utils/mappedData')
 const { saveDirectData, getDirectValue } = require('../directData/saveDirectConfig')
 const { saveOperationHistory } = require('../operationHistory/saveOperationHistory')
 
@@ -27,7 +28,7 @@ function requirementMet(info, requirement) {
 async function evaluateRules(info) {
   const config = systemConfig.getConfig()
   if (!config.ENABLE_LOCAL_ALARM) return []
-  const deviceNo = String(getDeviceNo(info) || 'default')
+  const deviceNo = String((await resolveDeviceNo(info)) || 'default')
   const state = { ...(latestState.get(deviceNo) || {}), ...info }
   latestState.set(deviceNo, state)
   const alarms = []
@@ -50,12 +51,16 @@ async function evaluateRules(info) {
     if (config.ENABLE_AUTO_INTERLOCK && rule.action?.field) {
       try {
         const mqttClient = require('../../mqtt')
-        const payload = { [rule.action.field]: toWireValue(rule.action.value) }
-        if (!config.SINGLE_DEVICE_MODE && deviceNo !== 'default') payload.d_no = deviceNo
         const [[directConfig]] = await promisePool.query(
-          'SELECT id FROM t_direct_config WHERE LOWER(preffix) = LOWER(?) LIMIT 1',
+          'SELECT id, t_name, f_type, preffix, wire_template FROM t_direct_config WHERE LOWER(preffix) = LOWER(?) LIMIT 1',
           [rule.action.field]
         )
+        // 开关类联锁目标配置了 wire_template（如 Modbus 透传）时用整份报文下发，
+        // 否则退回 { [字段名]: 线上值 }，跟手动下发和离线补发保持同一套逻辑。
+        const payload = directConfig && String(directConfig.f_type) === '1'
+          ? buildSwitchPayload(directConfig, rule.action.value)
+          : { [rule.action.field]: toWireValue(rule.action.value) }
+        if (!config.SINGLE_DEVICE_MODE && deviceNo !== 'default') payload.d_no = deviceNo
         const targetDevice = deviceNo === 'default' ? null : deviceNo
         const oldValue = directConfig
           ? await getDirectValue({ config_id: directConfig.id, d_no: targetDevice })

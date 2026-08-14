@@ -13,6 +13,7 @@ const { firstValue } = require('../utils/protocol')
 const { handleMessage: handleSensorData } = require('./sensorRealtime/sensorRealtimeHandler')
 const { handleMessage: handleBehaviorData } = require('./behaviorRealtime/behaviorRealtimeHandler')
 const { handleMessage: handleAbnormalStateData } = require('./errorHistory/errorHistoryHandler')
+const { handleMessage: handleCombinedData } = require('./combinedRealtime/combinedRealtimeHandler')
 
 function buildMqttConfig(scene) {
   const qos = scene.MQTT_QOS
@@ -41,8 +42,13 @@ const deviceManager = new DeviceManager(mqttClient)
 
 function registerRoutes(scene) {
   router.clear()
-  router.register(scene.MQTT_TOPICS.sensor, handleSensorData)
-  router.register(scene.MQTT_TOPICS.behavior, handleBehaviorData)
+  if (scene.MQTT_TOPICS.sensor === scene.MQTT_TOPICS.behavior) {
+    // 设备把传感器字段和行为字段放在同一条消息里上报，不再区分传感器/行为两个主题。
+    router.register(scene.MQTT_TOPICS.sensor, handleCombinedData)
+  } else {
+    router.register(scene.MQTT_TOPICS.sensor, handleSensorData)
+    router.register(scene.MQTT_TOPICS.behavior, handleBehaviorData)
+  }
   router.register(scene.MQTT_TOPICS.alarm, handleAbnormalStateData)
 }
 

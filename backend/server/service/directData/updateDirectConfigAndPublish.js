@@ -35,7 +35,7 @@ const mqttClient = require('../../mqtt')
 const { saveDirectData, getDirectValue } = require('./saveDirectConfig')
 const { saveOperationHistory } = require('../operationHistory/saveOperationHistory')
 const systemConfig = require('../../config/systemConfig')
-const { toWireValue, getTopic } = require('../../utils/protocol')
+const { getTopic, buildSwitchPayload } = require('../../utils/protocol')
 
 // ============================================================
 // 【模式切换变量】SINGLE_DEVICE_MODE
@@ -50,41 +50,34 @@ const isSingleDeviceMode = () => systemConfig.getConfig().SINGLE_DEVICE_MODE ===
 const DEFAULT_DEVICE_ID = null // 将在启动时从数据库加载
 
 /**
- * 构建 MQTT 消息 payload
- * 所有值统一转为字符串，确保整体为 JSON 格式
+ * 构建 MQTT 消息 payload。
+ * 开关类指令（f_type=1）走 buildSwitchPayload：配置了 wire_template 就整体下发那个
+ * 自定义协议报文（如 Modbus 透传），只替换其中 crc 字段；没配置就退回
+ * { [preffix]: 线上值 }。
+ * 非开关指令如果没配置 preffix（比如流量/压力阈值这类只在本地使用的参考值），
+ * 说明它不需要下发给设备，返回 null，调用方据此跳过 MQTT 发送、直接保存数据库。
  * @param {number} configId
  * @param {*} value
- * @returns {Object}
+ * @returns {Object|null}
  */
 async function buildPayload(configId, value) {
   const [rows] = await promisePool.query(
-    'SELECT preffix, f_type, t_name FROM t_direct_config WHERE id = ? LIMIT 1',
+    'SELECT preffix, f_type, t_name, wire_template FROM t_direct_config WHERE id = ? LIMIT 1',
     [configId]
   )
   if (!rows.length) throw new Error(`指令配置 ID ${configId} 不存在`)
 
   const config = rows[0]
-  const key = String(config.preffix || '').trim()
-  if (!key) throw new Error(`指令“${config.t_name || configId}”未配置 MQTT 字段 preffix`)
-
-  // 校准组件由 f_type=6 识别，不再依赖某个固定 ID。
-  if (String(config.f_type) === '6') {
-    try {
-      const parsed = typeof value === 'string' ? JSON.parse(value) : value
-      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('校准值必须是 JSON 对象')
-      return parsed
-    } catch {
-      throw new Error(`指令“${config.t_name || configId}”的校准值不是有效 JSON`)
-    }
-  }
 
   // 只按数据库控件类型判断开关，不再使用旧项目的硬编码 ID。
-  const isSwitch = String(config.f_type) === '1'
-  const mappedValue = isSwitch
-    ? toWireValue(value)
-    : String(value)
+  if (String(config.f_type) === '1') {
+    return buildSwitchPayload(config, value)
+  }
 
-  return { [key]: mappedValue }
+  const key = String(config.preffix || '').trim()
+  if (!key) return null
+
+  return { [key]: String(value) }
 }
 
 /**
@@ -141,7 +134,29 @@ module.exports = async (req, res) => {
       console.log(`[DirectUpdate] 多设备模式，设备编号: ${deviceId}`)
       // MQTT 消息中携带 d_no（传给底层设备）
       // 全局指令也传 d_no: null，让底层设备明确知道这是全局指令
-      payload.d_no = deviceId
+      if (payload) payload.d_no = deviceId
+    }
+
+    // 2.5 没有配置 MQTT 字段的指令（如阈值类参考值）只在本地保存，不下发设备。
+    if (payload === null) {
+      const saveDNo = singleDeviceMode ? deviceId : d_no
+      const oldValue = await getDirectValue({ config_id, d_no: saveDNo })
+      const saveResult = await saveDirectData({ config_id, value, d_no: saveDNo })
+      console.log('[DirectUpdate] 本地配置保存成功（未配置 MQTT 字段，不下发）:', saveResult)
+
+      const historyResult = await saveOperationHistory({
+        d_no: deviceId || saveDNo,
+        config_id: Number(config_id),
+        old_value: oldValue,
+        new_value: String(value),
+        source: 'manual'
+      })
+
+      return res.json({
+        success: true,
+        message: '本地配置已保存（未配置 MQTT 字段，不下发设备）',
+        data: { db: saveResult, status: 'saved_local', history: historyResult }
+      })
     }
 
     // 3. 检查设备在线状态

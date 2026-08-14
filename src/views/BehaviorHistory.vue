@@ -67,7 +67,8 @@ import { useSystemConfigStore } from '@/stores/SystemConfigStore'
 const store = PaginationStore()
 const systemStore = useSystemConfigStore()
 
-const online = '保存数据'
+// 汇总数据页面不再按实时/历史筛选，留空即可查到该表全部数据（含最新的实时数据）。
+const online = ''
 const selectedRows = ref([])
 const showRecognizeBtn = ref(false)
 const recognizing = ref(false)

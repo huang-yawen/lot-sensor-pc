@@ -240,7 +240,7 @@ const defaultConfig = {
       metric_key: 'pressure_pulsation',
       metric_name: '压力脉动(20点)',
       source_table: 't_sensor_data',
-      source_field: 'field4',
+      source_field: 'field5',
       aggregation: 'volatility',
       window_size: 20,
       unit: 'kPa',
@@ -310,9 +310,11 @@ const defaultConfig = {
   // 五种语义主题。值必须与设备固件一致，键名 sensor/behavior/... 不可改名。
   MQTT_TOPICS: {
     // 传感量上报：温度、流量、压力等连续测量值。
+    // 设备把传感器字段和行为字段放在同一条消息里上报，所以 behavior 也指向这个主题；
+    // mqtt/index.js 检测到两者相同时会用合并处理器代替分开的处理器。
     sensor: 'sensor_data',
     // 执行器/运行状态上报：水泵、加热、阀门状态等。
-    behavior: 'behavioral_data',
+    behavior: 'sensor_data',
     // 设备主动告警上报。
     alarm: 'abnormal_state',
     // 设备心跳上报，用于在线/离线判断。
@@ -417,7 +419,7 @@ const defaultConfig = {
     {
       id: 'temperature_high',
       name: '出水温度过高',
-      field: ['Tout', 'outlet_temperature'],
+      field: ['Tout', 'outlet_temperature', 'wen_du2'],
       operator: '>',
       threshold: 80,
       action: { field: 'heater', value: 'off' },
@@ -426,18 +428,18 @@ const defaultConfig = {
     {
       id: 'flow_low',
       name: '循环流量过低',
-      field: ['Flow', 'flow'],
+      field: ['Flow', 'flow', 'liu_liang1', 'liu_liang2'],
       operator: '<',
       threshold: 0.5,
       // 只有水泵处于开启状态时，低流量才属于异常。
-      require: { field: ['pump'], values: ['open', 'on', 1, true] },
+      require: { field: ['pump', 'shui_beng'], values: ['open', 'on', 1, true] },
       action: { field: 'heater', value: 'off' },
       enabled: true,
     },
     {
       id: 'pressure_high',
       name: '管路压力过高',
-      field: ['Pressure', 'pressure'],
+      field: ['Pressure', 'pressure', 'ya_li'],
       operator: '>',
       threshold: 500,
       action: { field: 'pump', value: 'off' },

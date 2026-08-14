@@ -40,7 +40,37 @@ function aliases(value) {
   return String(value || '').split(/[|,]/).map(item => item.trim()).filter(Boolean)
 }
 
-module.exports = { firstValue, getDeviceNo, getReportedTime, getTopic, toWireValue, fromWireValue, aliases }
+/**
+ * 组装开关类指令（f_type=1）的下发 payload。
+ * 如果 t_direct_config.wire_template 配置了完整报文模板（用于像 Modbus 透传这种
+ * 不是简单 {字段名: 开/关} 的自定义协议），就以模板为准，只把其中的 crc 字段替换成
+ * 1（开）或 0（关），其余字段原样下发；没有配置模板的开关仍走原来的
+ * { [preffix]: 线上值 } 格式，不影响其他指令。
+ * @param {{ id: number|string, t_name?: string, preffix?: string, wire_template?: string }} config
+ * @param {*} value - 页面值，如 'on'/'off'
+ */
+function buildSwitchPayload(config, value) {
+  const template = String(config.wire_template || '').trim()
+  if (template) {
+    let parsed
+    try {
+      parsed = JSON.parse(template)
+    } catch (err) {
+      throw new Error(`指令“${config.t_name || config.id}”的 wire_template 不是有效 JSON`)
+    }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error(`指令“${config.t_name || config.id}”的 wire_template 必须是 JSON 对象`)
+    }
+    const isOn = String(value).trim().toLowerCase() === 'on'
+    return { ...parsed, crc: isOn ? 1 : 0 }
+  }
+
+  const key = String(config.preffix || '').trim()
+  if (!key) throw new Error(`指令“${config.t_name || config.id}”未配置 MQTT 字段 preffix`)
+  return { [key]: toWireValue(value) }
+}
+
+module.exports = { firstValue, getDeviceNo, getReportedTime, getTopic, toWireValue, fromWireValue, aliases, buildSwitchPayload }
 /**
  * 【文件职责】设备协议适配层。
  * 统一解析设备编号/时间字段，按 t_direct_config.preffix 组装控制载荷，并把页面值

@@ -29,11 +29,26 @@ function validateDirectMappings(rows) {
     if (ids.has(id)) throw new Error(`t_direct_config.id 重复: ${id}`)
     ids.add(id)
     if (!String(row.t_name || '').trim()) throw new Error(`${label}.t_name 不能为空`)
-    if (!['1', '2', '3', '4', '6'].includes(String(row.f_type))) throw new Error(`${label}.f_type 只能是 1、2、3、4、6`)
+    if (!['1', '2', '3', '4'].includes(String(row.f_type))) throw new Error(`${label}.f_type 只能是 1、2、3、4`)
+    // preffix 允许为空：部分指令项（如阈值类参考值）不通过 MQTT 下发，只在本地使用。
     const prefix = String(row.preffix || '').trim()
-    if (!prefix) throw new Error(`${label}.preffix 不能为空`)
-    if (prefixes.has(prefix)) throw new Error(`MQTT 字段重复: ${prefix}`)
-    prefixes.add(prefix)
+    if (prefix) {
+      if (prefixes.has(prefix)) throw new Error(`MQTT 字段重复: ${prefix}`)
+      prefixes.add(prefix)
+    }
+    // wire_template：开关类指令的自定义协议报文模板（如 Modbus 透传），可选，配置了必须是合法 JSON 对象。
+    const wireTemplate = String(row.wire_template || '').trim()
+    if (wireTemplate) {
+      let parsed
+      try {
+        parsed = JSON.parse(wireTemplate)
+      } catch {
+        throw new Error(`${label}.wire_template 不是合法 JSON`)
+      }
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        throw new Error(`${label}.wire_template 必须是 JSON 对象`)
+      }
+    }
   }
   for (const row of rows) {
     if (row.ref_id !== null && row.ref_id !== undefined && row.ref_id !== '' && !ids.has(Number(row.ref_id))) {

@@ -34,6 +34,8 @@ export default defineConfig({
       '/api/derived-metrics': backendProxy,
       '/api/mqtt/status': backendProxy,
       '/api/device-status': backendProxy,
+      '/api/cumulative': backendProxy,
+      '/api/time-window': backendProxy,
       '/ws': {
         ...backendProxy,
         ws: true

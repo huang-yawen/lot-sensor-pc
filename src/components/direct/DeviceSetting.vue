@@ -8,7 +8,6 @@
 <template>
   <div class="container">
     <DynamicNode v-for="node in data" :key="node.id" :node="node" :form-data="formData" :icons="icons"
-      :is-manual-mode="isManualMode"
       @save="handleSave"
       :id="prop.id" />
   </div>
@@ -38,11 +37,6 @@ let unsubscribePendingCommands = null;
 const icons = markRaw({
   0: Icons.Pointer, 1: Icons.SwitchButton, 2: Icons.Edit,
   3: Icons.Operation, 4: Icons.Guide, 5: Icons.Memo
-});
-
-// 判断校准组件是否为手动模式
-const isManualMode = computed(() => {
-  return String(formData[0] || "off") === "off";
 });
 
 const initNode = (node, customRenderData) => {

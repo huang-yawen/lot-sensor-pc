@@ -245,7 +245,6 @@ const controlTypes = [
   { value: '2', label: '数字输入' },
   { value: '3', label: '滑块' },
   { value: '4', label: '时间' },
-  { value: '6', label: '校准' },
 ]
 
 async function changeConnectionMode(nextMode) {
@@ -364,7 +363,6 @@ function parseSafe() {
 }
 
 function mappingPreview(row) {
-  if (String(row.f_type) === '6') return JSON.stringify({ set: '校准时间' })
   const key = String(row.preffix || '').trim() || '未配置字段'
   let value = '值'
   if (String(row.f_type) === '1') {

@@ -25,7 +25,7 @@ const routes=[
             },{
                 path:'/sensor-history',
                 component:()=>import('@/views/SensorHistory.vue'),
-                meta: { title: '传感器数据/历史数据' }
+                meta: { title: '传感器数据/汇总数据' }
             },{
                 path:'/behavior-realtime',
                 component:()=>import('@/views/BehaviorRealtime.vue'),
@@ -33,7 +33,7 @@ const routes=[
             },{
                 path:'/behavior-history',
                 component:()=>import('@/views/BehaviorHistory.vue'),
-                meta: { title: '行为数据/历史数据' }
+                meta: { title: '行为数据/汇总数据' }
             },{
                 path:'/device-management',
                 component:()=>import('@/views/DeviceManagement.vue'),

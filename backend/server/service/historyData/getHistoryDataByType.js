@@ -6,6 +6,7 @@ const { getEnabledMetrics, compileMetricSql, chartSettings } = require('../deriv
 const systemConfig = require('../../config/systemConfig')
 const { buildInlineCumulativeSql } = require('../cumulative/cumulativeService')
 const { buildInlineTimeWindowSql } = require('../timeWindow/timeWindowService')
+const { buildRecencyFilter, REALTIME_LABEL, HISTORY_LABEL } = require('../../utils/realtimeFilter')
 
 const isValidDateTime = (dateStr) => {
     if (!dateStr) return true
@@ -105,7 +106,18 @@ module.exports = async function getHistoryDataByType(query) {
     //     searchMapper.push('field5 AS 采集时间')
     // }如果要有采集时间
     searchMapper.push('c_time AS 创立时间')
-    searchMapper.push('online AS 数据类型')
+    // 实时数据 = 该表当前最新一条记录，历史数据 = 除最新记录外的其余记录，
+    // 不再依赖设备上报时是否自带 online 字段。
+    const recency = buildRecencyFilter(dataTable, onlineFilter)
+    searchMapper.push(`${recency.dataTypeExpr} AS 数据类型`)
+
+    // onlineFilter 为空/其他值时不筛选；等于两个固定标签之一时按最新记录换算成条件。
+    let onlineCondition = '1=1'
+    if (onlineFilter === REALTIME_LABEL) {
+        onlineCondition = recency.isLatest
+    } else if (onlineFilter === HISTORY_LABEL) {
+        onlineCondition = `NOT (${recency.isLatest})`
+    }
 
     const sql = `
         SELECT ${searchMapper.join(',')}
@@ -114,7 +126,7 @@ module.exports = async function getHistoryDataByType(query) {
           AND (? IS NULL OR c_time >= ?)
           AND (? IS NULL OR c_time <= ?)
           AND (? IS NULL OR id = ? OR d_no LIKE ?)
-          AND (? IS NULL OR online = ?)
+          AND (${onlineCondition})
         ORDER BY id DESC
         LIMIT ? OFFSET ?
     `
@@ -123,7 +135,6 @@ module.exports = async function getHistoryDataByType(query) {
         startTime, startTime,
         endTime, endTime,
         keyword, keyword, keywordLike,
-        onlineFilter, onlineFilter,
         pageSize, offset,
     ]
 
@@ -138,9 +149,9 @@ module.exports = async function getHistoryDataByType(query) {
           AND (? IS NULL OR c_time >= ?)
           AND (? IS NULL OR c_time <= ?)
           AND (? IS NULL OR id = ? OR d_no LIKE ?)
-          AND (? IS NULL OR online = ?)
+          AND (${onlineCondition})
     `
-    const [countResult] = await promisePool.query(countSql, params.slice(0, 9))
+    const [countResult] = await promisePool.query(countSql, params.slice(0, 7))
 
     return {
         success: true,

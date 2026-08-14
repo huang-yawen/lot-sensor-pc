@@ -4,6 +4,7 @@ const promisePool = require('../../config/dbPool')
 const { buildDisplayFieldUnits } = require('../../utils/helper')
 const { getEnabledMetrics, compileMetricSql, chartSettings } = require('../../service/derivedMetric/derivedMetricService')
 const systemConfig = require('../../config/systemConfig')
+const { buildRecencyFilter } = require('../../utils/realtimeFilter')
 
 /**
  * 首页仪表盘数据接口
@@ -40,18 +41,13 @@ module.exports = async (req, res) => {
             fieldMapping[metric.metric_key] = metric.metric_name
         }
         searchMapper.push('c_time AS 创立时间')
-        searchMapper.push('online AS 数据类型')
-
-        let whereClause = ''
-        let params = []
-        if (onlineFilter) {
-            whereClause = ' WHERE online = ?'
-            params = [onlineFilter]
-        }
+        // 实时数据 = 该表当前最新一条记录，历史数据 = 除最新记录外的其余记录，
+        // 不再依赖设备上报时是否自带 online 字段。
+        const sensorRecency = buildRecencyFilter('t_sensor_data', onlineFilter)
+        searchMapper.push(`${sensorRecency.dataTypeExpr} AS 数据类型`)
 
         const [sensorData] = await promisePool.query(
-            `SELECT ${searchMapper.join(',')} FROM t_sensor_data${whereClause} ORDER BY id desc LIMIT 20`,
-            params
+            `SELECT ${searchMapper.join(',')} FROM t_sensor_data${sensorRecency.whereClause} ORDER BY id desc LIMIT 20`
         )
 
         // 注意：不将单位拼接到数值上，前端图表需要纯数值，列表显示时由前端自行拼接单位
@@ -81,8 +77,9 @@ module.exports = async (req, res) => {
         const searchBehavior = ['id', 'd_no AS 储运箱ID']
         Object.keys(fieldName).forEach((key) => {
             searchBehavior.push(`${key} AS \`${fieldName[key]}\``)
-        })      
-        searchBehavior.push('online AS 数据类型')
+        })
+        const behaviorRecency = buildRecencyFilter('t_behavior_data')
+        searchBehavior.push(`${behaviorRecency.dataTypeExpr} AS 数据类型`)
         searchBehavior.push('c_time AS 更新时间')
 
         let [behaviorOutcome] = await promisePool.query(

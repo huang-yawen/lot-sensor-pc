@@ -166,16 +166,8 @@ const THROTTLED_TYPES = new Set(['sensor_data', 'behavior_data', 'error_data'])
 /** 各消息类型的定时器 */
 const throttleTimers = {}
 
-// 监听 MQTT 处理后的消息，先缓存最新数据，按节流间隔广播
-mqttClient.on('processedMessage', (topic, data) => {
-    const topics = systemConfig.getConfig().MQTT_TOPICS
-    const typeMap = {
-        [topics.sensor]: 'sensor_data',
-        [topics.behavior]: 'behavior_data',
-        [topics.alarm]: 'error_data'
-    };
-    const type = typeMap[topic] || 'unknown';
-
+// 按节流间隔广播一种消息类型；从 processedMessage 中拆出来，便于一条消息广播成多种类型。
+function broadcastThrottled(type, data) {
     // 非节流类型（如 unknown）直接广播。
     if (!THROTTLED_TYPES.has(type)) {
         broadcast(type, data)
@@ -203,6 +195,27 @@ mqttClient.on('processedMessage', (topic, data) => {
             delete throttleTimers[type]
         }, interval)
     }
+}
+
+// 监听 MQTT 处理后的消息，先缓存最新数据，按节流间隔广播
+mqttClient.on('processedMessage', (topic, data) => {
+    const topics = systemConfig.getConfig().MQTT_TOPICS
+
+    // 传感器和行为主题被配置成同一个主题时，说明设备把两类字段放在一条消息里上报，
+    // 两种前端实时页都要能收到推送，所以同一条数据要广播成两种类型。
+    if (topics.sensor === topics.behavior && topic === topics.sensor) {
+        broadcastThrottled('sensor_data', data)
+        broadcastThrottled('behavior_data', data)
+        return
+    }
+
+    const typeMap = {
+        [topics.sensor]: 'sensor_data',
+        [topics.behavior]: 'behavior_data',
+        [topics.alarm]: 'error_data'
+    };
+    const type = typeMap[topic] || 'unknown';
+    broadcastThrottled(type, data)
 })
 
 // 导出 broadcast 函数，供其他模块使用（如控制器需要主动推送时）

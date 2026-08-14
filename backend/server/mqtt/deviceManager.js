@@ -5,8 +5,7 @@
  * 1. 从数据库 t_device 表加载所有设备编号（以 number 字段为唯一标识）
  * 2. 跟踪设备在线/离线状态（基于心跳，10秒无心跳判定离线）
  * 3. 设备离线时暂存指令，上线后自动发送
- * 4. 设备上线时自动发送时间校准
- * 
+ *
  * 使用方式：
  *   const deviceManager = new DeviceManager(mqttClient)
  *   deviceManager.onHeartbeat('device001')  // 收到心跳时调用
@@ -31,7 +30,7 @@ const { saveOperationHistory } = require('../service/operationHistory/saveOperat
 const systemConfig = require('../config/systemConfig')
 const fs = require('fs')
 const path = require('path')
-const { toWireValue, getTopic } = require('../utils/protocol')
+const { getTopic, buildSwitchPayload } = require('../utils/protocol')
 
 /** 动态读取超时配置，确保热更新立即生效。 */
 function getOfflineTimeout() {
@@ -185,10 +184,9 @@ class DeviceManager {
     // 重置离线检测定时器
     this._resetOfflineTimer(deviceId)
 
-    // 设备从离线变为在线 -> 发送暂存指令和时间校准
+    // 设备从离线变为在线 -> 发送暂存指令
     if (wasOffline) {
       console.log(`[DeviceManager] 设备 ${deviceId} 上线`)
-      this._sendTimeCalibration(deviceId)
     }
 
     // 每次心跳都允许重试失败队列；并发保护会阻止重复发送。
@@ -351,14 +349,14 @@ class DeviceManager {
     try {
       for (const cmd of [...commands]) {
         const payload = await this._buildPayload(cmd.config_id, cmd.value)
-        if (!payload) {
-          throw new Error(`无法构建暂存指令 (config_id=${cmd.config_id})`)
-        }
         const oldValue = await getDirectValue({ config_id: cmd.config_id, d_no: deviceId })
-        // 每条指令发送两次以确保设备可靠接收
-        await this.mqttClient.publish(getTopic('control'), payload)
-        await new Promise(resolve => setTimeout(resolve, 200))
-        await this.mqttClient.publish(getTopic('control'), payload)
+        // payload 为 null 说明这条指令没配置 MQTT 字段（本地专用值），跳过下发直接保存。
+        if (payload) {
+          // 每条指令发送两次以确保设备可靠接收
+          await this.mqttClient.publish(getTopic('control'), payload)
+          await new Promise(resolve => setTimeout(resolve, 200))
+          await this.mqttClient.publish(getTopic('control'), payload)
+        }
 
         // 发送成功后保存到数据库
         await saveDirectData({ config_id: cmd.config_id, value: cmd.value, d_no: deviceId })
@@ -392,47 +390,6 @@ class DeviceManager {
     }
   }
 
-  // ==================== 时间校准 ====================
-
-  /** 设备上线时发送当前北京时间校准 */
-  async _sendTimeCalibration(deviceId) {
-    const now = new Date()
-    const bjOffset = 8 * 60
-    const localOffset = now.getTimezoneOffset()
-    const bjTime = new Date(now.getTime() + (bjOffset + localOffset) * 60000)
-
-    const dayOfWeek = bjTime.getDay() === 0 ? 7 : bjTime.getDay()
-    const y = bjTime.getFullYear()
-    const m = String(bjTime.getMonth() + 1).padStart(2, '0')
-    const d = String(bjTime.getDate()).padStart(2, '0')
-    const h = String(bjTime.getHours()).padStart(2, '0')
-    const min = String(bjTime.getMinutes()).padStart(2, '0')
-    const s = String(bjTime.getSeconds()).padStart(2, '0')
-
-    const timeStr = `${y}-${m}-${d}-${dayOfWeek} ${h}:${min}:${s}`
-    const payload = { real: timeStr }
-
-    try {
-      // 时间校准发送两次以确保设备可靠接收
-      await this.mqttClient.publish(getTopic('control'), payload)
-      await new Promise(resolve => setTimeout(resolve, 200))
-      await this.mqttClient.publish(getTopic('control'), payload)
-      console.log(`[DeviceManager] 设备 ${deviceId} 时间校准已发送（两次）`)
-      const historyResult = await saveOperationHistory({
-        d_no: deviceId,
-        config_id: 14,
-        old_value: null,
-        new_value: timeStr,
-        source: 'calibration'
-      })
-      if (!historyResult.success) {
-        console.error('[DeviceManager] 校时历史记录失败:', historyResult.error)
-      }
-    } catch (err) {
-      console.error(`[DeviceManager] 时间校准发送失败:`, err.message)
-    }
-  }
-
   // ==================== 工具方法 ====================
 
   /**
@@ -444,32 +401,23 @@ class DeviceManager {
    */
   async _buildPayload(configId, value) {
     const [rows] = await promisePool.query(
-      'SELECT preffix, f_type, t_name FROM t_direct_config WHERE id = ? LIMIT 1',
+      'SELECT preffix, f_type, t_name, wire_template FROM t_direct_config WHERE id = ? LIMIT 1',
       [configId]
     )
     if (!rows.length) throw new Error(`指令配置 ID ${configId} 不存在`)
 
     const config = rows[0]
-    const propertyName = String(config.preffix || '').trim()
-    if (!propertyName) throw new Error(`指令“${config.t_name || configId}”未配置 MQTT 字段 preffix`)
 
-    // 校准组件由 f_type=6 识别，不再依赖某个固定 ID。
-    if (String(config.f_type) === '6') {
-      try {
-        const parsed = typeof value === 'string' ? JSON.parse(value) : value
-        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('校准值必须是 JSON 对象')
-        return parsed
-      } catch {
-        throw new Error(`指令“${config.t_name || configId}”的校准值不是有效 JSON`)
-      }
+    // 开关类指令（f_type=1）配置了 wire_template 时整体下发那份自定义协议报文
+    // （如 Modbus 透传），否则退回 { [preffix]: 线上值 }；见 utils/protocol.js。
+    if (String(config.f_type) === '1') {
+      return buildSwitchPayload(config, value)
     }
 
-    const isSwitch = String(config.f_type) === '1'
-    const mappedValue = isSwitch
-      ? toWireValue(value)
-      : String(value)
+    const propertyName = String(config.preffix || '').trim()
+    if (!propertyName) return null // 未配置 MQTT 字段，说明是本地专用值，不需要下发
 
-    return { [propertyName]: mappedValue }
+    return { [propertyName]: String(value) }
   }
 
   /** 清理所有定时器 */

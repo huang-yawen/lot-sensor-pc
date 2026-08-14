@@ -34,7 +34,7 @@
                         </el-menu-item>
                         <el-menu-item index="/sensor-history" to="/sensor-history">
                             <el-icon><Histogram /></el-icon>
-                            <span>历史数据</span>
+                            <span>汇总数据</span>
                         </el-menu-item>
                     </el-sub-menu>
                     <el-sub-menu index="2">
@@ -50,7 +50,7 @@
                         </el-menu-item>
                         <el-menu-item index="/behavior-history" to="/behavior-history">
                             <el-icon><Histogram /></el-icon>
-                            <span>历史数据</span>
+                            <span>汇总数据</span>
                         </el-menu-item>
                     </el-sub-menu>
                     <el-sub-menu index="3">
