@@ -17,6 +17,25 @@ const promisePool = require('../../config/dbPool')
 const { ensureTable: ensureDerivedMetricTable } = require('../../service/derivedMetric/derivedMetricService')
 
 const METADATA_TABLES = ['t_sensor_field_mapper', 't_behavior_field_mapper', 't_direct_config', 't_derived_metric']
+const FIELD_MAPPER_TABLES = new Set(['t_sensor_field_mapper', 't_behavior_field_mapper'])
+
+/** value_map 是可选的"数据库原始值 -> 前端展示文案"映射（比如 {"0":"关","1":"开"}），配置了必须是合法 JSON 对象。 */
+function validateFieldMapperRows(table, rows) {
+  rows.forEach((row, index) => {
+    const label = `${table}[${index}]`
+    const raw = String(row.value_map || '').trim()
+    if (!raw) return
+    let parsed
+    try {
+      parsed = JSON.parse(raw)
+    } catch {
+      throw new Error(`${label}.value_map 不是合法 JSON`)
+    }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error(`${label}.value_map 必须是 JSON 对象`)
+    }
+  })
+}
 
 function validateDirectMappings(rows) {
   if (!Array.isArray(rows) || rows.length === 0) throw new Error('t_direct_config 至少需要一条指令映射')
@@ -73,6 +92,7 @@ async function replaceMetadata(connection, metadata) {
     const rows = metadata[table]
     if (!Array.isArray(rows)) throw new Error(`${table} 必须是数组`)
     if (table === 't_direct_config') validateDirectMappings(rows)
+    if (FIELD_MAPPER_TABLES.has(table)) validateFieldMapperRows(table, rows)
     const [description] = await connection.query(`DESCRIBE ${table}`)
     const allowed = new Set(description.map(column => column.Field))
     await connection.query(`DELETE FROM ${table}`)

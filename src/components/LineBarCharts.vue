@@ -28,6 +28,13 @@ const linechart = ref(null)
 let mychart = null
 
 /**
+ * @description 用户通过工具栏 magicType 手动切换后的图表类型（'line'/'bar'）。
+ * 实时页面每隔 REALTIME_REFRESH_INTERVAL 会带着新数据重建一次图表（notMerge: true），
+ * 重建时必须沿用这个值，否则每次刷新都会把手动切换的柱状图重置回默认折线图。
+ */
+const currentChartType = ref(null)
+
+/**
  * @description 组件属性定义
  * @property {Array} data - 图表数据源
  * @property {Number} pageSize - 显示数据条数，默认5条
@@ -63,6 +70,10 @@ const initChart = async () => {
   // 创建图表实例（确保只创建一次）
   if (!mychart) {
     mychart = echarts.init(linechart.value)
+    // 记录用户手动切换的图表类型，供刷新重建时沿用，避免被重置回默认折线图。
+    mychart.on('magictypechanged', (params) => {
+      currentChartType.value = params.currentType
+    })
   }
 
   // 更新图表数据
@@ -127,7 +138,7 @@ const updateChart = (source) => {
       const setting = props.settings[field] || {}
       return {
       name: field,
-      type: setting.type || 'line',
+      type: currentChartType.value || setting.type || 'line',
       yAxisIndex: setting.yAxis === 'right' ? 1 : 0,
       itemStyle: setting.color ? { color: setting.color } : undefined,
       lineStyle: setting.color ? { color: setting.color } : undefined,
@@ -179,7 +190,6 @@ const updateChart = (source) => {
         feature: {
           magicType: { type: ['line', 'bar'] },
           restore: {},
-          dataView: {},
           saveAsImage: {}
         }
       },

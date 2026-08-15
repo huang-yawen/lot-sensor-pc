@@ -3,7 +3,7 @@
 const promisePool = require('../../config/dbPool')
 const systemConfig = require('../../config/systemConfig')
 const { firstValue, getTopic, toWireValue, buildSwitchPayload } = require('../../utils/protocol')
-const { resolveDeviceNo } = require('../../utils/mappedData')
+const { resolveDeviceNo, resolveFieldAliases } = require('../../utils/mappedData')
 const { saveDirectData, getDirectValue } = require('../directData/saveDirectConfig')
 const { saveOperationHistory } = require('../operationHistory/saveOperationHistory')
 
@@ -19,9 +19,25 @@ const OPERATORS = {
   '!=': (a, b) => a !== b,
 }
 
-function requirementMet(info, requirement) {
+/**
+ * 取一条规则（或它的 require 前置条件）要监控的物理字段候选名。
+ * 优先用 source_table + source_field 从字段映射表动态解析——跟 CUMULATIVE_METRICS/
+ * TIME_WINDOW_METRICS 认字段槽位的方式一致，字段映射表改了物理名会自动跟着变，不用
+ * 同步改这里；仍兼容旧规则里直接写死的 field 别名数组。
+ */
+async function resolveFieldNames(spec) {
+  if (!spec) return []
+  if (spec.source_table && spec.source_field) {
+    return resolveFieldAliases(spec.source_table, spec.source_field)
+  }
+  if (Array.isArray(spec.field)) return spec.field
+  return spec.field ? [spec.field] : []
+}
+
+async function requirementMet(info, requirement) {
   if (!requirement) return true
-  const actual = firstValue(info, Array.isArray(requirement.field) ? requirement.field : [requirement.field])
+  const candidates = await resolveFieldNames(requirement)
+  const actual = firstValue(info, candidates)
   return (requirement.values || []).some(value => String(value).toLowerCase() === String(actual).toLowerCase())
 }
 
@@ -33,8 +49,10 @@ async function evaluateRules(info) {
   latestState.set(deviceNo, state)
   const alarms = []
   for (const rule of config.ALARM_RULES || []) {
-    if (!rule.enabled || !OPERATORS[rule.operator] || !requirementMet(state, rule.require)) continue
-    const raw = firstValue(state, Array.isArray(rule.field) ? rule.field : [rule.field])
+    if (!rule.enabled || !OPERATORS[rule.operator]) continue
+    if (!(await requirementMet(state, rule.require))) continue
+    const candidates = await resolveFieldNames(rule)
+    const raw = firstValue(state, candidates)
     const actual = Number(raw)
     const threshold = Number(rule.threshold)
     if (!Number.isFinite(actual) || !Number.isFinite(threshold) || !OPERATORS[rule.operator](actual, threshold)) continue

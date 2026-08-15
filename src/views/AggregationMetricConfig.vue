@@ -38,8 +38,7 @@
     </section>
 
     <div class="save-bar">
-      <el-button type="primary" :loading="saving" @click="save">校验并保存全部指标</el-button>
-      <el-button @click="load">放弃未保存修改</el-button>
+      <el-button :loading="loading" @click="load">刷新</el-button>
     </div>
 
     <el-dialog v-model="dialogVisible" :title="editingIndex < 0 ? `新增${dialogType === 'cumulative' ? '累计' : '滑动'}指标` : '编辑指标'" width="760px" :close-on-click-modal="false">
@@ -66,7 +65,7 @@
         </div>
       </el-form>
       <el-alert type="warning" :closable="false" title="源字段必须是所选数据表中的数值字段；启用前请先确认数据库确实存在该列。" />
-      <template #footer><el-button @click="dialogVisible = false">取消</el-button><el-button type="primary" @click="applyDialog">确定</el-button></template>
+      <template #footer><el-button @click="dialogVisible = false">取消</el-button><el-button type="primary" :loading="saving" @click="applyDialog">确定</el-button></template>
     </el-dialog>
   </div>
 </template>
@@ -119,7 +118,24 @@ function openEdit(type, index) {
   dialogVisible.value = true
 }
 
-function applyDialog() {
+// 每次增/改/删都立即调后端持久化，不再要求另外点一个容易漏点的“保存”按钮；
+// 保存失败会把本地表格回滚回操作前的状态，避免界面显示“已配置”但其实没保存成功的假象。
+async function persist() {
+  saving.value = true
+  try {
+    await api.post('/api/system-config', { CUMULATIVE_METRICS: cumulative.value, TIME_WINDOW_METRICS: windows.value })
+    ElMessage.success('已保存并立即生效')
+    await load()
+    return true
+  } catch (error) {
+    ElMessage.error(error.response?.data?.message || '保存失败，改动未生效')
+    return false
+  } finally {
+    saving.value = false
+  }
+}
+
+async function applyDialog() {
   const required = ['metric_name', 'metric_key', 'source_table', 'source_field']
   if (required.some(key => !String(form[key] || '').trim())) return ElMessage.warning('请填写指标名称、标识、数据表和源字段')
   const value = structuredClone(form)
@@ -128,26 +144,30 @@ function applyDialog() {
     delete value.window_size
   }
   const rows = rowsFor(dialogType.value)
+  const before = structuredClone(rows)
   if (editingIndex.value < 0) rows.push(value)
   else rows.splice(editingIndex.value, 1, value)
-  dialogVisible.value = false
+
+  const ok = await persist()
+  if (ok) {
+    dialogVisible.value = false
+  } else {
+    rows.splice(0, rows.length, ...before)
+  }
 }
 
 async function remove(type, index) {
   try {
-    await ElMessageBox.confirm(`确定删除“${rowsFor(type)[index].metric_name}”吗？保存前仍可通过重新加载撤销。`, '删除确认', { type: 'warning' })
-    rowsFor(type).splice(index, 1)
-  } catch (error) { if (error !== 'cancel' && error !== 'close') ElMessage.error(error.message || '删除失败') }
-}
-
-async function save() {
-  saving.value = true
-  try {
-    await api.post('/api/system-config', { CUMULATIVE_METRICS: cumulative.value, TIME_WINDOW_METRICS: windows.value })
-    ElMessage.success('累计与滑动指标已保存并立即生效')
-    await load()
-  } catch (error) { ElMessage.error(error.response?.data?.message || '保存失败') }
-  finally { saving.value = false }
+    await ElMessageBox.confirm(`确定删除“${rowsFor(type)[index].metric_name}”吗？`, '删除确认', { type: 'warning' })
+  } catch (error) {
+    if (error !== 'cancel' && error !== 'close') ElMessage.error(error.message || '删除失败')
+    return
+  }
+  const rows = rowsFor(type)
+  const before = structuredClone(rows)
+  rows.splice(index, 1)
+  const ok = await persist()
+  if (!ok) rows.splice(0, rows.length, ...before)
 }
 
 load()

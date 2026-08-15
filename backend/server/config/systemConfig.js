@@ -292,6 +292,13 @@ const defaultConfig = {
   // 超过该时间没有收到某设备心跳，就判定离线。最小 1000；10000 即 10 秒。
   HEARTBEAT_TIMEOUT: 10000,
 
+  // 心跳判定模式：
+  // 'receive' = 自动上报：设备发一条 receive 主题的数据（传感器/行为字段）就代表在线，
+  //             不需要单独发心跳包（默认）。
+  // 'topic'   = 只认专门的心跳主题（MQTT_TOPICS.heartbeat），receive 主题的数据不影响在线判定。
+  // 两种模式互斥，同一时刻只有一种在生效。
+  HEARTBEAT_MODE: 'receive',
+
   // --------------------------------------------------------------------------
   // 6. MQTT 连接与主题
   // --------------------------------------------------------------------------
@@ -410,16 +417,22 @@ const defaultConfig = {
   // --------------------------------------------------------------------------
   // 每条规则字段说明：
   // id：稳定且唯一的英文编号，也作为告警编号；name：页面显示名称；
-  // field：待比较字段的候选别名；operator：支持 >、>=、<、<=、==、!=；
-  // threshold：数值阈值；enabled：是否启用该规则；cooldownMs：可选告警冷却时间；
-  // require：可选前置条件，field 为候选字段，values 为任一允许值；
+  // source_table + source_field：待比较字段的"槽位"（跟 CUMULATIVE_METRICS/
+  //   TIME_WINDOW_METRICS 认字段的方式一致），实际物理名从对应的字段映射表
+  //   （t_sensor_field_mapper/t_behavior_field_mapper）动态解析，字段映射表改了
+  //   物理名不用同步改这里；旧规则仍可以用 field 直接写死候选别名数组兼容。
+  // operator：支持 >、>=、<、<=、==、!=；threshold：数值阈值；
+  // enabled：是否启用该规则；cooldownMs：可选告警冷却时间；
+  // require：可选前置条件，同样用 source_table+source_field（或 field），
+  //   values 为任一允许值；
   // action：联锁动作，field 是下发 JSON 属性名，value 会经过 CONTROL_VALUE_MAP 转换。
   // 注意：action 只有 ENABLE_AUTO_INTERLOCK=true 时才实际下发。
   ALARM_RULES: [
     {
       id: 'temperature_high',
       name: '出水温度过高',
-      field: ['Tout', 'outlet_temperature', 'wen_du2'],
+      source_table: 't_sensor_data',
+      source_field: 'field2',
       operator: '>',
       threshold: 80,
       action: { field: 'heater', value: 'off' },
@@ -428,18 +441,20 @@ const defaultConfig = {
     {
       id: 'flow_low',
       name: '循环流量过低',
-      field: ['Flow', 'flow', 'liu_liang1', 'liu_liang2'],
+      source_table: 't_sensor_data',
+      source_field: 'field3',
       operator: '<',
       threshold: 0.5,
       // 只有水泵处于开启状态时，低流量才属于异常。
-      require: { field: ['pump', 'shui_beng'], values: ['open', 'on', 1, true] },
+      require: { source_table: 't_behavior_data', source_field: 'field2', values: ['open', 'on', 1, true] },
       action: { field: 'heater', value: 'off' },
       enabled: true,
     },
     {
       id: 'pressure_high',
       name: '管路压力过高',
-      field: ['Pressure', 'pressure', 'ya_li'],
+      source_table: 't_sensor_data',
+      source_field: 'field5',
       operator: '>',
       threshold: 500,
       action: { field: 'pump', value: 'off' },
@@ -550,6 +565,7 @@ function validate(config) {
   if (!Number.isInteger(config.DEFAULT_PAGE_SIZE) || config.DEFAULT_PAGE_SIZE < 1 || config.DEFAULT_PAGE_SIZE > 100) throw new Error('DEFAULT_PAGE_SIZE 必须是 1-100 的整数')
   if (!Number.isFinite(config.REALTIME_REFRESH_INTERVAL) || config.REALTIME_REFRESH_INTERVAL < 0) throw new Error('REALTIME_REFRESH_INTERVAL 不能小于 0')
   if (!Number.isFinite(config.HEARTBEAT_TIMEOUT) || config.HEARTBEAT_TIMEOUT < 1000) throw new Error('HEARTBEAT_TIMEOUT 不能小于 1000')
+  if (!['receive', 'topic'].includes(config.HEARTBEAT_MODE)) throw new Error('HEARTBEAT_MODE 只能是 receive 或 topic')
   if (!Number.isInteger(config.MQTT_QOS) || config.MQTT_QOS < 0 || config.MQTT_QOS > 2) throw new Error('MQTT_QOS 只能是 0、1、2')
   if (!['both', 'software_only', 'device_only', 'off'].includes(config.OPERATION_HISTORY_MODE)) throw new Error('OPERATION_HISTORY_MODE 只能是 both、software_only、device_only 或 off')
   if (!/^mqtts?:\/\//i.test(config.MQTT_URL)) throw new Error('MQTT_URL 必须以 mqtt:// 或 mqtts:// 开头')

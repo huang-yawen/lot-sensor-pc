@@ -1,7 +1,7 @@
 /** 【文件职责】首页仪表盘数据聚合 API。
  * 【配置中心关联】字段映射、派生指标等由下游按最新配置读取。 */
 const promisePool = require('../../config/dbPool')
-const { buildDisplayFieldUnits } = require('../../utils/helper')
+const { buildDisplayFieldUnits, applyValueLabels, parseValueMap } = require('../../utils/helper')
 const { getEnabledMetrics, compileMetricSql, chartSettings } = require('../../service/derivedMetric/derivedMetricService')
 const systemConfig = require('../../config/systemConfig')
 const { buildRecencyFilter } = require('../../utils/realtimeFilter')
@@ -18,14 +18,17 @@ module.exports = async (req, res) => {
 
         // 读取字段映射表，让前端展示名和数据库字段保持一致。
         const [fieldMapper] = await promisePool.query(
-            `SELECT f_name, db_name, unit FROM t_sensor_field_mapper WHERE visible = 1`
+            `SELECT f_name, db_name, unit, value_map FROM t_sensor_field_mapper WHERE visible = 1`
         )
 
         const fieldMapping = {}
         const fieldUnit = {}
+        const sensorValueMaps = {}
         fieldMapper.forEach((item) => {
             fieldMapping[item.db_name] = item.f_name
             fieldUnit[item.db_name] = item.unit
+            const map = parseValueMap(item.value_map)
+            if (map) sensorValueMaps[item.db_name] = map
         })
 
         const searchMapper = ['id']
@@ -51,7 +54,7 @@ module.exports = async (req, res) => {
         )
 
         // 注意：不将单位拼接到数值上，前端图表需要纯数值，列表显示时由前端自行拼接单位
-        const processedData = sensorData
+        const processedData = applyValueLabels(sensorData, fieldMapping, sensorValueMaps)
         const fieldUnits = buildDisplayFieldUnits(fieldMapping, fieldUnit)
 
         // 顺手把故障数据、行为数据也拼到同一个返回里，方便首页一次渲染。
@@ -66,25 +69,29 @@ module.exports = async (req, res) => {
             return acc
         }, {})
 
-        const fieldName = {}
+        const behaviorFieldMapping = {}
+        const behaviorValueMaps = {}
         const [behaviorField] = await promisePool.query(
-            'SELECT db_name, p_name FROM t_behavior_field_mapper'
+            'SELECT db_name, f_name, value_map FROM t_behavior_field_mapper WHERE visible = 1'
         )
-        behaviorField.forEach((item) => {      
-            fieldName[item.db_name] = item.p_name
+        behaviorField.forEach((item) => {
+            behaviorFieldMapping[item.db_name] = item.f_name
+            const map = parseValueMap(item.value_map)
+            if (map) behaviorValueMaps[item.db_name] = map
         })
 
         const searchBehavior = ['id', 'd_no AS 储运箱ID']
-        Object.keys(fieldName).forEach((key) => {
-            searchBehavior.push(`${key} AS \`${fieldName[key]}\``)
+        Object.keys(behaviorFieldMapping).forEach((key) => {
+            searchBehavior.push(`${key} AS \`${behaviorFieldMapping[key]}\``)
         })
         const behaviorRecency = buildRecencyFilter('t_behavior_data')
         searchBehavior.push(`${behaviorRecency.dataTypeExpr} AS 数据类型`)
         searchBehavior.push('c_time AS 更新时间')
 
-        let [behaviorOutcome] = await promisePool.query(
+        const [behaviorRows] = await promisePool.query(
             `SELECT ${searchBehavior.join(',')} FROM t_behavior_data ORDER BY id desc LIMIT 20`
         )
+        let behaviorOutcome = applyValueLabels(behaviorRows, behaviorFieldMapping, behaviorValueMaps)
 
         // ==================== 累计/时间窗口派生指标（standalone/both 模式） ====================
         let cumulativeData = {}

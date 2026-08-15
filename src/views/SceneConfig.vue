@@ -102,7 +102,7 @@
       </el-collapse-item>
       <el-collapse-item title="告警与自动联锁说明（重要）" name="alarm">
         <ul>
-          <li><code>ALARM_RULES.field</code> 可写多个现场字段别名；<code>operator</code> 支持 &gt;、&gt;=、&lt;、&lt;=、==、!=。</li>
+          <li><code>ALARM_RULES</code> 推荐用 <code>source_table</code>+<code>source_field</code>（field1~field10）认字段，物理名从对应的字段映射表动态解析，改了物理名不用同步改规则；仍兼容旧写法直接在 <code>field</code> 里写死候选别名数组。<code>operator</code> 支持 &gt;、&gt;=、&lt;、&lt;=、==、!=。</li>
           <li><code>require</code> 是前置条件，例如只有水泵开启时才判断流量过低。</li>
           <li><code>action</code> 是联锁下发字段和值，值仍会经过 <code>CONTROL_VALUE_MAP</code> 转换。</li>
           <li><strong>ENABLE_AUTO_INTERLOCK 默认必须保持 false。</strong>确认接线、电平、主题和开关值后，才能在有人监护的情况下测试开启。</li>
@@ -115,6 +115,7 @@
           <li><code>t_direct_config</code>：控制项名称、控件类型、范围、控制 JSON 属性名 <code>preffix</code> 等。</li>
           <li><code>t_derived_metric</code>：SQL 公式指标及 ECharts 样式；建议优先使用“公式与图表”可视化页面修改。</li>
           <li><code>p_name</code> 可用竖线写多个别名，例如 <code>Tin|inlet_temperature|temp_in</code>。</li>
+          <li><code>value_map</code> 可选，把数据库原始值换成展示文案，JSON 对象，例如 <code>{"0":"关","1":"开"}</code>；只改显示，不改数据库里存的原始值，不配置就原样显示。</li>
           <li>导入 metadata 会整体替换对应元数据表，请勿删除仍需使用的行；数据库事务失败时会自动回滚。</li>
         </ul>
       </el-collapse-item>
@@ -305,6 +306,7 @@ const configHelp = [
   { group: '刷新分页', key: 'DEFAULT_PAGE_SIZE', description: '历史列表默认每页条数，范围 1-100。', example: '10', notice: '只影响默认分页大小。' },
   { group: '刷新分页', key: 'REALTIME_REFRESH_INTERVAL', description: '实时数据刷新间隔，单位毫秒；0 表示关闭自动刷新。', example: '3000', notice: '过小会增加数据库和网络负担。' },
   { group: '刷新分页', key: 'HEARTBEAT_TIMEOUT', description: '多久未收到心跳即判定设备离线，单位毫秒。', example: '10000', notice: '必须不小于 1000，通常取心跳周期的 2-3 倍。' },
+  { group: '刷新分页', key: 'HEARTBEAT_MODE', description: '心跳判定模式：receive=收到 receive 主题数据就算在线（自动上报）；topic=只认专门的心跳主题。二选一，互斥。', example: 'receive', notice: '只能是 receive 或 topic。' },
   { group: 'MQTT', key: 'MQTT_URL', description: 'MQTT Broker 完整地址，包含协议、IP 和端口。', example: 'mqtt://192.168.1.10:1883', notice: '改变后后端自动重连；TLS 使用 mqtts://。' },
   { group: 'MQTT', key: 'MQTT_USERNAME / MQTT_PASSWORD', description: 'Broker 登录账号和密码，无认证时填写空字符串。', example: '""', notice: '导出场景包会包含密码，注意保管。' },
   { group: 'MQTT', key: 'MQTT_QOS', description: '消息服务质量：0 最多一次、1 至少一次、2 仅一次。', example: '1', notice: '必须与现场要求匹配，通常使用 1。' },
@@ -335,9 +337,9 @@ const configHelp = [
   { group: '数据库映射', key: 'd_config 加热开关', description: '控件类型 switch，下发属性 heater，值 on/off。', example: 'preffix: heater', notice: '联锁时自动关闭。' },
   { group: 'SQL与图表', key: 't_derived_metric 温差', description: '进出水温差 = field2 - field1，精度1位。', example: 'delta_temp / 温差 / field2 - field1', notice: '折线图左轴展示。' },
   { group: 'SQL与图表', key: 't_derived_metric 平均温度', description: '平均温度 = (field1 + field2) / 2，精度1位。', example: 'avg_temp / 平均温度 / (field1+field2)/2', notice: '折线图左轴展示。' },
-  { group: '告警联锁', key: 'ALARM_RULES 温度过高', description: '出水温度 > 80\u2103 告警，可选联锁关闭加热。', example: 'field: Tout, >, 80', notice: '联锁前必须ENABLE_AUTO_INTERLOCK=false。' },
-  { group: '告警联锁', key: 'ALARM_RULES 流量过低', description: '水泵开启时流量 < 0.5 L/min 告警。', example: 'require: pump values: [open]', notice: '水泵未开时不触发。' },
-  { group: '告警联锁', key: 'ALARM_RULES 压力过高', description: '管路压力 > 500 kPa 告警，可选联锁关闭水泵。', example: 'field: Pressure, >, 500', notice: '防止管路破裂。' },
+  { group: '告警联锁', key: 'ALARM_RULES 温度过高', description: '出水温度 > 80\u2103 告警，可选联锁关闭加热。', example: 't_sensor_data.field2, >, 80', notice: '联锁前必须ENABLE_AUTO_INTERLOCK=false。' },
+  { group: '告警联锁', key: 'ALARM_RULES 流量过低', description: '水泵开启时流量 < 0.5 L/min 告警。', example: 'require: t_behavior_data.field2 values: [open]', notice: '水泵未开时不触发。' },
+  { group: '告警联锁', key: 'ALARM_RULES 压力过高', description: '管路压力 > 500 kPa 告警，可选联锁关闭水泵。', example: 't_sensor_data.field5, >, 500', notice: '防止管路破裂。' },
 ]
 
 const filteredHelp = computed(() => {

@@ -30,6 +30,27 @@ async function resolveDeviceNo(info) {
   return null
 }
 
+const MAPPER_TABLE_BY_DATA_TABLE = {
+  t_sensor_data: 't_sensor_field_mapper',
+  t_behavior_data: 't_behavior_field_mapper',
+}
+
+/**
+ * 根据"哪张表的哪个字段槽位"（source_table + source_field，跟 CUMULATIVE_METRICS/
+ * TIME_WINDOW_METRICS 用法一致）查字段映射表，返回当前配置的物理名候选列表
+ * （p_name 按 | 拆分后的别名数组），用来从设备原始上报数据里取值。
+ * 这样告警规则等只需要认字段槽位，物理名改了只用改字段映射表这一处，不用同步改多处配置。
+ */
+async function resolveFieldAliases(sourceTable, sourceField) {
+  const mapperTable = MAPPER_TABLE_BY_DATA_TABLE[sourceTable]
+  if (!mapperTable) return []
+  const [[row]] = await promisePool.query(
+    `SELECT p_name FROM ${mapperTable} WHERE db_name = ? LIMIT 1`,
+    [sourceField]
+  )
+  return row ? aliases(row.p_name) : []
+}
+
 /**
  * 根据字段映射表保存设备上报数据。
  * 修改 t_*_field_mapper.p_name 即可适配现场传感器/执行器 JSON，
@@ -71,7 +92,7 @@ async function saveMappedData({ table, mapperTable, info, dateTime }) {
   return { deviceNo: values[0], mappedFieldCount: columns.length - 3 }
 }
 
-module.exports = { saveMappedData, resolveDeviceNo }
+module.exports = { saveMappedData, resolveDeviceNo, resolveFieldAliases }
 /**
  * 【文件职责】数据字段映射工具，将数据库或设备的原始字段转换为前端可用结构。
  * 【配置中心关联】如涉及显示字段，会按调用方传入的场景映射处理；本模块不持久化配置。

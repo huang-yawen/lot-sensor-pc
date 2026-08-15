@@ -1,7 +1,7 @@
 /** 【文件职责】按类型查询传感器历史数据的服务。
  * 【配置中心关联】无直接读取。 */
 const promisePool = require('../../config/dbPool')
-const { formatDataWithUnit, buildDisplayFieldUnits } = require('../../utils/helper')
+const { formatDataWithUnit, buildDisplayFieldUnits, applyValueLabels, parseValueMap } = require('../../utils/helper')
 const { getEnabledMetrics, compileMetricSql, chartSettings } = require('../derivedMetric/derivedMetricService')
 const systemConfig = require('../../config/systemConfig')
 const { buildInlineCumulativeSql } = require('../cumulative/cumulativeService')
@@ -65,14 +65,17 @@ module.exports = async function getHistoryDataByType(query) {
 
     // 让前端字段名和数据库字段映射保持同步。
     const [fieldMapper] = await promisePool.query(
-        `SELECT f_name, db_name, unit FROM ${fieldMappingTable} WHERE visible = 1`
+        `SELECT f_name, db_name, unit, value_map FROM ${fieldMappingTable} WHERE visible = 1`
     )
 
     const fieldMapping = {}
     const fieldUnit = {}
+    const valueMaps = {}
     fieldMapper.forEach((item) => {
         fieldMapping[item.db_name] = item.f_name
         fieldUnit[item.db_name] = item.unit
+        const map = parseValueMap(item.value_map)
+        if (map) valueMaps[item.db_name] = map
     })
 
     const searchMapper = ['id']
@@ -139,7 +142,8 @@ module.exports = async function getHistoryDataByType(query) {
     ]
 
     const [rows] = await promisePool.query(sql, params)
-    const processedData = formatDataWithUnit(rows, fieldMapping, fieldUnit)
+    const labeledRows = applyValueLabels(rows, fieldMapping, valueMaps)
+    const processedData = formatDataWithUnit(labeledRows, fieldMapping, fieldUnit)
     const fieldUnits = buildDisplayFieldUnits(fieldMapping, fieldUnit)
 
     const countSql = `

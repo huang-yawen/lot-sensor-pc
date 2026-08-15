@@ -111,7 +111,15 @@ const handleRecognize = async () => {
   }
 }
 
+// 记住当前生效的筛选条件，翻页/改每页条数时要沿用，不能悄悄清空。
+const currentFilters = ref({ keyword: '', startTime: null, endTime: null })
+
 const handleSearch = async (params) => {
+  currentFilters.value = {
+    keyword: params.keyword || '',
+    startTime: params.startTime || null,
+    endTime: params.endTime || null,
+  }
   await store.fetchPaginationData({
     type: params.type || 'sensor',
     currentPage: params.currentPage,
@@ -128,10 +136,10 @@ const handlePageChange = (page) => {
     type: 'sensor',
     currentPage: page,
     pageSize: pageSize.value,
-    keyword: '',
-    startTime: null,
-    endTime: null,
-    online: online
+    keyword: currentFilters.value.keyword,
+    startTime: currentFilters.value.startTime,
+    endTime: currentFilters.value.endTime,
+    online
   })
 }
 
@@ -141,10 +149,10 @@ const handleSizeChange = (size) => {
     type: 'sensor',
     currentPage: 1,
     pageSize: size,
-    keyword: '',
-    startTime: null,
-    endTime: null,
-    online: online
+    keyword: currentFilters.value.keyword,
+    startTime: currentFilters.value.startTime,
+    endTime: currentFilters.value.endTime,
+    online
   })
 }
 
