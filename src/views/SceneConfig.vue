@@ -113,6 +113,7 @@
           <li><code>t_sensor_field_mapper</code>：传感量中文名、数据库 field1～field10、上报属性名、单位和显示开关。</li>
           <li><code>t_behavior_field_mapper</code>：水泵、加热、阀门等运行状态的字段映射。</li>
           <li><code>t_direct_config</code>：控制项名称、控件类型、范围、控制 JSON 属性名 <code>preffix</code> 等。</li>
+          <li>开关类指令（控件类型=开关）可在“指令映射”表格里直接填 <code>wire_on_payload</code>/<code>wire_off_payload</code>：开、关各自的完整指令 JSON，原样下发，不做任何字段推断，改协议只需改这两个输入框；不填则退回 <code>{ MQTT字段: 开/关的值 }</code>。</li>
           <li><code>t_derived_metric</code>：SQL 公式指标及 ECharts 样式；建议优先使用“公式与图表”可视化页面修改。</li>
           <li><code>p_name</code> 可用竖线写多个别名，例如 <code>Tin|inlet_temperature|temp_in</code>。</li>
           <li><code>value_map</code> 可选，把数据库原始值换成展示文案，JSON 对象，例如 <code>{"0":"关","1":"开"}</code>；只改显示，不改数据库里存的原始值，不配置就原样显示。</li>
@@ -135,7 +136,7 @@
           type="warning"
           :closable="false"
           show-icon
-          title="MQTT 字段是硬件控制 JSON 的属性名。修改前请与硬件协议核对，保存后新指令立即生效。"
+          title="MQTT 字段是硬件控制 JSON 的属性名。修改前请与硬件协议核对，保存后新指令立即生效。开关类指令填了“开/关指令 JSON”会原样下发，不再走 MQTT 字段拼装。"
         />
         <div class="mapping-toolbar">
           <div>
@@ -167,6 +168,30 @@
           <el-table-column label="选项 / 默认值" min-width="210">
             <template #default="scope"><el-input v-model="scope.row.f_value" placeholder="例如 关:off|开:on" clearable /></template>
           </el-table-column>
+          <el-table-column label="开(on)指令 JSON" min-width="240">
+            <template #default="scope">
+              <el-input
+                v-if="String(scope.row.f_type) === '1'"
+                v-model="scope.row.wire_on_payload"
+                type="textarea"
+                :autosize="{ minRows: 1, maxRows: 4 }"
+                placeholder='不填则用 { MQTT字段: 开的值 }，例如 {"mb":"010600010001","sn":1,"ack":0,"crc":1,"uart":0}'
+                clearable
+              />
+            </template>
+          </el-table-column>
+          <el-table-column label="关(off)指令 JSON" min-width="240">
+            <template #default="scope">
+              <el-input
+                v-if="String(scope.row.f_type) === '1'"
+                v-model="scope.row.wire_off_payload"
+                type="textarea"
+                :autosize="{ minRows: 1, maxRows: 4 }"
+                placeholder='不填则用 { MQTT字段: 关的值 }，例如 {"mb":"010600010000","sn":1,"ack":0,"crc":1,"uart":0}'
+                clearable
+              />
+            </template>
+          </el-table-column>
           <el-table-column label="显示条件" min-width="145">
             <template #default="scope">
               <span v-if="scope.row.ref_id === null || scope.row.ref_id === ''">顶层</span>
@@ -186,6 +211,41 @@
 
       <el-tab-pane label="累计与滑动统计" name="aggregation">
         <AggregationMetricConfig class="embedded-config" />
+      </el-tab-pane>
+
+      <el-tab-pane label="安全联锁" name="safety">
+        <el-alert type="info" :closable="false" show-icon title="安全锁联：触发任一启用条件时自动关闭水泵和加热。可逐条开关控制逻辑。" />
+        <SafetyInterlockConfig class="embedded-config" />
+      </el-tab-pane>
+
+      <el-tab-pane label="自动控制" name="autocontrol">
+        <el-alert type="info" :closable="false" show-icon title="正常状况联动：自动模式下按目标温度自动启停水泵和加热。可独立开关并设置目标参数。与“分层联动”互斥，同一时刻只有一套在跑。" />
+        <AutoControlConfig class="embedded-config" />
+      </el-tab-pane>
+
+      <el-tab-pane label="分层联动" name="layered">
+        <el-alert type="info" :closable="false" show-icon title="单一传感器独立控制层 + 多传感器融合联动层：严格按分层规则自动启停水泵和加热。可逐条开关，与“自动控制”互斥。" />
+        <LayeredControlConfig class="embedded-config" />
+      </el-tab-pane>
+
+      <el-tab-pane label="故障状态" name="fault">
+        <el-alert type="warning" :closable="false" show-icon title="加热模块故障（干烧）/水泵故障/管道堵塞/管道漏水：触发任一启用条件时关闭水泵和加热，自动切回手动模式供人工修复。与“安全联锁”相互独立、都全程生效。" />
+        <FaultStatusConfig class="embedded-config" />
+      </el-tab-pane>
+
+      <el-tab-pane label="定量停机" name="quantity">
+        <el-alert type="info" :closable="false" show-icon title="定量停机：累计流量达到设定值后关闭水泵和加热，完成定量换热。" />
+        <QuantityShutdownConfig class="embedded-config" />
+      </el-tab-pane>
+
+      <el-tab-pane label="计算数据" name="computed">
+        <el-alert type="info" :closable="false" show-icon title="需要计算的数据：控制首页工程指标板块的显示与计算参数。" />
+        <ComputedMetricsConfig class="embedded-config" />
+      </el-tab-pane>
+
+      <el-tab-pane label="PID恒温" name="pid">
+        <el-alert type="info" :closable="false" show-icon title="PID 恒温控制：加热只有开关量，用时间比例控制模拟 PWM 占空比。只接管加热，与“自动控制”“分层联动”里的加热下发互斥。" />
+        <PidHeatingConfig class="embedded-config" />
       </el-tab-pane>
 
       <el-tab-pane label="完整字段说明" name="reference">
@@ -214,6 +274,13 @@ import api from '@/api'
 import { useSystemConfigStore } from '@/stores/SystemConfigStore'
 import DerivedMetricConfig from '@/views/DerivedMetricConfig.vue'
 import AggregationMetricConfig from '@/views/AggregationMetricConfig.vue'
+import SafetyInterlockConfig from '@/views/SafetyInterlockConfig.vue'
+import AutoControlConfig from '@/views/AutoControlConfig.vue'
+import LayeredControlConfig from '@/views/LayeredControlConfig.vue'
+import FaultStatusConfig from '@/views/FaultStatusConfig.vue'
+import QuantityShutdownConfig from '@/views/QuantityShutdownConfig.vue'
+import ComputedMetricsConfig from '@/views/ComputedMetricsConfig.vue'
+import PidHeatingConfig from '@/views/PidHeatingConfig.vue'
 import {
   CONNECTION_MODES,
   getApiBaseUrl,
@@ -232,7 +299,7 @@ const directMappings = ref([])
 const mappingSaving = ref(false)
 const route = useRoute()
 const router = useRouter()
-const validTabs = ['guide', 'scene', 'mapping', 'formula', 'aggregation', 'reference']
+const validTabs = ['guide', 'scene', 'mapping', 'formula', 'aggregation', 'safety', 'autocontrol', 'layered', 'fault', 'quantity', 'computed', 'pid', 'reference']
 const activeTab = ref(validTabs.includes(route.query.tab) ? route.query.tab : 'guide')
 const systemStore = useSystemConfigStore()
 const connectionMode = ref(getConnectionMode())
@@ -281,6 +348,13 @@ const quickGuide = [
   { title: '字段、控制、告警与判定', tab: 'scene', description: '这些内容随任务书变化最大，都包含在同一个场景包的 config 和 metadata 中。', items: ['传感字段和运行状态映射', '按钮、开关、滑块等控制项', '本地告警、联锁和 HTTP 智能判定'] },
   { title: 'SQL 公式与 ECharts', tab: 'formula', description: '用可视化表单建立派生指标，查询时由 MySQL 计算，再自动加入实时、历史和图表。', items: ['支持公式验证和测试值试算', '配置单位、精度和显示页面', '配置折线/柱状、左右轴、颜色和范围'] },
   { title: '累计与滑动统计', tab: 'aggregation', description: '用统一表单配置累计值、滑动平均、波动幅度和相邻变化量。', items: ['可选择传感数据或运行状态字段', '可仅在首页、仅在历史页或两处显示', '保存时统一校验字段、精度、窗口和图表参数'] },
+  { title: '安全联锁', tab: 'safety', description: '触发任一安全条件时自动关闭水泵和加热，保护设备和管道。', items: ['流量、压力、温度、温差等条件独立开关', '自动模式执行联锁，手动模式仅记录告警', '传感器掉线、进入手动模式等安全保护'] },
+  { title: '自动控制', tab: 'autocontrol', description: '自动模式下按目标温度自动启停水泵和加热（简化版，与“分层联动”互斥）。', items: ['水泵/加热独立启停控制', '目标温度、温差阈值可配置', '堵管/漏水/干烧保护联动关闭'] },
+  { title: '分层联动', tab: 'layered', description: '单一传感器独立控制层+多传感器融合联动层，严格按分层规则自动启停水泵和加热（与“自动控制”互斥）。', items: ['温度/流量/压力各自独立开关，温度含滞回回差', '双温度/温度+流量/压力+流量/温度+压力四条融合规则独立开关', '融合层结论优先于单一传感器层，同一执行器矛盾时“关”优先于“开”'] },
+  { title: '故障状态', tab: 'fault', description: '加热模块故障（干烧）/水泵故障/管道堵塞/管道漏水，触发后关闭水泵和加热并自动切回手动模式。', items: ['4 条硬故障各自独立开关', '水泵故障需持续超过判定时长才触发，避免抖动误判', '与“安全联锁”相互独立、都全程生效'] },
+  { title: '定量停机', tab: 'quantity', description: '累计流量达到设定值后自动停机，完成定量换热。', items: ['设定定量值（如 500L）', '达到目标关闭水泵和加热', '总流量仅做停机判定'] },
+  { title: '需要计算的数据', tab: 'computed', description: '阻力系数、流速、换热效率、液位等工程指标，在首页专用板块展示。', items: ['系统阻力系数 K、压力陡降速率、温度变化率', '换热效率、能效比、流量-压力曲线', '累计流量、平均流速、平均温度（图表见首页）'] },
+  { title: 'PID恒温', tab: 'pid', description: '加热模块只有开关量、没有功率输出，用时间比例控制模拟 PWM 占空比实现连续调温。', items: ['Kp/Ki/Kd 三个系数可调', '固定周期内按占空比开关加热，而不是简单全开/全关', '只接管加热，与“自动控制”“分层联动”的加热下发互斥'] },
 ]
 
 const configHelp = [
@@ -365,6 +439,10 @@ function parseSafe() {
 }
 
 function mappingPreview(row) {
+  if (String(row.f_type) === '1') {
+    const onRaw = String(row.wire_on_payload || '').trim()
+    if (onRaw) return `开: ${onRaw}`
+  }
   const key = String(row.preffix || '').trim() || '未配置字段'
   let value = '值'
   if (String(row.f_type) === '1') {
@@ -390,6 +468,16 @@ async function saveDirectMappings() {
       if (!row.preffix) throw new Error(`指令“${row.t_name}”的 MQTT 字段不能为空`)
       if (prefixes.has(row.preffix)) throw new Error(`MQTT 字段重复：${row.preffix}`)
       prefixes.add(row.preffix)
+      for (const field of ['wire_on_payload', 'wire_off_payload']) {
+        const raw = String(row[field] || '').trim()
+        if (!raw) continue
+        try {
+          const parsed = JSON.parse(raw)
+          if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('not object')
+        } catch {
+          throw new Error(`指令“${row.t_name}”的${field === 'wire_on_payload' ? '开(on)' : '关(off)'}指令 JSON 格式不对`)
+        }
+      }
     }
     await ElMessageBox.confirm('保存后新的 MQTT 字段映射立即用于指令下发，是否继续？', '保存指令映射', { type: 'warning' })
     mappingSaving.value = true

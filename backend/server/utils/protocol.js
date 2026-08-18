@@ -40,28 +40,43 @@ function aliases(value) {
   return String(value || '').split(/[|,]/).map(item => item.trim()).filter(Boolean)
 }
 
+function parseWirePayload(config, raw, label) {
+  let parsed
+  try {
+    parsed = JSON.parse(raw)
+  } catch (err) {
+    throw new Error(`指令“${config.t_name || config.id}”的 ${label} 不是有效 JSON`)
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error(`指令“${config.t_name || config.id}”的 ${label} 必须是 JSON 对象`)
+  }
+  return parsed
+}
+
 /**
  * 组装开关类指令（f_type=1）的下发 payload。
- * 如果 t_direct_config.wire_template 配置了完整报文模板（用于像 Modbus 透传这种
- * 不是简单 {字段名: 开/关} 的自定义协议），就以模板为准，只把其中的 crc 字段替换成
- * 1（开）或 0（关），其余字段原样下发；没有配置模板的开关仍走原来的
- * { [preffix]: 线上值 } 格式，不影响其他指令。
- * @param {{ id: number|string, t_name?: string, preffix?: string, wire_template?: string }} config
+ * 优先用 t_direct_config.wire_on_payload / wire_off_payload：开、关各自存一份完整报文，
+ * 原样下发，不做任何字段推断，方便直接在配置中心改指令（如 Modbus 透传协议里具体哪个
+ * 字段代表开关，各设备可能不一样）。
+ * 没配置新字段、但配置了旧的 wire_template 时，兼容旧逻辑：整份模板只把 crc 字段替换成
+ * 1（开）或 0（关）。都没配置的开关走最初的 { [preffix]: 线上值 } 格式。
+ * @param {{ id: number|string, t_name?: string, preffix?: string, wire_template?: string, wire_on_payload?: string, wire_off_payload?: string }} config
  * @param {*} value - 页面值，如 'on'/'off'
  */
 function buildSwitchPayload(config, value) {
+  const isOn = String(value).trim().toLowerCase() === 'on'
+  const onRaw = String(config.wire_on_payload || '').trim()
+  const offRaw = String(config.wire_off_payload || '').trim()
+  if (onRaw || offRaw) {
+    const raw = isOn ? onRaw : offRaw
+    const label = isOn ? 'wire_on_payload' : 'wire_off_payload'
+    if (!raw) throw new Error(`指令“${config.t_name || config.id}”未配置${isOn ? '开' : '关'}状态的 ${label}`)
+    return parseWirePayload(config, raw, label)
+  }
+
   const template = String(config.wire_template || '').trim()
   if (template) {
-    let parsed
-    try {
-      parsed = JSON.parse(template)
-    } catch (err) {
-      throw new Error(`指令“${config.t_name || config.id}”的 wire_template 不是有效 JSON`)
-    }
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-      throw new Error(`指令“${config.t_name || config.id}”的 wire_template 必须是 JSON 对象`)
-    }
-    const isOn = String(value).trim().toLowerCase() === 'on'
+    const parsed = parseWirePayload(config, template, 'wire_template')
     return { ...parsed, crc: isOn ? 1 : 0 }
   }
 

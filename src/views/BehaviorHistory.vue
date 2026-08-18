@@ -49,7 +49,7 @@
     </el-dialog>
 
     <div class="chartContainer" v-if="chartsEnabled && data.length > 0">
-      <LineBarCharts :data="data" :pageSize="pageSize" />
+      <LineBarCharts :data="data" :pageSize="pageSize" binary />
     </div>
   </div>
 </template>

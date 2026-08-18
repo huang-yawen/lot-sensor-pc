@@ -22,12 +22,19 @@
         <el-table-column label="来源" min-width="180">
           <template #default="scope">{{ tableLabel(scope.row.source_table) }} / {{ scope.row.source_field }}</template>
         </el-table-column>
-        <el-table-column v-if="section.type === 'window'" label="计算" min-width="150">
-          <template #default="scope">{{ aggregationLabel(scope.row.aggregation) }}（{{ scope.row.window_size }} 条）</template>
+        <el-table-column label="计算" min-width="170">
+          <template #default="scope">
+            <template v-if="section.type === 'window'">{{ aggregationLabel(scope.row.aggregation) }}（{{ scope.row.window_size }} 条）</template>
+            <template v-else>{{ cumulativeAggregationLabel(scope.row.aggregation) }}</template>
+          </template>
         </el-table-column>
         <el-table-column prop="unit" label="单位" width="95" />
         <el-table-column label="显示位置" width="130"><template #default="scope">{{ modeLabel(scope.row.mode) }}</template></el-table-column>
-        <el-table-column label="状态" width="85"><template #default="scope"><el-tag :type="scope.row.enabled ? 'success' : 'info'">{{ scope.row.enabled ? '启用' : '停用' }}</el-tag></template></el-table-column>
+        <el-table-column label="启用" width="85">
+          <template #default="scope">
+            <el-switch v-model="scope.row.enabled" :loading="toggling" @change="toggleEnabled(section.type, scope.$index)" />
+          </template>
+        </el-table-column>
         <el-table-column label="操作" width="145" fixed="right">
           <template #default="scope">
             <el-button link type="primary" @click="openEdit(section.type, scope.$index)">编辑</el-button>
@@ -50,8 +57,9 @@
             <el-select v-model="form.source_table"><el-option label="传感数据" value="t_sensor_data" /><el-option label="运行状态" value="t_behavior_data" /></el-select>
           </el-form-item>
           <el-form-item label="源字段"><el-input v-model="form.source_field" placeholder="例如：field3" /></el-form-item>
-          <el-form-item v-if="dialogType === 'window'" label="计算方式">
-            <el-select v-model="form.aggregation"><el-option label="滑动平均" value="avg" /><el-option label="波动幅度（最大-最小）" value="volatility" /><el-option label="相邻变化量" value="rate" /></el-select>
+          <el-form-item label="计算方式">
+            <el-select v-if="dialogType === 'cumulative'" v-model="form.aggregation"><el-option label="累计求和" value="sum" /><el-option label="累计平均" value="avg" /></el-select>
+            <el-select v-else v-model="form.aggregation"><el-option label="滑动平均" value="avg" /><el-option label="波动幅度（最大-最小）" value="volatility" /><el-option label="相邻变化量" value="rate" /></el-select>
           </el-form-item>
           <el-form-item v-if="dialogType === 'window'" label="窗口条数"><el-input-number v-model="form.window_size" :min="2" :max="100" /></el-form-item>
           <el-form-item label="单位"><el-input v-model="form.unit" placeholder="例如：L、℃" /></el-form-item>
@@ -77,12 +85,13 @@ import api from '@/api'
 
 const loading = ref(false)
 const saving = ref(false)
+const toggling = ref(false)
 const cumulative = ref([])
 const windows = ref([])
 const dialogVisible = ref(false)
 const dialogType = ref('cumulative')
 const editingIndex = ref(-1)
-const blank = type => ({ metric_key: '', metric_name: '', source_table: 't_sensor_data', source_field: '', unit: '', enabled: true, mode: 'standalone', precision: 2, chart_type: 'line', color: '#409EFF', ...(type === 'window' ? { aggregation: 'avg', window_size: 5 } : {}) })
+const blank = type => ({ metric_key: '', metric_name: '', source_table: 't_sensor_data', source_field: '', unit: '', enabled: true, mode: 'standalone', precision: 2, chart_type: 'line', color: '#409EFF', ...(type === 'window' ? { aggregation: 'avg', window_size: 5 } : { aggregation: 'sum' }) })
 const form = reactive(blank('cumulative'))
 const sections = computed(() => [
   { type: 'cumulative', title: '累计指标', shortTitle: '累计指标', description: '从第一条匹配数据开始持续累加，适合累计流量、累计能耗和累计运行时长。', rows: cumulative.value },
@@ -92,6 +101,7 @@ const sections = computed(() => [
 const rowsFor = type => type === 'cumulative' ? cumulative.value : windows.value
 const tableLabel = table => table === 't_behavior_data' ? '运行状态' : '传感数据'
 const aggregationLabel = value => ({ avg: '滑动平均', volatility: '波动幅度', rate: '相邻变化量' }[value] || value)
+const cumulativeAggregationLabel = value => (value === 'avg' ? '累计平均' : '累计求和')
 const modeLabel = value => ({ standalone: '首页', inline: '历史页', both: '首页 + 历史页' }[value] || value)
 
 async function load() {
@@ -140,7 +150,6 @@ async function applyDialog() {
   if (required.some(key => !String(form[key] || '').trim())) return ElMessage.warning('请填写指标名称、标识、数据表和源字段')
   const value = structuredClone(form)
   if (dialogType.value === 'cumulative') {
-    delete value.aggregation
     delete value.window_size
   }
   const rows = rowsFor(dialogType.value)
@@ -168,6 +177,19 @@ async function remove(type, index) {
   rows.splice(index, 1)
   const ok = await persist()
   if (!ok) rows.splice(0, rows.length, ...before)
+}
+
+// 列表里的启用开关直接切换并立即保存，失败时回滚，避免“看起来已启用但实际没保存”。
+async function toggleEnabled(type, index) {
+  const rows = rowsFor(type)
+  const previous = rows[index].enabled
+  toggling.value = true
+  try {
+    const ok = await persist()
+    if (!ok) rows[index].enabled = previous
+  } finally {
+    toggling.value = false
+  }
 }
 
 load()

@@ -401,7 +401,7 @@ class DeviceManager {
    */
   async _buildPayload(configId, value) {
     const [rows] = await promisePool.query(
-      'SELECT preffix, f_type, t_name, wire_template FROM t_direct_config WHERE id = ? LIMIT 1',
+      'SELECT preffix, f_type, t_name, wire_template, wire_on_payload, wire_off_payload FROM t_direct_config WHERE id = ? LIMIT 1',
       [configId]
     )
     if (!rows.length) throw new Error(`指令配置 ID ${configId} 不存在`)

@@ -59,13 +59,15 @@ async function getOperationHistory({ currentPage = 1, pageSize = 5, startTime = 
             h.old_value AS '旧值',
             h.new_value AS '新值',
             CASE h.source
-              WHEN 'manual' THEN '软件下发'
-              WHEN 'manual_queued' THEN '离线补发'
-              WHEN 'interlock' THEN '自动联锁'
-              WHEN 'calibration' THEN '自动校时'
-              WHEN 'auto' THEN '底层设备'
-              WHEN 'device' THEN '底层设备'
-              ELSE h.source
+               WHEN 'manual' THEN '软件下发'
+               WHEN 'manual_queued' THEN '离线补发'
+               WHEN 'interlock' THEN '自动联锁'
+               WHEN 'calibration' THEN '自动校时'
+               WHEN 'auto_control' THEN '自动控制'
+               WHEN 'quantity_shutdown' THEN '定量停机'
+               WHEN 'auto' THEN '底层设备'
+               WHEN 'device' THEN '底层设备'
+               ELSE h.source
             END AS '来源',
             h.c_time AS '操作时间'
      FROM t_operation_history h

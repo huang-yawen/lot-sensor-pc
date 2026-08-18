@@ -3,7 +3,7 @@
 const promisePool = require('../../config/dbPool')
 const { saveMappedData } = require('../../utils/mappedData')
 const { saveOperationHistory } = require('../../service/operationHistory/saveOperationHistory')
-const { saveDirectData } = require('../../service/directData/saveDirectConfig')
+const { saveDirectData, getDirectValue } = require('../../service/directData/saveDirectConfig')
 const { getDeviceNo: getConfiguredDeviceNo, getReportedTime, toWireValue, fromWireValue } = require('../../utils/protocol')
 
 /** 开关类型指令（config_id=0,1,2,4,9），t_direct 存 on/off，MQTT 发 open/close */
@@ -142,6 +142,13 @@ async function saveBehaviorData(info) {
 
     try {
         const mappedInfo = { ...info, d_no }
+        // 控制模式是 PC 端逻辑状态，设备不会上报；从 t_direct 读真实值落库，
+        // 存成 0(手动/off)/1(自动/on)，让行为数据页"控制模式"列显示真实数据。
+        if (!Object.prototype.hasOwnProperty.call(mappedInfo, 'mode')) {
+            const rawMode = await getDirectValue({ config_id: 0, d_no })
+            const modeStr = String(rawMode ?? '').trim().toLowerCase()
+            mappedInfo.mode = ['on', 'auto', 'open', '1', 'true'].includes(modeStr) ? 1 : 0
+        }
         await saveMappedData({
             table: 't_behavior_data',
             mapperTable: 't_behavior_field_mapper',

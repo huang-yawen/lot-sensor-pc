@@ -413,7 +413,191 @@ const defaultConfig = {
   },
 
   // --------------------------------------------------------------------------
-  // 10. 本地告警与安全联锁规则
+  // 10. 安全联锁（安全锁联）规则
+  // --------------------------------------------------------------------------
+  // 触发任一启用条件时，自动关闭水泵和加热。阈值不从本配置写死，而是实时读取
+  // 指令中心 t_direct 里对应的上下限阈值（温度/流量/压力），用户在页面改阈值即时生效。
+  // 每个条件可用布尔值独立控制开关：
+  //   enabled             - 安全联锁总开关
+  //   flowLow             - 流量低于下限阈值或流量为 0
+  //   pressureHigh        - 压力高于上限阈值或压力为 0
+  //   tempHigh            - 任一温度高于上限阈值
+  //   tempDiff            - 温差过大（两路温度差超过 tempDiffThreshold）
+  //   tempDiffThreshold   - 温差阈值（℃），tempDiff=true 时生效
+  //   manualMode          - 进入手动模式时安全关闭一次（人工修复）
+  //   sensorOffline       - 任一传感器掉线（长期无数据上报 / 长期为 0 / 异常最大值）
+  //   alarmCooldownMs     - 同一告警的冷却时间（毫秒），避免高频重复触发
+  // 模式语义：安全联锁在自动和手动模式下全程生效——触发任一启用条件都强制关闭水泵
+  // 和加热。自动模式由自动控制按目标启停，手动模式人工开关，但安全联锁不会因手动
+  // 强制开启而失效（如手动开加热但检测无水流仍会强制关闭加热）。
+  SAFETY_INTERLOCK: {
+    enabled: false,
+    flowLow: true,
+    pressureHigh: true,
+    tempHigh: true,
+    tempDiff: true,
+    tempDiffThreshold: 3,
+    manualMode: true,
+    sensorOffline: true,
+    alarmCooldownMs: 30000,
+  },
+
+  // --------------------------------------------------------------------------
+  // 11. 正常状况联动（自动控制）规则
+  // --------------------------------------------------------------------------
+  // 仅在“自动模式”下运行，按目标温度自动启停水泵和加热。可逐项开关：
+  //   enabled              - 自动控制总开关
+  //   pump                 - 允许自动控制水泵
+  //   heater               - 允许自动控制加热
+  //   targetTemp           - 默认目标温度（指令中心 target_temperature 优先）
+  //   tempDiffCloseThreshold - 温差小于该值才允许“两侧达标后关泵”
+  //   tempDiffOpenThreshold  - 温差超过该值判定“温差过大”，关闭加热
+  //   totalFlowTarget      - 累计流量目标；达到后关闭水泵（0=不启用）
+  AUTO_CONTROL: {
+    enabled: false,
+    pump: true,
+    heater: true,
+    targetTemp: 22,
+    tempDiffCloseThreshold: 2,
+    tempDiffOpenThreshold: 3,
+  },
+
+  // --------------------------------------------------------------------------
+  // 11.1 自动模式下用哪一套联动逻辑
+  // --------------------------------------------------------------------------
+  // 'simple'  - 使用上面的 AUTO_CONTROL（按目标温度综合判断一次开关）
+  // 'layered' - 使用下面的 LAYERED_CONTROL（严格按“单一传感器层 -> 多传感器融合层”分层规则判断）
+  // 两套逻辑互斥，同一时刻只有一套在跑；SAFETY_INTERLOCK 安全联锁不受此项影响，全程独立生效。
+  CONTROL_MODE: 'simple',
+
+  // --------------------------------------------------------------------------
+  // 11.2 分层联动规则（单一传感器独立控制层 + 多传感器融合联动层）
+  // --------------------------------------------------------------------------
+  // 仅在 CONTROL_MODE='layered' 且当前为“自动模式”且无安全故障时运行。
+  // 每条规则可用布尔值独立开关；同一执行器本轮如有多条规则同时命中且结论矛盾，
+  // “关闭”优先于“打开”（fail-safe）；多传感器融合层的结论优先于单一传感器层
+  // （融合层对某执行器有结论就用融合层的，融合层没结论的执行器再看单一传感器层）。
+  //   enabled                 - 分层联动总开关
+  //   ---- 二、单一传感器独立控制层 ----
+  //   tempSingle               - 温度：任一温度低于目标/下限开加热，高于目标/上限关加热
+  //   tempHysteresis           - 温度滞回回差（℃），开、关阈值各向外扩这么多，避免频繁通断
+  //   flowSingle                - 流量：区间内开水泵，低于下限或高于上限关水泵
+  //   pressureSingle            - 压力：低于下限开水泵，高于上限关水泵、关加热
+  //   ---- 三、多传感器融合联动层 ----
+  //   dualTemp                 - 双温度：温差超过 dualTempDiffThreshold 打开水泵
+  //   dualTempDiffThreshold    - 双温度融合层的温差阈值（℃），建议比 SAFETY_INTERLOCK.tempDiffThreshold 小，
+  //                              否则安全联锁会先于本条触发（安全联锁触发后整套系统强制关闭，本条不会生效）
+  //   tempFlow                  - 温度+流量：温度超上限且流量正常关加热；温度未超上限且流量低于下限开加热开水泵
+  //   pressureFlow              - 压力+流量：压力超上限且流量低于下限关水泵；压力低于下限且流量正常开水泵；压力超上限且流量超上限关水泵
+  //   tempPressure              - 温度+压力：压力超上限且加热温度持续上升关加热；压力低于下限且温度低于下限先开水泵再开加热
+  LAYERED_CONTROL: {
+    enabled: false,
+    tempSingle: true,
+    tempHysteresis: 1,
+    flowSingle: true,
+    pressureSingle: true,
+    dualTemp: true,
+    dualTempDiffThreshold: 2,
+    tempFlow: true,
+    pressureFlow: true,
+    tempPressure: true,
+  },
+
+  // --------------------------------------------------------------------------
+  // 12. 定量停机规则
+  // --------------------------------------------------------------------------
+  // 设定一个定量值（单位 L）。当本次计量周期的累计流量 >= 该值时，关闭水泵和加热，
+  // 整套系统自动停机，完成定量换热。
+  //   enabled           - 定量停机总开关
+  //   totalFlowTarget   - 定量值（L），例如 500
+  // 总流量只做累计统计，不参与水泵/加热的实时调节，仅用于停机判定。
+  // 每次进入自动模式会开始新的计量周期；切回手动模式则重置计量周期。
+  QUANTITY_SHUTDOWN: {
+    enabled: false,
+    totalFlowTarget: 500,
+  },
+
+  // --------------------------------------------------------------------------
+  // 12.1 故障状态（硬故障保护）
+  // --------------------------------------------------------------------------
+  // 触发任一启用条件时，强制关闭水泵和加热，并把控制模式自动切回手动，供人工介入维修。
+  // 与安全联锁（SAFETY_INTERLOCK）相互独立、都全程生效，条件可能同时命中（多层防护叠加，
+  // 不冲突）。每条条件可用布尔值独立开关：
+  //   enabled              - 故障状态总开关
+  //   heaterFault          - 加热模块故障：水泵和加热均开启时，流量低于下限阈值（干烧）
+  //   pumpFault            - 水泵故障：水泵开启时，流量为 0 且压力为 0，且持续 >= pumpFaultDurationMs
+  //   pumpFaultDurationMs  - 水泵故障判定所需的持续时长（毫秒），默认 2000
+  //   blockage             - 管道堵塞：压力高于上限阈值且流量低于下限阈值
+  //   leak                 - 管道漏水：压力为 0 且（流量低于下限阈值 或 流量为 0）
+  //   alarmCooldownMs      - 同一故障的冷却时间（毫秒），避免高频重复触发
+  FAULT_STATUS: {
+    enabled: false,
+    heaterFault: true,
+    pumpFault: true,
+    pumpFaultDurationMs: 2000,
+    blockage: true,
+    leak: true,
+    alarmCooldownMs: 30000,
+  },
+
+  // --------------------------------------------------------------------------
+  // 12.2 PID 恒温控制（时间比例控制）
+  // --------------------------------------------------------------------------
+  // 加热模块只有开关量、没有功率输出，用“时间比例控制”模拟 PWM：固定周期 windowMs，
+  // PID 输出的占空比 duty(0~100%) 决定这个周期内加热开多久。仅接管加热这一个执行器，
+  // 水泵仍由 CONTROL_MODE（simple/layered）对应模块决定；enabled=true 时 autoControl.js /
+  // layeredControl.js 会跳过各自的加热下发。
+  //   enabled       - PID 恒温控制总开关
+  //   kp/ki/kd      - PID 三个系数
+  //   windowMs      - 时间比例控制周期（毫秒），默认 10000（10 秒）
+  //   targetTemp    - 默认目标温度（指令中心 target_temperature 优先）
+  PID_HEATING: {
+    enabled: false,
+    kp: 20,
+    ki: 0.5,
+    kd: 5,
+    windowMs: 10000,
+    targetTemp: 22,
+  },
+
+  // --------------------------------------------------------------------------
+  // 13. 需要计算的数据（首页专用展示板块）
+  // --------------------------------------------------------------------------
+  // 每个指标可用布尔值独立控制是否在首页展示；enabled 是总开关。
+  //   resistanceK              - 系统阻力系数 K = ΔP / Q²（结垢/堵塞黄金指标）
+  //   pressureDropRate         - 压力陡降速率 V = dP/dt（吸入空气紧急停泵判定）
+  //   tempChangeRate           - 温度变化率 dT/dt（断线/开路/短路判定）
+  //   heatExchangeEfficiency   - 换热效率 η = ρ·Cp·Q·ΔT / P_heater
+  //   eerHeatBalance           - 系统能效比（COP）与热平衡（换热量/热损失）
+  //   flowPressureCurve        - 流量-压力特性曲线拟合（线性回归斜率）
+  //   cumulativeFlow           - 累计流量（上一时刻总流量 + 瞬时流量 × 时间）
+  //   averageVelocity          - 平均流速 v = Q / A
+  //   waterLevel               - 液位（基于两水箱初始水量与累计流量）
+  // 计算参数：
+  //   heaterRatedPower（W）、pipeAreaCm2（水管横截面积）、
+  //   initialWaterTank1/2（两水箱初始水量 L）、tankAreaCm2（水箱横截面积，用于液位高度）
+  COMPUTED_METRICS: {
+    enabled: true,
+    resistanceK: true,
+    pressureDropRate: true,
+    tempChangeRate: true,
+    heatExchangeEfficiency: true,
+    eerHeatBalance: true,
+    flowPressureCurve: true,
+    cumulativeFlow: true,
+    averageVelocity: true,
+    waterLevel: true,
+    averageTempChart: true,
+    averageVelocityChart: true,
+    heaterRatedPower: 2000,
+    pipeAreaCm2: 3.14,
+    initialWaterTank1: 5,
+    initialWaterTank2: 5,
+    tankAreaCm2: 100,
+  },
+
+  // --------------------------------------------------------------------------
+  // 14. 本地告警与自动联锁规则
   // --------------------------------------------------------------------------
   // 每条规则字段说明：
   // id：稳定且唯一的英文编号，也作为告警编号；name：页面显示名称；
@@ -578,6 +762,56 @@ function validate(config) {
   if (!config.INTELLIGENT_JUDGMENT.url || !/^https?:\/\//i.test(config.INTELLIGENT_JUDGMENT.url)) throw new Error('INTELLIGENT_JUDGMENT.url 必须是 http:// 或 https:// 地址')
   if (!Number.isFinite(config.INTELLIGENT_JUDGMENT.timeoutMs) || config.INTELLIGENT_JUDGMENT.timeoutMs <= 0) throw new Error('INTELLIGENT_JUDGMENT.timeoutMs 必须大于 0')
   if (!['batch', 'single'].includes(config.INTELLIGENT_JUDGMENT.requestMode)) throw new Error('INTELLIGENT_JUDGMENT.requestMode 只能是 batch 或 single')
+  const safety = config.SAFETY_INTERLOCK
+  if (!safety || typeof safety !== 'object' || Array.isArray(safety)) throw new Error('SAFETY_INTERLOCK 必须是 JSON 对象')
+  for (const key of ['enabled', 'flowLow', 'pressureHigh', 'tempHigh', 'tempDiff', 'manualMode', 'sensorOffline']) {
+    if (typeof safety[key] !== 'boolean') throw new Error(`SAFETY_INTERLOCK.${key} 必须是布尔值`)
+  }
+  if (!Number.isFinite(safety.tempDiffThreshold)) throw new Error('SAFETY_INTERLOCK.tempDiffThreshold 必须是数字')
+  if (!Number.isFinite(safety.alarmCooldownMs) || safety.alarmCooldownMs < 0) throw new Error('SAFETY_INTERLOCK.alarmCooldownMs 必须是大于等于 0 的数字')
+  const auto = config.AUTO_CONTROL
+  if (!auto || typeof auto !== 'object' || Array.isArray(auto)) throw new Error('AUTO_CONTROL 必须是 JSON 对象')
+  for (const key of ['enabled', 'pump', 'heater']) {
+    if (typeof auto[key] !== 'boolean') throw new Error(`AUTO_CONTROL.${key} 必须是布尔值`)
+  }
+  for (const key of ['targetTemp', 'tempDiffCloseThreshold', 'tempDiffOpenThreshold']) {
+    if (!Number.isFinite(auto[key])) throw new Error(`AUTO_CONTROL.${key} 必须是数字`)
+  }
+  if (!['simple', 'layered'].includes(config.CONTROL_MODE)) throw new Error('CONTROL_MODE 只能是 simple 或 layered')
+  const layered = config.LAYERED_CONTROL
+  if (!layered || typeof layered !== 'object' || Array.isArray(layered)) throw new Error('LAYERED_CONTROL 必须是 JSON 对象')
+  for (const key of ['enabled', 'tempSingle', 'flowSingle', 'pressureSingle', 'dualTemp', 'tempFlow', 'pressureFlow', 'tempPressure']) {
+    if (typeof layered[key] !== 'boolean') throw new Error(`LAYERED_CONTROL.${key} 必须是布尔值`)
+  }
+  for (const key of ['tempHysteresis', 'dualTempDiffThreshold']) {
+    if (!Number.isFinite(layered[key]) || layered[key] < 0) throw new Error(`LAYERED_CONTROL.${key} 必须是大于等于 0 的数字`)
+  }
+  const qty = config.QUANTITY_SHUTDOWN
+  if (!qty || typeof qty !== 'object' || Array.isArray(qty)) throw new Error('QUANTITY_SHUTDOWN 必须是 JSON 对象')
+  if (typeof qty.enabled !== 'boolean') throw new Error('QUANTITY_SHUTDOWN.enabled 必须是布尔值')
+  if (!Number.isFinite(qty.totalFlowTarget) || qty.totalFlowTarget < 0) throw new Error('QUANTITY_SHUTDOWN.totalFlowTarget 必须是大于等于 0 的数字')
+  const fault = config.FAULT_STATUS
+  if (!fault || typeof fault !== 'object' || Array.isArray(fault)) throw new Error('FAULT_STATUS 必须是 JSON 对象')
+  for (const key of ['enabled', 'heaterFault', 'pumpFault', 'blockage', 'leak']) {
+    if (typeof fault[key] !== 'boolean') throw new Error(`FAULT_STATUS.${key} 必须是布尔值`)
+  }
+  if (!Number.isFinite(fault.pumpFaultDurationMs) || fault.pumpFaultDurationMs < 0) throw new Error('FAULT_STATUS.pumpFaultDurationMs 必须是大于等于 0 的数字')
+  if (!Number.isFinite(fault.alarmCooldownMs) || fault.alarmCooldownMs < 0) throw new Error('FAULT_STATUS.alarmCooldownMs 必须是大于等于 0 的数字')
+  const pid = config.PID_HEATING
+  if (!pid || typeof pid !== 'object' || Array.isArray(pid)) throw new Error('PID_HEATING 必须是 JSON 对象')
+  if (typeof pid.enabled !== 'boolean') throw new Error('PID_HEATING.enabled 必须是布尔值')
+  for (const key of ['kp', 'ki', 'kd', 'targetTemp']) {
+    if (!Number.isFinite(pid[key])) throw new Error(`PID_HEATING.${key} 必须是数字`)
+  }
+  if (!Number.isFinite(pid.windowMs) || pid.windowMs <= 0) throw new Error('PID_HEATING.windowMs 必须是大于 0 的数字')
+  const computed = config.COMPUTED_METRICS
+  if (!computed || typeof computed !== 'object' || Array.isArray(computed)) throw new Error('COMPUTED_METRICS 必须是 JSON 对象')
+  for (const key of ['enabled', 'resistanceK', 'pressureDropRate', 'tempChangeRate', 'heatExchangeEfficiency', 'eerHeatBalance', 'flowPressureCurve', 'cumulativeFlow', 'averageVelocity', 'waterLevel', 'averageTempChart', 'averageVelocityChart']) {
+    if (typeof computed[key] !== 'boolean') throw new Error(`COMPUTED_METRICS.${key} 必须是布尔值`)
+  }
+  for (const key of ['heaterRatedPower', 'pipeAreaCm2', 'initialWaterTank1', 'initialWaterTank2', 'tankAreaCm2']) {
+    if (!Number.isFinite(computed[key]) || computed[key] < 0) throw new Error(`COMPUTED_METRICS.${key} 必须是大于等于 0 的数字`)
+  }
   validateAggregationMetrics(config)
   return true
 }

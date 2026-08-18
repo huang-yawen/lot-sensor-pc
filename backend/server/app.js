@@ -16,6 +16,8 @@ require('./config/env');
 const sensorRoutes = require('./routes/sensorRoutes');
 const systemConfig = require('./config/systemConfig');
 const configController = require('./controllers/system/configController');
+const { startMonitor: startSafetyMonitor } = require('./service/safety/safetyInterlock');
+const { getLatest: getLatestComputed, refreshFromDB: refreshComputedFromDB } = require('./service/computedMetrics/computedMetrics');
 const mqttClient = require('./mqtt/index')
 const app = express();
 const port = Number(process.env.PORT) || 3000;
@@ -71,6 +73,17 @@ app.get('/api/time-window', timeWindowController)
 app.get('/api/device-status', async (req, res) => {
     await mqttClient.waitForDeviceSync();
     res.json({ success: true, data: mqttClient.getAllDeviceStatus() });
+});
+
+// 首页“需要计算的数据”板块：返回后端实时计算出的工程指标。
+// 尚无实时 MQTT 数据时，从数据库历史数据回放一次，保证板块有值可显示。
+app.get('/api/computed-metrics', async (req, res) => {
+    try {
+        await refreshComputedFromDB();
+    } catch (err) {
+        console.error('[ComputedMetrics] 数据库回放失败:', err.message);
+    }
+    res.json({ success: true, data: getLatestComputed() });
 });
         
 const distPath = process.env.FRONTEND_DIST_PATH
@@ -242,6 +255,9 @@ setTimeout(() => {
         console.warn('⚠️  MQTT 尚未连接，可能正在重连或 Broker 未运行');
     }
 }, 5000);
+
+// 启动安全联锁掉线监测（条件 6：传感器长时间无数据上报）。
+startSafetyMonitor();
 
 server.listen(port, host, () => {
   console.log(`Server started: http://${host}:${port}`);

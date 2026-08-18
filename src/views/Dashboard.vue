@@ -87,6 +87,43 @@
       </div>
     </section>
 
+    <!-- ==================== 需要计算的数据（工程指标专用板块） ==================== -->
+    <section v-if="computedMetricList.length" class="computed-section">
+      <h2 class="section-title">计算数据</h2>
+      <div class="computed-grid">
+        <div v-for="item in computedMetricList" :key="item.key" class="computed-card">
+          <div class="computed-card-label">{{ item.label }}</div>
+          <div class="computed-card-value">
+            <template v-if="item.value != null">{{ item.value }}</template>
+            <span v-else class="muted">--</span>
+            <span v-if="item.value != null && item.unit" class="unit">{{ item.unit }}</span>
+          </div>
+          <div v-if="item.note" class="computed-card-note">{{ item.note }}</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==================== 平均温度 / 平均流速 趋势图 ==================== -->
+    <section v-if="computedEntry" class="cumulative-section">
+      <h2 class="section-title">平均温度与平均流速</h2>
+      <div class="cumulative-grid">
+        <div v-if="computedEntry.flags?.averageTempChart" class="cumulative-card">
+          <div class="cumulative-card-header">
+            <h3>平均温度</h3>
+            <el-tag size="small">℃</el-tag>
+          </div>
+          <div :ref="(el) => setTrendChartRef('avgTemp', el)" class="cumulative-chart"></div>
+        </div>
+        <div v-if="computedEntry.flags?.averageVelocityChart" class="cumulative-card">
+          <div class="cumulative-card-header">
+            <h3>平均流速</h3>
+            <el-tag size="small">m/s</el-tag>
+          </div>
+          <div :ref="(el) => setTrendChartRef('avgVel', el)" class="cumulative-chart"></div>
+        </div>
+      </div>
+    </section>
+
     <section class="dashboard-grid">
       <article class="panel sensor-panel">
         <div class="panel-heading">
@@ -104,7 +141,16 @@
             <strong>{{ displayValue(latestSensor[field], field) }}</strong>
           </div>
         </div>
-        <el-empty v-else description="暂无传感器数据" :image-size="72" />
+        <div v-if="latestBehavior && behaviorFields.length" class="behavior-reading">
+          <div class="behavior-reading-title">运行状态</div>
+          <div class="reading-grid">
+            <div v-for="field in behaviorFields" :key="field" class="reading-item behavior">
+              <span>{{ field }}</span>
+              <strong>{{ displayValue(latestBehavior[field], field) }}</strong>
+            </div>
+          </div>
+        </div>
+        <el-empty v-if="!latestSensor && !latestBehavior" description="暂无传感器数据" :image-size="72" />
         <div v-if="latestSensor" class="updated-at">
           <template v-if="displayStore.isFieldVisible('设备编号')">{{ deviceLabel }} {{ latestSensor['设备编号'] || '未标识' }} · </template>{{ latestSensor['创立时间'] || '时间未知' }}
         </div>
@@ -142,6 +188,7 @@ import { DisplayStore } from '@/stores/DisplayStore'
 
 const loading = ref(false)
 const dashboard = ref({})
+const computedMetrics = ref({})
 const deviceTotal = ref(0)
 const mqttConnected = ref(false)
 const deviceStatuses = ref([])
@@ -155,13 +202,157 @@ let unsubscribeError = null
 
 const rows = computed(() => dashboard.value.processedData || [])
 const latestSensor = computed(() => rows.value[0] || null)
+const latestBehavior = computed(() => (dashboard.value.behaviorOutcome || [])[0] || null)
 const fieldUnits = computed(() => dashboard.value.fieldUnits || {})
+
+// ==================== 需要计算的数据（后端实时派生指标） ====================
+const computedMetricList = computed(() => {
+  const keys = Object.keys(computedMetrics.value || {})
+  const entry = keys.length ? computedMetrics.value[keys[0]] : null
+  if (!entry) return []
+  const flags = entry.flags || {}
+  const fmt = (v, digits = 2) => (v == null || !Number.isFinite(Number(v)) ? null : Number(v).toFixed(digits))
+  const list = []
+
+  if (flags.resistanceK && entry.resistanceK) {
+    const trend = entry.resistanceK.trend3d
+    list.push({
+      key: 'resistanceK',
+      label: '系统阻力系数 K',
+      unit: entry.resistanceK.unit || '',
+      value: fmt(entry.resistanceK.value, 4),
+      note: trend != null ? `3天趋势 ${(trend * 100).toFixed(1)}%` : '',
+    })
+  }
+  if (flags.pressureDropRate && entry.pressureDropRate) {
+    list.push({
+      key: 'pressureDropRate',
+      label: '压力陡降速率',
+      unit: entry.pressureDropRate.unit || '',
+      value: fmt(entry.pressureDropRate.value, 3),
+      note: entry.pressureDropRate.dropInHalfSecond ? '0.5s 内骤降' : '',
+    })
+  }
+  if (flags.tempChangeRate && entry.tempChangeRate) {
+    const t1 = fmt(entry.tempChangeRate.temp1, 3)
+    const t2 = fmt(entry.tempChangeRate.temp2, 3)
+    list.push({
+      key: 'tempChangeRate',
+      label: '温度变化率 (T1/T2)',
+      unit: '℃/s',
+      value: `${t1 ?? '--'} / ${t2 ?? '--'}`,
+    })
+  }
+  if (flags.heatExchangeEfficiency && entry.heatExchangeEfficiency) {
+    const eff = entry.heatExchangeEfficiency.value
+    list.push({
+      key: 'heatExchangeEfficiency',
+      label: '换热效率',
+      unit: '%',
+      value: eff != null ? fmt(eff * 100, 1) : null,
+      note: entry.heatExchangeEfficiency.heatTransferredW ? `换热量 ${fmt(entry.heatExchangeEfficiency.heatTransferredW, 0)}W` : '',
+    })
+  }
+  if (flags.eerHeatBalance && entry.eerHeatBalance) {
+    list.push({
+      key: 'eerHeatBalance',
+      label: '能效比 / 热平衡',
+      unit: '',
+      value: entry.eerHeatBalance.cop != null ? fmt(entry.eerHeatBalance.cop, 3) : null,
+      note: entry.eerHeatBalance.heatLossW != null ? `散热损失 ${fmt(entry.eerHeatBalance.heatLossW, 0)}W` : '',
+    })
+  }
+  if (flags.flowPressureCurve && entry.flowPressureCurve) {
+    list.push({
+      key: 'flowPressureCurve',
+      label: '流量-压力曲线斜率',
+      unit: entry.flowPressureCurve.unit || '',
+      value: fmt(entry.flowPressureCurve.slope, 3),
+    })
+  }
+  if (flags.cumulativeFlow && entry.cumulativeFlow) {
+    list.push({ key: 'cumulativeFlow', label: '累计流量', unit: entry.cumulativeFlow.unit || '', value: fmt(entry.cumulativeFlow.value, 2) })
+  }
+  if (flags.averageVelocity && entry.averageVelocity) {
+    list.push({ key: 'averageVelocity', label: '平均流速', unit: entry.averageVelocity.unit || '', value: fmt(entry.averageVelocity.value, 4) })
+  }
+  if (flags.waterLevel && entry.waterLevel) {
+    const t1 = entry.waterLevel.tank1
+    const t2 = entry.waterLevel.tank2
+    list.push({
+      key: 'waterLevel',
+      label: '液位（水箱1/水箱2）',
+      unit: entry.waterLevel.unit || 'cm',
+      value: t1 && t2 ? `${fmt(t1.levelCm, 1)} / ${fmt(t2.levelCm, 1)}` : null,
+    })
+  }
+  return list
+})
+
+// ==================== 平均温度 / 平均流速 趋势图数据源 ====================
+const computedEntry = computed(() => {
+  const values = Object.values(computedMetrics.value || {})
+  return values.find(v => v && v.series && v.series.length) || null
+})
+
+/** 趋势图实例与 refs（与累计图实例分开管理） */
+const trendChartInstances = {}
+const trendChartRefs = {}
+
+function setTrendChartRef(key, el) {
+  if (el && !trendChartRefs[key]) {
+    trendChartRefs[key] = el
+    nextTick(() => renderTrendChart(key))
+  }
+}
+
+function renderTrendChart(key) {
+  const entry = computedEntry.value
+  const el = trendChartRefs[key]
+  if (!entry || !el || el.offsetWidth === 0) {
+    if (el) setTimeout(() => renderTrendChart(key), 50)
+    return
+  }
+  if (trendChartInstances[key]) trendChartInstances[key].dispose()
+  const chart = echarts.init(el)
+  trendChartInstances[key] = chart
+
+  const series = entry.series || []
+  const times = series.map(p => p.time)
+  const data = series.map(p => (key === 'avgTemp' ? p.averageTemp : p.averageVelocity))
+  const name = key === 'avgTemp' ? '平均温度' : '平均流速'
+  const unit = key === 'avgTemp' ? '℃' : 'm/s'
+  const color = key === 'avgTemp' ? '#3b82f6' : '#10b981'
+
+  chart.setOption({
+    tooltip: { trigger: 'axis' },
+    toolbox: { feature: { saveAsImage: { title: '下载图片' } }, right: 10, top: 0 },
+    grid: { left: 14, right: 40, top: 40, bottom: 50 },
+    xAxis: { type: 'category', data: times, axisLabel: { rotate: 15, fontSize: 10 } },
+    yAxis: { type: 'value', name: unit, nameTextStyle: { fontSize: 11 } },
+    series: [{ name, type: 'line', data, smooth: true, itemStyle: { color }, lineStyle: { color } }]
+  }, true)
+}
+
+watch(computedEntry, () => {
+  nextTick(() => {
+    if (trendChartRefs.avgTemp) renderTrendChart('avgTemp')
+    if (trendChartRefs.avgVel) renderTrendChart('avgVel')
+  })
+}, { deep: true })
+
 const recentErrors = computed(() => Object.values(dashboard.value.sortedData || {}).flat())
 const onlineCount = computed(() => deviceStatuses.value.filter((item) => item.online).length)
 const sensorFields = computed(() => {
   if (!latestSensor.value) return []
   const excluded = new Set(['创立时间', '数据类型'])
   return Object.keys(latestSensor.value).filter((key) => !excluded.has(key) && displayStore.isFieldVisible(key))
+})
+
+const behaviorFields = computed(() => {
+  if (!latestBehavior.value) return []
+  const excluded = new Set(['创立时间', '更新时间', '数据类型', '储运箱ID', '控制模式'])
+  return Object.keys(latestBehavior.value).filter((key) => !excluded.has(key) && displayStore.isFieldVisible(key))
 })
 
 function displayValue(value, field) {
@@ -267,15 +458,19 @@ function disposeAllCharts() {
   Object.values(chartInstances).forEach(c => c?.dispose())
   for (const key in chartInstances) delete chartInstances[key]
   for (const key in chartRefs) delete chartRefs[key]
+  Object.values(trendChartInstances).forEach(c => c?.dispose())
+  for (const key in trendChartInstances) delete trendChartInstances[key]
+  for (const key in trendChartRefs) delete trendChartRefs[key]
 }
 
 async function loadDashboard() {
   loading.value = true
   try {
-    const [dataResult, deviceResult, mqttResult] = await Promise.allSettled([
+    const [dataResult, deviceResult, mqttResult, computedResult] = await Promise.allSettled([
       api.get('/data', { params: { online: '实时数据' } }),
       api.get('/deviceData', { params: { currentPage: 1, pageSize: 100 } }),
       api.get('/api/mqtt/status'),
+      api.get('/api/computed-metrics'),
     ])
     if (dataResult.status === 'fulfilled') dashboard.value = dataResult.value.data || {}
     if (deviceResult.status === 'fulfilled') {
@@ -283,6 +478,9 @@ async function loadDashboard() {
     }
     if (mqttResult.status === 'fulfilled') {
       mqttConnected.value = Boolean(mqttResult.value.data?.data?.isConnected)
+    }
+    if (computedResult.status === 'fulfilled') {
+      computedMetrics.value = computedResult.value.data?.data || {}
     }
   } finally {
     loading.value = false
@@ -331,7 +529,22 @@ onUnmounted(() => {
 .reading-item { padding: 16px; border-radius: 12px; background: #f0f9ff; }
 .reading-item span { display: block; color: #64748b; font-size: 14px; }
 .reading-item strong { display: block; margin-top: 8px; color: #075985; font-size: 22px; }
+.behavior-reading { margin-top: 16px; padding-top: 16px; border-top: 1px dashed #e5e7eb; }
+.behavior-reading-title { margin-bottom: 10px; color: #64748b; font-size: 14px; }
+.reading-item.behavior { background: #f0fdf4; }
+.reading-item.behavior strong { color: #047857; }
 .updated-at { margin-top: 18px; color: #64748b; font-size: 13px; }
+
+/* ===== 需要计算的数据 ===== */
+.computed-section { margin: 0 0 16px; }
+.computed-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+.computed-card { padding: 16px; border: 1px solid #e5e7eb; border-radius: 14px; background: #fff; box-shadow: 0 6px 20px rgba(15, 23, 42, .05); }
+.computed-card-label { color: #64748b; font-size: 13px; }
+.computed-card-value { margin-top: 8px; font-size: 24px; font-weight: 700; color: #0f172a; }
+.computed-card-value .unit { margin-left: 6px; font-size: 13px; font-weight: 400; color: #64748b; }
+.computed-card-value .muted { color: #cbd5e1; font-weight: 400; }
+.computed-card-note { margin-top: 6px; color: #e6a23c; font-size: 12px; }
+
 .status-list { display: grid; gap: 10px; }
 .status-row { display: grid; grid-template-columns: 12px 1fr auto; align-items: center; gap: 9px; padding: 12px; border-radius: 10px; background: #f8fafc; }
 .status-dot { width: 10px; height: 10px; border-radius: 50%; background: #94a3b8; }

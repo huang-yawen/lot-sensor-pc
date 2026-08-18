@@ -2,11 +2,11 @@
  * 累计指标查询服务
  *
  * 根据 systemConfig 中的 CUMULATIVE_METRICS 配置，使用 MySQL 窗口函数
- * SUM(...) OVER (ORDER BY c_time ROWS UNBOUNDED PRECEDING) 计算累计值。
+ * 计算累计值或累计平均值。
  *
- * 支持的聚合方式：
- *   - SUM：累加（流量、功耗等连续量）
- *   - 未来可扩展 AVG、COUNT、MAX、MIN
+ * 支持的聚合方式（metric.aggregation）：
+ *   - sum：累加（流量、功耗等连续量，默认）
+ *   - avg：累计平均（从第一条数据开始逐点求平均）
  */
 const promisePool = require('../../config/dbPool')
 const systemConfig = require('../../config/systemConfig')
@@ -19,6 +19,17 @@ function getEnabledCumulativeMetrics() {
   const config = systemConfig.getConfig()
   const metrics = config.CUMULATIVE_METRICS || []
   return metrics.filter(m => m.enabled)
+}
+
+/**
+ * 根据指标配置生成累计/累计平均的窗口函数 SQL 片段。
+ * metric.aggregation 为 avg 时使用 AVG(...) OVER(...)，否则默认 SUM(...) OVER(...)。
+ * 两种方式都从第一条数据开始、按时间顺序逐行滚动计算，保证“累计”语义一致。
+ */
+function aggregationSql(metric) {
+  const value = `CAST(NULLIF(\`${metric.source_field}\`, '') AS DECIMAL(20,6))`
+  const aggregation = metric.aggregation === 'avg' ? 'AVG' : 'SUM'
+  return `${aggregation}(${value}) OVER (ORDER BY c_time ASC, id ASC ROWS UNBOUNDED PRECEDING)`
 }
 
 /**
@@ -54,7 +65,7 @@ async function querySingleCumulative(metric, options = {}) {
           id,
           c_time,
           ROUND(${valueExpr}, ${precision}) AS value,
-          ROUND(SUM(${valueExpr}) OVER (ORDER BY c_time ASC, id ASC ROWS UNBOUNDED PRECEDING), ${precision}) AS cumulative
+          ROUND(${aggregationSql(metric)}, ${precision}) AS cumulative
         FROM ${table}
         WHERE 1=1 ${d_no ? 'AND d_no = ?' : ''}
       ) AS calculated
@@ -111,10 +122,8 @@ function buildInlineCumulativeSql(sourceTable) {
   if (metrics.length === 0) return { selectFragment: '', metrics: [] }
 
   const fragments = metrics.map(m => {
-    const field = m.source_field
-    const valueExpr = `CAST(NULLIF(\`${field}\`, '') AS DECIMAL(20,6))`
     const alias = String(m.metric_name).replace(/`/g, '``')
-    return `ROUND(SUM(${valueExpr}) OVER (ORDER BY c_time, id ROWS UNBOUNDED PRECEDING), ${m.precision ?? 2}) AS \`${alias}\``
+    return `ROUND(${aggregationSql(m)}, ${m.precision ?? 2}) AS \`${alias}\``
   })
 
   return { selectFragment: `, ${fragments.join(', ')}`, metrics }

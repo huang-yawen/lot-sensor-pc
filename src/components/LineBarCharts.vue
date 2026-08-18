@@ -43,7 +43,9 @@ const props = defineProps({
   data: { type: Array, default: () => [] },
   pageSize: { type: Number, default: 5 },
   // 由公式指标配置生成：{ 指标显示名: { visible,type,yAxis,color,min,max,unit } }
-  settings: { type: Object, default: () => ({}) }
+  settings: { type: Object, default: () => ({}) },
+  // 行为数据（0/1 开关状态）专用：true 时 y 轴刻度线只显示 0 和 1。
+  binary: { type: Boolean, default: false }
 })
 
 /**
@@ -144,9 +146,14 @@ const updateChart = (source) => {
       lineStyle: setting.color ? { color: setting.color } : undefined,
       data: json.map(item => {
         const raw = item[field]
-        if (!raw) return 0
+        if (raw == null || raw === '') return 0
+        const text = raw.toString().trim()
+        // 配置中心 value_map 可能把数据库原始值换成了文字（如 开/关/自动/手动），
+        // 图表要按数值画图，这里先按常见文字换回数字，换不了再走数字提取。
+        if (['开', '自动', 'on', 'true'].includes(text)) return 1
+        if (['关', '手动', 'off', 'false'].includes(text)) return 0
         // 提取纯数字并转换为数值类型
-        const num = parseFloat(raw.toString().replace(/[^\d.-]/g, ''))
+        const num = parseFloat(text.replace(/[^\d.-]/g, ''))
         return isNaN(num) ? 0 : num
       })
     }})
@@ -160,8 +167,9 @@ const updateChart = (source) => {
         type: 'value',
         name: units.join('/'),
         position: side,
-        min: min ?? undefined,
-        max: max ?? undefined,
+        min: props.binary ? 0 : (min ?? undefined),
+        max: props.binary ? 1 : (max ?? undefined),
+        interval: props.binary ? 1 : undefined,
       }
     }
 

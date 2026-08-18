@@ -3,6 +3,13 @@
 const { saveSensorData } = require('./sensorRealtimeRepository')
 const { getReportedTime, getTopic } = require('../../utils/protocol')
 const { evaluateRules } = require('../../service/alarm/evaluateRules')
+const { evaluateSafety } = require('../../service/safety/safetyInterlock')
+const { evaluateAutoControl } = require('../../service/autoControl/autoControl')
+const { evaluateLayeredControl } = require('../../service/layeredControl/layeredControl')
+const { evaluateFaultStatus } = require('../../service/faultStatus/faultStatus')
+const { evaluatePidHeating } = require('../../service/pidHeating/pidHeating')
+const { evaluateQuantityShutdown } = require('../../service/quantityShutdown/quantityShutdown')
+const { compute: computeMetrics } = require('../../service/computedMetrics/computedMetrics')
 
 const SENSOR_TOPIC = 'sensor_data'
 
@@ -70,6 +77,19 @@ async function handleMessage(topic, payload) {
         await saveSensorData(info)
         const alarms = await evaluateRules(info)
         if (alarms.length) info._alarms = alarms
+        const safetyTriggers = await evaluateSafety(info)
+        if (safetyTriggers.length) info._safetyTriggers = safetyTriggers
+        const faultTriggers = await evaluateFaultStatus(info)
+        if (faultTriggers.length) info._faultTriggers = faultTriggers
+        const autoActions = await evaluateAutoControl(info)
+        if (autoActions.length) info._autoActions = autoActions
+        const layeredActions = await evaluateLayeredControl(info)
+        if (layeredActions.length) info._layeredActions = layeredActions
+        const pidActions = await evaluatePidHeating(info)
+        if (pidActions.length) info._pidActions = pidActions
+        const qtyResult = await evaluateQuantityShutdown(info)
+        if (qtyResult) info._quantityShutdown = qtyResult
+        await computeMetrics(info)
         return info
     } catch (err) {
         console.error('[SensorRealtime] Error processing message:', err.message)

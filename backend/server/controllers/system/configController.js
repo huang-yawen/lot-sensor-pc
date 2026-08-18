@@ -68,6 +68,20 @@ function validateDirectMappings(rows) {
         throw new Error(`${label}.wire_template 必须是 JSON 对象`)
       }
     }
+    // wire_on_payload / wire_off_payload：开关类指令开、关各自的完整报文，可选，配置了必须是合法 JSON 对象。
+    for (const field of ['wire_on_payload', 'wire_off_payload']) {
+      const raw = String(row[field] || '').trim()
+      if (!raw) continue
+      let parsed
+      try {
+        parsed = JSON.parse(raw)
+      } catch {
+        throw new Error(`${label}.${field} 不是合法 JSON`)
+      }
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        throw new Error(`${label}.${field} 必须是 JSON 对象`)
+      }
+    }
   }
   for (const row of rows) {
     if (row.ref_id !== null && row.ref_id !== undefined && row.ref_id !== '' && !ids.has(Number(row.ref_id))) {

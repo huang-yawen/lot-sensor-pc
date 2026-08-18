@@ -70,7 +70,7 @@ async function evaluateRules(info) {
       try {
         const mqttClient = require('../../mqtt')
         const [[directConfig]] = await promisePool.query(
-          'SELECT id, t_name, f_type, preffix, wire_template FROM t_direct_config WHERE LOWER(preffix) = LOWER(?) LIMIT 1',
+          'SELECT id, t_name, f_type, preffix, wire_template, wire_on_payload, wire_off_payload FROM t_direct_config WHERE LOWER(preffix) = LOWER(?) LIMIT 1',
           [rule.action.field]
         )
         // 开关类联锁目标配置了 wire_template（如 Modbus 透传）时用整份报文下发，

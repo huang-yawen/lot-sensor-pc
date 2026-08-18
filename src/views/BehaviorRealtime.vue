@@ -12,7 +12,7 @@
       </div>
 
       <div class="chart-wrapper" v-if="chartsEnabled">
-        <LineBarCharts :data="data || []" />
+        <LineBarCharts :data="chartData" binary />
       </div>
     </div>
   </div>
@@ -32,6 +32,9 @@ const online = '实时数据'
 let refreshTimer = null
 
 const data = computed(() => transformBehaviorList(store.paginationData || []))
+// 接口按 id DESC（最新在前）返回，卡片默认取第 0 项展示最新数据是对的；
+// 但图表要求横坐标越靠右时间越新，所以图表单独用反转后的顺序，不影响卡片。
+const chartData = computed(() => [...data.value].reverse())
 const chartsEnabled = computed(() => systemStore.config.ENABLE_CHARTS !== false)
 
 const reloadData = () => store.fetchPaginationData({
