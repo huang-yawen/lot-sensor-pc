@@ -10,6 +10,7 @@
  */
 const promisePool = require('../../config/dbPool')
 const { shouldRecord } = require('./operationHistoryPolicy')
+const { nowLocalDateTime, formatLocalDateTime } = require('../../utils/helper')
 let ensureTablePromise = null
 
 function ensureOperationHistoryTable() {
@@ -38,7 +39,13 @@ async function saveOperationHistory({ d_no, config_id, old_value = null, new_val
     return { success: true, skipped: true, reason: 'disabled_by_config' }
   }
 
-  const time = c_time || new Date().toISOString().slice(0, 19).replace('T', ' ')
+  // 使用本地时区时间，避免 toISOString() 的 UTC 时差（8小时偏差）
+  const time = c_time
+    ? (typeof c_time === 'string' || c_time instanceof Date
+        ? formatLocalDateTime(c_time)
+        : nowLocalDateTime())
+    : nowLocalDateTime()
+
   try {
     await ensureOperationHistoryTable()
     const [result] = await promisePool.execute(
@@ -46,7 +53,7 @@ async function saveOperationHistory({ d_no, config_id, old_value = null, new_val
        VALUES (?, ?, ?, ?, ?, ?)`,
       [d_no || null, config_id ?? null, old_value == null ? null : String(old_value), new_value == null ? null : String(new_value), source, time]
     )
-    console.log('[OperationHistory] 保存成功:', { d_no, config_id, old_value, new_value, source, id: result.insertId })
+    console.log('[OperationHistory] 保存成功:', { d_no, config_id, old_value, new_value, source, c_time: time, id: result.insertId })
     return { success: true, insertId: result.insertId }
   } catch (error) {
     console.error('[OperationHistory] 保存失败:', error.message)

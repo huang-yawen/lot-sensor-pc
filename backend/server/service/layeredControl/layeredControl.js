@@ -18,6 +18,7 @@ const { resolveDeviceNo, resolveFieldAliases } = require('../../utils/mappedData
 const { getDirectValue, saveDirectData } = require('../directData/saveDirectConfig')
 const { saveOperationHistory } = require('../operationHistory/saveOperationHistory')
 const { isPidEnabled } = require('../pidHeating/pidHeating')
+const { isLockedByFault, isAnyLocked } = require('../faultStatus/faultStatus')
 
 /** 异常最大值哨兵：超过此值视为传感器异常（掉线/短路）。 */
 const ABNORMAL_MAX = 9999
@@ -264,6 +265,16 @@ async function evaluateLayeredControl(info) {
   if (rootConfig.CONTROL_MODE !== 'layered') return []
   const config = rootConfig.LAYERED_CONTROL || {}
   if (config.enabled !== true) return []
+
+  // ====== 故障锁短路 ======
+  // 故障态下 faultStatus 已强制关闭水泵和加热、并锁定指令页面，
+  // 分层联动必须立即返回，避免下一条 MQTT 消息到达时把执行器又重新打开。
+  if (rootConfig.SINGLE_DEVICE_MODE === true) {
+    if (isAnyLocked()) return []
+  } else {
+    const preDeviceNo = String((await resolveDeviceNo(info)) || '').trim() || null
+    if (isLockedByFault(preDeviceNo)) return []
+  }
 
   const deviceNo = String((await resolveDeviceNo(info)) || '').trim() || null
 

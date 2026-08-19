@@ -8,15 +8,15 @@
  * -->
 <template>
   <div class="container">
-    <div class="toolbar">
-      <el-button type="danger" plain :icon="RefreshLeft" :loading="resetting" @click="handleReset">
-        复位（关闭所有开关）
-      </el-button>
-    </div>
-
-    <div class="quick-switches" v-if="quickSwitches.length">
+    <div class="quick-switches">
       <DynamicNode v-for="node in quickSwitches" :key="node.id" :node="node" :form-data="formData" :icons="icons"
         compact @save="handleSave" :id="prop.id" />
+      <div class="reset-card">
+        <span class="reset-title">复位</span>
+        <el-button type="danger" plain :icon="RefreshLeft" :loading="resetting" @click="handleReset">
+          关闭所有开关
+        </el-button>
+      </div>
     </div>
 
     <div class="detail-nodes">
@@ -215,17 +215,32 @@ onUnmounted(() => {
   padding: 8px 10px;
 }
 
-.toolbar {
-  display: flex;
-  justify-content: flex-end;
-  margin-bottom: 16px;
-}
-
 .quick-switches {
   display: flex;
   flex-wrap: wrap;
   gap: 12px;
   margin-bottom: 20px;
+}
+
+/* 跟 DynamicNode.vue 里 .compact 开关卡片保持同一套视觉样式，让复位跟水泵/加热并列显示 */
+.reset-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-width: 180px;
+  padding: 12px 18px;
+  background: #fff;
+  border: 1px solid #e4e7ed;
+  border-radius: 10px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+}
+
+.reset-title {
+  font-weight: 600;
+  font-size: 16px;
+  color: #1f2d3d;
+  white-space: nowrap;
 }
 
 .detail-nodes {

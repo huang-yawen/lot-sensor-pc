@@ -6,6 +6,7 @@ const { firstValue, getTopic, toWireValue, buildSwitchPayload } = require('../..
 const { resolveDeviceNo, resolveFieldAliases } = require('../../utils/mappedData')
 const { saveDirectData, getDirectValue } = require('../directData/saveDirectConfig')
 const { saveOperationHistory } = require('../operationHistory/saveOperationHistory')
+const { formatLocalDateTime } = require('../../utils/helper')
 
 const lastTriggered = new Map()
 const latestState = new Map()
@@ -61,9 +62,11 @@ async function evaluateRules(info) {
     if (Date.now() - (lastTriggered.get(cooldownKey) || 0) < cooldownMs) continue
     lastTriggered.set(cooldownKey, Date.now())
     const message = `${rule.name}：当前值 ${actual} ${rule.operator} 阈值 ${threshold}`
+    // info.c_time 为设备上报时间（已本地格式化）；若为空则使用本地服务器时间，避免 UTC 时差
+    const recordTime = formatLocalDateTime(info.c_time) || formatLocalDateTime(new Date())
     await promisePool.execute(
       'INSERT INTO t_error_msg (d_no, c_time, e_msg, e_no, type) VALUES (?, ?, ?, ?, ?)',
-      [deviceNo === 'default' ? null : deviceNo, info.c_time || null, message, rule.id, rule.name]
+      [deviceNo === 'default' ? null : deviceNo, recordTime, message, rule.id, rule.name]
     )
     let interlock = null
     if (config.ENABLE_AUTO_INTERLOCK && rule.action?.field) {

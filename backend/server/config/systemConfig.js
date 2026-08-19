@@ -524,30 +524,46 @@ const defaultConfig = {
   },
 
   // --------------------------------------------------------------------------
-  // 12.1 故障状态（硬故障保护）
+  // 12.1 故障状态（硬故障保护 + 复位按钮状态机）
   // --------------------------------------------------------------------------
-  // 触发任一启用条件时，强制关闭水泵和加热，并把控制模式自动切回手动，供人工介入维修。
+  // 触发任一启用条件时：①保存故障前快照 ②强制关闭水泵和加热 ③系统状态置 FAULT
+  // ④复位按钮自动拨到"开"（仅 UI 显示，不修改硬件）⑤指令页面其他开关和参数全部锁定只读。
+  // 用户人工修复设备后手动把复位按钮拨回"关"，系统按快照恢复所有参数和开关显示、按快照
+  // 重启执行器，回到 NORMAL。修复后又复发的情形：故障态下拨回 OFF 但故障条件仍存在 ->
+  // 立即重新触发故障。
+  //
+  // 五种故障（编号对应需求文档）：
+  //   ① pipe_blockage      进水口/管道堵塞：压力 < 压力下限 OR 压力 > 压力上限
+  //   ② outlet_blockage    出水口堵塞：流量 < 流量下限
+  //   ③ dry_burn           干烧：加热开启后连续 dryBurnDurationMs 出水温度变化 < dryBurnMinRiseC
+  //   ④ pump_idle          水泵空转：水泵开启但流量 = 0
+  //   ⑤ pump_fault         水泵故障：水泵开启，进出水温差 > tempDiffThreshold（从指令中心读取）
+  //
+  // 优先级（同时触发时取最高优先级处理和显示）：
+  //   干烧(③) > 管道堵塞(①) > 水泵故障(⑤) > 水泵空转(④) > 出水口堵塞(②)
+  //
   // 与安全联锁（SAFETY_INTERLOCK）相互独立、都全程生效，条件可能同时命中（多层防护叠加，
   // 不冲突）。每条条件可用布尔值独立开关：
   //   enabled              - 故障状态总开关
-  //   heaterFault          - 加热模块故障：(a) 水泵和加热均开启时，流量低于下限阈值（干烧）；
-  //                          (b) 加热开启后长时间温度都没有明显上升
-  //   heaterStallDurationMs - 加热开启后判定“温度不上升”所需的持续时长（毫秒），默认 60000
-  //   heaterStallMinRiseC   - 温度上升超过这个值（℃）就算“有在升温”，重新计时，默认 0.3
-  //   pumpFault            - 水泵故障：水泵开启时，流量为 0 且压力为 0，且持续 >= pumpFaultDurationMs
-  //   pumpFaultDurationMs  - 水泵故障判定所需的持续时长（毫秒），默认 2000
-  //   blockage             - 管道堵塞：压力高于上限阈值且流量低于下限阈值
-  //   leak                 - 管道漏水：压力为 0 且（流量低于下限阈值 或 流量为 0）
+  //   pipeBlockage         - 故障①：进水口/管道堵塞
+  //   outletBlockage       - 故障②：出水口堵塞
+  //   dryBurn              - 故障③：干烧
+  //   pumpIdle             - 故障④：水泵空转
+  //   pumpFault            - 故障⑤：水泵故障
+  //   dryBurnDurationMs    - 加热开启后判定"温度不上升"所需的持续时长（毫秒），默认 5000
+  //   dryBurnMinRiseC      - 温度上升超过这个值（℃）就算"有在升温"，重新计时，默认 0.1
   //   alarmCooldownMs      - 同一故障的冷却时间（毫秒），避免高频重复触发
+  // 注：温差阈值（tempDiffThreshold）、压力上下限、流量下限、目标温度等阈值类参数从
+  //     指令中心 t_direct 实时读取，不在配置中心维护，前端修改即时生效。
   FAULT_STATUS: {
     enabled: false,
-    heaterFault: true,
-    heaterStallDurationMs: 60000,
-    heaterStallMinRiseC: 0.3,
+    pipeBlockage: true,
+    outletBlockage: true,
+    dryBurn: true,
+    pumpIdle: true,
     pumpFault: true,
-    pumpFaultDurationMs: 2000,
-    blockage: true,
-    leak: true,
+    dryBurnDurationMs: 5000,
+    dryBurnMinRiseC: 0.1,
     alarmCooldownMs: 30000,
   },
 
@@ -803,12 +819,11 @@ function validate(config) {
   if (!Number.isFinite(qty.totalFlowTarget) || qty.totalFlowTarget < 0) throw new Error('QUANTITY_SHUTDOWN.totalFlowTarget 必须是大于等于 0 的数字')
   const fault = config.FAULT_STATUS
   if (!fault || typeof fault !== 'object' || Array.isArray(fault)) throw new Error('FAULT_STATUS 必须是 JSON 对象')
-  for (const key of ['enabled', 'heaterFault', 'pumpFault', 'blockage', 'leak']) {
+  for (const key of ['enabled', 'pipeBlockage', 'outletBlockage', 'dryBurn', 'pumpIdle', 'pumpFault']) {
     if (typeof fault[key] !== 'boolean') throw new Error(`FAULT_STATUS.${key} 必须是布尔值`)
   }
-  if (!Number.isFinite(fault.pumpFaultDurationMs) || fault.pumpFaultDurationMs < 0) throw new Error('FAULT_STATUS.pumpFaultDurationMs 必须是大于等于 0 的数字')
-  if (!Number.isFinite(fault.heaterStallDurationMs) || fault.heaterStallDurationMs < 0) throw new Error('FAULT_STATUS.heaterStallDurationMs 必须是大于等于 0 的数字')
-  if (!Number.isFinite(fault.heaterStallMinRiseC) || fault.heaterStallMinRiseC < 0) throw new Error('FAULT_STATUS.heaterStallMinRiseC 必须是大于等于 0 的数字')
+  if (!Number.isFinite(fault.dryBurnDurationMs) || fault.dryBurnDurationMs < 0) throw new Error('FAULT_STATUS.dryBurnDurationMs 必须是大于等于 0 的数字')
+  if (!Number.isFinite(fault.dryBurnMinRiseC) || fault.dryBurnMinRiseC < 0) throw new Error('FAULT_STATUS.dryBurnMinRiseC 必须是大于等于 0 的数字')
   if (!Number.isFinite(fault.alarmCooldownMs) || fault.alarmCooldownMs < 0) throw new Error('FAULT_STATUS.alarmCooldownMs 必须是大于等于 0 的数字')
   const pid = config.PID_HEATING
   if (!pid || typeof pid !== 'object' || Array.isArray(pid)) throw new Error('PID_HEATING 必须是 JSON 对象')

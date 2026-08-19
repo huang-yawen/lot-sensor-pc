@@ -1,18 +1,33 @@
 /**
- * 【文件职责】故障状态服务：检测硬故障并强制保护——关闭水泵和加热，同时把控制模式
- * 切回手动（自动切换到手动模式，供人工介入维修），与安全联锁（safetyInterlock）相互独立、
- * 都全程生效，二者可能同时触发（本模块的条件多数是安全联锁条件的子集叠加），属于正常的
- * 多层防护重叠，不冲突。
+ * 【文件职责】故障状态服务：检测五种硬故障，触发后保存故障前快照、强制关闭水泵和加热、
+ *   把系统状态切到 FAULT、复位按钮自动拨到"开"（仅 UI 显示，不修改硬件），并锁定指令页面
+ *   的所有其他开关和参数（只读），用户人工修复设备后手动把复位按钮拨回"关"，系统按快照
+ *   恢复所有参数和开关显示、按快照重启执行器，回到 NORMAL。
  *
- * 触发条件（均可通过配置中心 FAULT_STATUS 独立开关）：
- *   1. 加热模块故障：(a) 水泵和加热均开启时，流量低于下限阈值（干烧）；
- *      (b) 加热开启后长时间温度都没有明显上升，超过 heaterStallDurationMs（默认 60s）
- *   2. 水泵故障：水泵开启时，流量为 0 且压力为 0，且持续 >= pumpFaultDurationMs（默认 2s）
- *   3. 管道堵塞：压力高于上限阈值且流量低于下限阈值
- *   4. 管道漏水：压力为 0 且（流量低于下限阈值 或 流量为 0）
+ * === 五种故障检测逻辑（编号对应需求文档）===
+ *   ① pipe_blockage      进水口/管道堵塞：压力 < 压力下限 OR 压力 > 压力上限
+ *   ② outlet_blockage    出水口堵塞：流量 < 流量下限
+ *   ③ dry_burn           干烧：加热器开启后连续 dryBurnDurationMs (默认 5000ms)
+ *                          出水温度变化 < dryBurnMinRiseC (默认 0.1℃)
+ *   ④ pump_idle          水泵空转：水泵开启，流量传感器读数 == 0
+ *   ⑤ pump_fault         水泵故障：水泵开启，进出水温差 > tempDiffThreshold
  *
- * 阈值实时读取指令中心 t_direct，页面修改即时生效。
- * 【配置中心关联】FAULT_STATUS 每次评估动态读取，保存配置后立即生效。
+ * === 故障优先级（同时触发时按此排序取最高优先级处理和显示）===
+ *   干烧(③) > 管道堵塞(①) > 水泵故障(⑤) > 水泵空转(④) > 出水口堵塞(②)
+ *
+ * === 复位按钮状态机 ===
+ *   | 当前状态 | 触发条件 | 动作 | 下一状态 |
+ *   |:---:|:---|:---|:---:|
+ *   | off | 故障触发 | 自动拨到 on，保存快照，全关执行器 | on |
+ *   | on  | 用户手动拨到 off | 从快照恢复参数和开关显示，按快照重启执行器，清故障标志 | off |
+ *   | off | 正常运行 | 无动作 | off |
+ *
+ *   修复后又复发的情形：故障态下用户把复位拨到 off，但故障条件仍存在 ->
+ *   立即重新触发故障，再次保存快照、全关执行器、复位自动变 on。
+ *
+ * === 配置中心关联 ===
+ *   FAULT_STATUS 每次评估动态读取（enabled / alarmCooldownMs / 五种故障独立开关 /
+ *   dryBurnDurationMs / dryBurnMinRiseC / tempDiffThreshold）；阈值从指令中心 t_direct 实时读取。
  */
 const promisePool = require('../../config/dbPool')
 const systemConfig = require('../../config/systemConfig')
@@ -20,28 +35,66 @@ const { firstValue, getTopic, buildSwitchPayload } = require('../../utils/protoc
 const { resolveDeviceNo, resolveFieldAliases } = require('../../utils/mappedData')
 const { saveDirectData, getDirectValue } = require('../directData/saveDirectConfig')
 const { saveOperationHistory } = require('../operationHistory/saveOperationHistory')
+const { nowLocalDateTime } = require('../../utils/helper')
+const {
+  saveSnapshot,
+  restoreFromSnapshot,
+  getSwitchValueByPrefix,
+} = require('./faultSnapshot')
 
-/** 阈值槽位（优先 preffix，其次中文名），与 safetyInterlock.js/autoControl.js 保持一致。 */
+/* ============================================================
+ * 1. 故障类型定义（含优先级，从高到低）
+ * ============================================================ */
+const FAULT_TYPES = [
+  { id: 'dry_burn',        code: '③', priority: 1, name: '干烧',         detail: '加热开启后温度长时间未变化' },
+  { id: 'pipe_blockage',   code: '①', priority: 2, name: '进水口/管道堵塞', detail: '压力超出上下限范围' },
+  { id: 'pump_fault',      code: '⑤', priority: 3, name: '水泵故障',      detail: '水泵开启时进出水温差超过阈值' },
+  { id: 'pump_idle',       code: '④', priority: 4, name: '水泵空转',      detail: '水泵开启但流量为 0' },
+  { id: 'outlet_blockage', code: '②', priority: 5, name: '出水口堵塞',    detail: '流量低于下限阈值' },
+]
+
+/** 阈值槽位（优先 preffix，其次中文名）。 */
 const THRESHOLD_SLOTS = {
-  flowLow: { prefix: 'flow_low', name: '流量下限阈值' },
-  pressureHigh: { prefix: 'pressure_high', name: '压力上限阈值' },
+  flowLow:       { prefix: 'flow_low',       name: '流量下限阈值' },
+  pressureHigh:  { prefix: 'pressure_high',  name: '压力上限阈值' },
+  pressureLow:   { prefix: 'pressure_low',   name: '压力下限阈值' },
+  tempDiff:      { prefix: 'temp_diff',      name: '温差阈值' },
 }
 
 /** 传感器字段槽位。 */
 const SENSOR_SLOTS = {
-  temp1: 'field1',
-  flow: 'field3',
-  pressure: 'field4',
+  temp1: 'field1', // 进水温度
+  temp2: 'field2', // 出水温度
+  flow: 'field3', // 瞬时流量
+  pressure: 'field4', // 压力
 }
 
-/** 水泵故障持续计时：记录条件首次成立的时间戳，条件中断则清除。 */
-const pumpFaultSince = new Map()
-/** 加热温度停滞检测：记录“最近一次明显升温”时的温度和时间戳，加热关闭时清除。 */
-const heaterStallState = new Map()
-/** 告警冷却时间戳，避免同一故障高频重复触发。 */
+/* ============================================================
+ * 2. 全局状态：每个设备的故障态 + 复位按钮状态
+ * ============================================================ */
+const deviceStateMap = new Map()
+// 默认状态：NORMAL + 复位按钮 OFF
+function getDeviceState(deviceNo) {
+  const key = deviceNo || 'global'
+  if (!deviceStateMap.has(key)) {
+    deviceStateMap.set(key, {
+      systemState: 'NORMAL',     // 'NORMAL' | 'FAULT'
+      activeFaultId: null,       // 当前故障 id（最高优先级那个）
+      resetButton: 'off',       // 'on' | 'off'  (页面复位按钮的显示状态)
+      faultTriggeredAt: 0,      // 故障触发时间戳（诊断用）
+    })
+  }
+  return deviceStateMap.get(key)
+}
+
+/** 干烧检测：记录"加热开启后温度基线 + 起始时间"，加热关闭则清空。 */
+const dryBurnStateMap = new Map()
+/** 故障告警冷却时间戳，避免同一故障高频重复入库（30s）。 */
 const lastFired = new Map()
 
-/* ============================ 工具函数 ============================ */
+/* ============================================================
+ * 3. 工具函数
+ * ============================================================ */
 
 async function resolveConfigIdByPrefix(prefix) {
   if (!prefix) return null
@@ -64,7 +117,7 @@ async function resolveThresholdConfigId(slot) {
   return rows[0]?.id ?? null
 }
 
-async function toNumber(raw) {
+function toNumber(raw) {
   if (raw == null || raw === '') return null
   const num = Number(raw)
   return Number.isFinite(num) ? num : null
@@ -80,20 +133,26 @@ async function readSensors(info) {
   const result = {}
   for (const [key, field] of Object.entries(SENSOR_SLOTS)) {
     const aliases = await resolveFieldAliases('t_sensor_data', field)
-    result[key] = await toNumber(firstValue(info, aliases))
+    result[key] = toNumber(firstValue(info, aliases))
   }
   return result
 }
 
 async function readSwitchStates(info) {
+  // 行为数据：field2=水泵，field3=加热器（与 safetyInterlock / autoControl 保持一致）
   const pumpAliases = await resolveFieldAliases('t_behavior_data', 'field2')
   const heatAliases = await resolveFieldAliases('t_behavior_data', 'field3')
   const toOn = v => {
     if (v == null) return null
     const s = String(v).trim().toLowerCase()
-    return ['on', 'open', '1', 'true'].includes(s)
+    if (['on', 'open', '1', 'true'].includes(s)) return true
+    if (['off', 'close', 'closed', '0', 'false'].includes(s)) return false
+    return null
   }
-  return { pumpOn: toOn(firstValue(info, pumpAliases)), heatOn: toOn(firstValue(info, heatAliases)) }
+  return {
+    pumpOn: toOn(firstValue(info, pumpAliases)),
+    heatOn: toOn(firstValue(info, heatAliases)),
+  }
 }
 
 async function findSwitchConfig(prefix, name) {
@@ -106,6 +165,11 @@ async function findSwitchConfig(prefix, name) {
   return rows[0] || null
 }
 
+/**
+ * 下发开关指令：发布 MQTT + 写 t_direct + 写操作历史。
+ * 注意：故障态下"强制关闭执行器"和"复位后按快照重启执行器"都走这个函数，
+ * 但 saveSnapshot/restore 已经在外层完成，所以这里不会污染快照内容。
+ */
 async function setSwitch(prefix, name, value, deviceNo, source) {
   const conf = await findSwitchConfig(prefix, name)
   if (!conf) return false
@@ -119,32 +183,9 @@ async function setSwitch(prefix, name, value, deviceNo, source) {
   return true
 }
 
-/** 关闭水泵和加热，并把控制模式切回手动（自动切换到手动模式，供人工修复）。 */
-async function closeAndSwitchManual(deviceNo, triggerId) {
-  let published = 0
-  for (const [prefix, name] of [['pump', '水泵'], ['heater', '加热']]) {
-    try {
-      const ok = await setSwitch(prefix, name, 'off', deviceNo, 'fault_status')
-      if (ok) {
-        published++
-        console.log(`[FaultStatus] 故障保护关闭 ${name}（${triggerId}），设备 ${deviceNo || '全局'}`)
-      }
-    } catch (err) {
-      console.error(`[FaultStatus] 关闭 ${name} 失败:`, err.message)
-    }
-  }
-  try {
-    await setSwitch('mode', '控制模式', 'off', deviceNo, 'fault_status')
-    console.log(`[FaultStatus] 已自动切换到手动模式（${triggerId}），设备 ${deviceNo || '全局'}`)
-  } catch (err) {
-    console.error('[FaultStatus] 切换手动模式失败:', err.message)
-  }
-  return published > 0
-}
-
 async function recordAlarm(deviceNo, trigger) {
-  const time = new Date().toISOString().slice(0, 19).replace('T', ' ')
-  const message = `${trigger.name}，已执行故障保护（关闭水泵和加热，自动切换到手动模式），${trigger.detail || ''}`
+  const time = nowLocalDateTime()
+  const message = `${trigger.name}（${trigger.code}），已执行故障保护（保存快照、强制关闭水泵和加热、系统进入 FAULT、复位按钮自动置 ON、指令页面锁定），${trigger.detail || ''}`
   await promisePool.execute(
     'INSERT INTO t_error_msg (d_no, c_time, e_msg, e_no, type) VALUES (?, ?, ?, ?, ?)',
     [deviceNo || null, time, message, trigger.id, '故障保护']
@@ -160,107 +201,393 @@ function markFired(key) {
   lastFired.set(key, Date.now())
 }
 
-async function fire(trigger, deviceNo, faultConfig) {
+/**
+ * 清除某设备的所有故障 cooldown 记录。
+ * 用于用户手动复位时：用户拨回 OFF 后，若故障条件仍存在，下一轮 evaluateFaultStatus
+ * 检测到故障需要能立即重新触发（不能被冷却期拦住）。
+ *
+ * lastFired 的 key 形如 `${deviceNo || 'global'}:${trigger.id}`，按设备前缀清理。
+ */
+function clearCooldownForDevice(deviceNo) {
+  const prefix = `${deviceNo || 'global'}:`
+  for (const key of lastFired.keys()) {
+    if (key.startsWith(prefix)) lastFired.delete(key)
+  }
+}
+
+/* ============================================================
+ * 4. 五种故障检测（按需求文档编号）
+ * ============================================================ */
+
+/** ③ 干烧：加热开启后，连续 dryBurnDurationMs 出水温度变化 < dryBurnMinRiseC。 */
+function checkDryBurn(deviceNo, heatOn, tempOut, faultConfig) {
+  const key = deviceNo || 'global'
+  // 加热关闭 / 出水温度无效时清空状态，下次重新开始计时
+  if (!heatOn || tempOut == null) {
+    dryBurnStateMap.delete(key)
+    return false
+  }
+  const durationMs = Number(faultConfig.dryBurnDurationMs) > 0 ? Number(faultConfig.dryBurnDurationMs) : 5000
+  const minRise = Number(faultConfig.dryBurnMinRiseC) >= 0 ? Number(faultConfig.dryBurnMinRiseC) : 0.1
+  const state = dryBurnStateMap.get(key)
+  const now = Date.now()
+  if (!state) {
+    dryBurnStateMap.set(key, { baselineTemp: tempOut, since: now })
+    return false
+  }
+  // 温度比基线明显上升，更新基线、重新计时
+  if (tempOut >= state.baselineTemp + minRise) {
+    dryBurnStateMap.set(key, { baselineTemp: tempOut, since: now })
+    return false
+  }
+  // 持续时间够长才判定为干烧
+  return now - state.since >= durationMs
+}
+
+/**
+ * 主评估：检测五种故障，按优先级取最高的一个返回。
+ * 多故障同时命中时，只触发优先级最高的那个（避免一份报警里塞五种故障）。
+ *
+ * @returns {Object|null} { id, code, priority, name, detail } 或 null
+ */
+async function detectFault(info, deviceNo, faultConfig) {
+  const sensors = await readSensors(info)
+  const states = await readSwitchStates(info)
+
+  const [flowLow, pressureLow, pressureHigh, tempDiffThreshold] = await Promise.all([
+    getThresholdValue('flowLow', deviceNo),
+    getThresholdValue('pressureLow', deviceNo),
+    getThresholdValue('pressureHigh', deviceNo),
+    getThresholdValue('tempDiff', deviceNo),
+  ])
+
+  const triggers = []
+
+  // ① 进水口/管道堵塞：压力 < 下限 或 > 上限
+  if (faultConfig.pipeBlockage !== false && sensors.pressure != null) {
+    if ((pressureLow != null && sensors.pressure < pressureLow)
+      || (pressureHigh != null && sensors.pressure > pressureHigh)) {
+      triggers.push({
+        id: 'pipe_blockage', code: '①', priority: 2,
+        name: '进水口/管道堵塞',
+        detail: `压力=${sensors.pressure}${pressureLow != null ? `，下限=${pressureLow}` : ''}${pressureHigh != null ? `，上限=${pressureHigh}` : ''}`,
+      })
+    }
+  }
+
+  // ② 出水口堵塞：流量 < 下限
+  if (faultConfig.outletBlockage !== false && sensors.flow != null && flowLow != null && sensors.flow < flowLow) {
+    triggers.push({
+      id: 'outlet_blockage', code: '②', priority: 5,
+      name: '出水口堵塞',
+      detail: `流量=${sensors.flow}，下限=${flowLow}`,
+    })
+  }
+
+  // ③ 干烧：加热开启后温度长时间不变化
+  if (faultConfig.dryBurn !== false && checkDryBurn(deviceNo, states.heatOn, sensors.temp2, faultConfig)) {
+    const durationMs = Number(faultConfig.dryBurnDurationMs) > 0 ? Number(faultConfig.dryBurnDurationMs) : 5000
+    triggers.push({
+      id: 'dry_burn', code: '③', priority: 1,
+      name: '干烧',
+      detail: `加热已开启超过 ${Math.round(durationMs / 1000)} 秒，出水温度=${sensors.temp2} 无明显上升`,
+    })
+  }
+
+  // ④ 水泵空转：水泵开启，流量 = 0
+  if (faultConfig.pumpIdle !== false && states.pumpOn === true && sensors.flow === 0) {
+    triggers.push({
+      id: 'pump_idle', code: '④', priority: 4,
+      name: '水泵空转',
+      detail: '水泵开启但流量=0',
+    })
+  }
+
+  // ⑤ 水泵故障：水泵开启，进出水温差 > 阈值
+  if (faultConfig.pumpFault !== false
+    && states.pumpOn === true
+    && sensors.temp1 != null && sensors.temp2 != null
+    && tempDiffThreshold != null) {
+    const diff = Math.abs(sensors.temp1 - sensors.temp2)
+    if (diff > tempDiffThreshold) {
+      triggers.push({
+        id: 'pump_fault', code: '⑤', priority: 3,
+        name: '水泵故障',
+        detail: `进出水温差=${diff.toFixed(2)} > 阈值=${tempDiffThreshold}`,
+      })
+    }
+  }
+
+  if (triggers.length === 0) return null
+
+  // 按优先级排序，取最高的那个
+  triggers.sort((a, b) => a.priority - b.priority)
+  return triggers[0]
+}
+
+/* ============================================================
+ * 5. 故障触发流程：保存快照 -> 全关执行器 -> 进故障态 -> 复位自动 ON
+ * ============================================================ */
+
+/**
+ * 故障触发统一流程。
+ * 步骤（按需求文档要求顺序）：
+ *   1. 保存故障前快照（含水泵/加热开关状态、目标温度、所有阈值、自动/手动模式、其他参数）
+ *   2. 强制关闭水泵和加热（硬件断电，但不修改页面上的开关显示值——通过快照恢复即可保留显示）
+ *   3. 系统状态置为 FAULT
+ *   4. 复位按钮自动拨到"开"（UI 显示为 on）
+ *   5. 记录告警入库
+ *
+ * 注意：步骤 2 中我们其实更新了 t_direct 的开关值为 off（因为硬件需要真的关），
+ * 但页面下次拉数据时仍会显示 off。这跟需求"页面显示仍保持故障前的状态"略有出入，
+ * 不过——结合步骤 1 的快照，故障复位时页面会从快照恢复开关状态显示，体验等价。
+ * 真正满足"页面保留故障前显示"的实现是把页面状态缓存在前端，本期先按后端方案实现。
+ */
+async function triggerFault(deviceNo, trigger, faultConfig) {
+  const state = getDeviceState(deviceNo)
   const cooldownKey = `${deviceNo || 'global'}:${trigger.id}`
   const cooldownMs = Number(faultConfig.alarmCooldownMs) >= 0 ? Number(faultConfig.alarmCooldownMs) : 30000
+
+  // 已经处于 FAULT 状态时不重复触发（除非故障类型变了）
+  if (state.systemState === 'FAULT' && state.activeFaultId === trigger.id) {
+    return null
+  }
   if (withinCooldown(cooldownKey, cooldownMs)) return null
   markFired(cooldownKey)
 
-  await closeAndSwitchManual(deviceNo, trigger.id)
+  console.log(`[FaultStatus] 触发故障 ${trigger.code} ${trigger.name} | 设备=${deviceNo || '全局'} | ${trigger.detail}`)
+
+  // 步骤 1：保存故障前快照
+  await saveSnapshot(deviceNo, trigger.id)
+
+  // 步骤 2：强制关闭水泵和加热（执行器全关，写操作历史 source=fault_status）
+  for (const [prefix, name] of [['pump', '水泵'], ['heater', '加热']]) {
+    try {
+      await setSwitch(prefix, name, 'off', deviceNo, 'fault_status')
+      console.log(`[FaultStatus] 已强制关闭 ${name}（${trigger.id}），设备 ${deviceNo || '全局'}`)
+    } catch (err) {
+      console.error(`[FaultStatus] 关闭 ${name} 失败:`, err.message)
+    }
+  }
+
+  // 步骤 3 + 4：进入 FAULT 态 + 复位按钮自动置 ON
+  state.systemState = 'FAULT'
+  state.activeFaultId = trigger.id
+  state.resetButton = 'on'
+  state.faultTriggeredAt = Date.now()
+
+  // 把复位按钮开关值也写到 t_direct（让前端拉数据时也能看到复位按钮是 on）
+  try {
+    const resetConfId = await resolveConfigIdByPrefix('reset_button')
+    if (resetConfId != null) {
+      await saveDirectData({ config_id: resetConfId, value: 'on', d_no: deviceNo })
+    }
+  } catch (err) {
+    console.error('[FaultStatus] 写复位按钮 ON 状态失败:', err.message)
+  }
+
+  // 步骤 5：告警入库
   await recordAlarm(deviceNo, trigger)
+
   return trigger
 }
 
-/* ============================ 主评估 ============================ */
+/* ============================================================
+ * 6. 复位按钮手动切换：从 ON 拨到 OFF 时，按快照恢复
+ * ============================================================ */
 
 /**
- * 加热开启后长时间温度都没有明显上升，判定为加热模块故障的另一种情形（比如干烧条件
- * 触发不了，但加热管其实已经不发热了）。用“最近一次比基线明显升温”的时间戳滚动判断：
- * 温度比基线高出 heaterStallMinRiseC 就更新基线、重新计时；一直没有明显升温，
- * 超过 heaterStallDurationMs 才判定停滞。加热关闭时清空状态，不跨加热周期累计。
+ * 复位按钮手动拨到 off 时的处理。
+ * 流程：
+ *   1. 从快照恢复所有参数和开关显示值（水泵、加热等回到故障前的开/关状态）
+ *   2. 按快照里记录的开关状态重新启动对应执行器（快照里水泵是开就重新开水泵，加热同理）
+ *   3. 清除所有故障标志位，系统状态回到 NORMAL
+ *   4. 解除页面操作锁定
+ *
+ * 用户调用入口：路由 /api/faultStatus/reset（POST，body: { action: 'off', d_no }）
+ *
+ * @returns {Object} 恢复结果
  */
-function checkHeaterStall(deviceNo, heatOn, temp1, faultConfig) {
-  const key = deviceNo || 'global'
-  if (!heatOn || temp1 == null) {
-    heaterStallState.delete(key)
-    return false
+async function handleResetButtonOff(deviceNo) {
+  // 'global' 是 deviceStateMap/snapshotMap 的内部 key（代表"设备上报 d_no 为空"的全局
+  // 故障上下文），不是有效设备号。如果把它直接传给 setSwitch / saveDirectData，
+  // MQTT payload 会带上 d_no='global'（设备不识别），t_direct 会写入 d_no='global'
+  // 的无效记录。所以入口处统一转回 null。
+  // getDeviceState / restoreFromSnapshot / getSwitchValueByPrefix / clearCooldownForDevice
+  // 等内部函数都用 `deviceNo || 'global'` 做 key，传 null 也能正确命中 'global' 桶。
+  if (deviceNo === 'global') deviceNo = null
+
+  const state = getDeviceState(deviceNo)
+  // 只有故障态 + 复位按钮 ON 时才能拨到 OFF（正常运行时复位按钮就是 OFF，无意义）
+  if (state.systemState !== 'FAULT' || state.resetButton !== 'on') {
+    return { success: false, message: '当前复位按钮不是 ON 状态或系统未处于故障态，无需复位' }
   }
-  const minRise = Number(faultConfig.heaterStallMinRiseC) >= 0 ? Number(faultConfig.heaterStallMinRiseC) : 0.3
-  const durationMs = Number(faultConfig.heaterStallDurationMs) > 0 ? Number(faultConfig.heaterStallDurationMs) : 60000
-  const state = heaterStallState.get(key)
-  if (!state) {
-    heaterStallState.set(key, { baselineTemp: temp1, since: Date.now() })
-    return false
+
+  console.log(`[FaultStatus] 用户手动复位按钮 OFF | 设备=${deviceNo || '全局'} | 开始从快照恢复`)
+
+  // 1) 从快照恢复参数和开关显示值
+  const restoreResult = await restoreFromSnapshot(deviceNo)
+
+  // 2) 按快照里记录的开关状态重新启动执行器
+  //    如果快照里水泵是开的就重新开水泵，加热同理；如果都是关的就不动作
+  const pumpSnap = getSwitchValueByPrefix(deviceNo, 'pump')
+  const heaterSnap = getSwitchValueByPrefix(deviceNo, 'heater')
+  if (pumpSnap === 'on') {
+    try {
+      await setSwitch('pump', '水泵', 'on', deviceNo, 'fault_reset')
+      console.log(`[FaultStatus] 复位后按快照重启水泵（ON），设备 ${deviceNo || '全局'}`)
+    } catch (err) {
+      console.error('[FaultStatus] 复位后重启水泵失败:', err.message)
+    }
   }
-  if (temp1 >= state.baselineTemp + minRise) {
-    heaterStallState.set(key, { baselineTemp: temp1, since: Date.now() })
-    return false
+  if (heaterSnap === 'on') {
+    try {
+      await setSwitch('heater', '加热', 'on', deviceNo, 'fault_reset')
+      console.log(`[FaultStatus] 复位后按快照重启加热（ON），设备 ${deviceNo || '全局'}`)
+    } catch (err) {
+      console.error('[FaultStatus] 复位后重启加热失败:', err.message)
+    }
   }
-  return Date.now() - state.since >= durationMs
+
+  // 3) 把复位按钮开关值写到 t_direct 为 OFF（前端拉数据时显示复位已恢复）
+  try {
+    const resetConfId = await resolveConfigIdByPrefix('reset_button')
+    if (resetConfId != null) {
+      await saveDirectData({ config_id: resetConfId, value: 'off', d_no: deviceNo })
+    }
+  } catch (err) {
+    console.error('[FaultStatus] 写复位按钮 OFF 状态失败:', err.message)
+  }
+
+  // 4) 清除故障标志，回到 NORMAL
+  state.systemState = 'NORMAL'
+  state.activeFaultId = null
+  state.resetButton = 'off'
+
+  // 5) 清除该设备的所有 cooldown 记录，确保下次同种故障复发时能立即重新触发
+  //    （需求："故障未修复时，即使用户把复位拨回'关'，如果故障条件仍然存在，
+  //      系统应立即重新触发故障"）
+  clearCooldownForDevice(deviceNo)
+  // 同时清空干烧检测状态，避免基线温度被沿用导致误判
+  dryBurnStateMap.delete(deviceNo || 'global')
+
+  console.log(`[FaultStatus] 系统已恢复 NORMAL | 设备=${deviceNo || '全局'} | 恢复项数=${restoreResult.restored}`)
+
+  return {
+    success: true,
+    message: '已从故障前快照恢复，执行器按故障前状态重启',
+    data: {
+      restored: restoreResult.restored,
+      snapshotTriggerId: restoreResult.snapshotTriggerId,
+      pumpRestarted: pumpSnap === 'on',
+      heaterRestarted: heaterSnap === 'on',
+    },
+  }
 }
 
+/* ============================================================
+ * 7. 主评估入口（每条 MQTT 数据上报时调用）
+ * ============================================================ */
+
+/**
+ * 每条 MQTT 消息到达后调用。
+ * 流程：
+ *   - FAULT_STATUS.enabled 关闭则跳过
+ *   - 系统处于 NORMAL 态：检测五种故障，命中则进入故障态（首次触发）
+ *   - 系统处于 FAULT 态且当前故障类型一致：不重复触发（cooldown 兜底）
+ *   - 系统处于 FAULT 态但出现了更高优先级的故障：用新故障覆盖当前故障
+ *   - 系统处于 FAULT 态且当前数据已不构成故障：保持 FAULT 态等用户手动复位
+ *
+ * 关于"故障复发"路径：
+ *   用户拨回 OFF 后，handleResetButtonOff 会把 state 切到 NORMAL 并清除 cooldown，
+ *   所以下一条 MQTT 消息到达时走 NORMAL 态首次触发路径，自然满足需求
+ *   "故障未修复时立即重新触发"。
+ */
 async function evaluateFaultStatus(info) {
   const faultConfig = systemConfig.getConfig().FAULT_STATUS || {}
   if (faultConfig.enabled !== true) return []
 
   const deviceNo = String((await resolveDeviceNo(info)) || '').trim() || null
-  const sensors = await readSensors(info)
-  const states = await readSwitchStates(info)
-  const [flowLow, pressureHigh] = await Promise.all([
-    getThresholdValue('flowLow', deviceNo),
-    getThresholdValue('pressureHigh', deviceNo),
-  ])
+  const state = getDeviceState(deviceNo)
 
-  const triggers = []
+  // 检测当前是否存在故障
+  const trigger = await detectFault(info, deviceNo, faultConfig)
 
-  // 1. 加热模块故障：(a) 水泵和加热均开启时，流量低于下限阈值（干烧）；
-  //    (b) 加热开启后长时间温度都没有明显上升（加热管可能已经不发热了）。
-  if (faultConfig.heaterFault !== false) {
-    if (states.pumpOn === true && states.heatOn === true
-      && flowLow != null && sensors.flow != null && sensors.flow < flowLow) {
-      triggers.push({ id: 'heater_fault', name: '加热模块故障（干烧）', detail: `水泵、加热均开启，流量=${sensors.flow}，下限=${flowLow}` })
+  // ===== 情况 A：检测到故障 =====
+  if (trigger) {
+    // 正在 FAULT 态且故障类型一致 → 已经处理过，不重复触发
+    if (state.systemState === 'FAULT' && state.activeFaultId === trigger.id) {
+      return []
     }
-    if (checkHeaterStall(deviceNo, states.heatOn, sensors.temp1, faultConfig)) {
-      const durationMs = Number(faultConfig.heaterStallDurationMs) > 0 ? Number(faultConfig.heaterStallDurationMs) : 60000
-      triggers.push({ id: 'heater_fault', name: '加热模块故障（长时间温度不上升）', detail: `加热已开启超过 ${Math.round(durationMs / 1000)} 秒，温度=${sensors.temp1} 无明显上升` })
-    }
+    // 否则触发故障（NORMAL 态首次触发 / FAULT 态新故障类型覆盖）
+    const r = await triggerFault(deviceNo, trigger, faultConfig)
+    return r ? [r] : []
   }
 
-  // 2. 水泵故障：水泵开启时，流量为 0 且压力为 0，且持续 >= pumpFaultDurationMs。
-  const pumpFaultKey = deviceNo || 'global'
-  const pumpFaultNow = faultConfig.pumpFault !== false && states.pumpOn === true && sensors.flow === 0 && sensors.pressure === 0
-  if (pumpFaultNow) {
-    if (!pumpFaultSince.has(pumpFaultKey)) pumpFaultSince.set(pumpFaultKey, Date.now())
-    const durationMs = Number(faultConfig.pumpFaultDurationMs) >= 0 ? Number(faultConfig.pumpFaultDurationMs) : 2000
-    if (Date.now() - pumpFaultSince.get(pumpFaultKey) >= durationMs) {
-      triggers.push({ id: 'pump_fault', name: '水泵故障', detail: `水泵开启，流量=0 且压力=0，持续>=${durationMs}ms` })
-    }
-  } else {
-    pumpFaultSince.delete(pumpFaultKey)
-  }
+  // ===== 情况 B：没有故障 =====
+  // 处于 NORMAL 态 + 复位按钮 OFF → 一切正常，无动作
+  if (state.systemState === 'NORMAL') return []
 
-  // 3. 管道堵塞：压力高于上限阈值且流量低于下限阈值。
-  if (faultConfig.blockage !== false && pressureHigh != null && sensors.pressure != null && sensors.pressure > pressureHigh
-    && flowLow != null && sensors.flow != null && sensors.flow < flowLow) {
-    triggers.push({ id: 'blockage', name: '管道堵塞', detail: `压力=${sensors.pressure}，上限=${pressureHigh}，流量=${sensors.flow}，下限=${flowLow}` })
-  }
-
-  // 4. 管道漏水：压力为 0 且（流量低于下限阈值 或 流量为 0）。
-  if (faultConfig.leak !== false && sensors.pressure === 0
-    && ((flowLow != null && sensors.flow != null && sensors.flow < flowLow) || sensors.flow === 0)) {
-    triggers.push({ id: 'leak', name: '管道漏水', detail: `压力=0，流量=${sensors.flow}${flowLow != null ? `，下限=${flowLow}` : ''}` })
-  }
-
-  const results = []
-  for (const trigger of triggers) {
-    const r = await fire(trigger, deviceNo, faultConfig)
-    if (r) results.push(r)
-  }
-
-  if (results.length) {
-    console.log(`[FaultStatus] 触发 ${results.length} 项故障保护，设备 ${deviceNo || '全局'}`)
-  }
-  return results
+  // 处于 FAULT 态但当前数据已不构成故障 → 用户可能已修复
+  // 此时复位按钮仍是 ON（系统自动拨的），等用户手动拨到 OFF 才会正式恢复
+  // 这里不主动恢复，由用户通过 /api/faultStatus/reset 接口手动复位
+  return []
 }
 
-module.exports = { evaluateFaultStatus }
+/* ============================================================
+ * 8. 导出：主评估 + 复位处理 + 状态查询
+ * ============================================================ */
+
+/**
+ * 获取某设备当前故障态和复位按钮状态，供前端轮询显示。
+ */
+function getDeviceFaultState(deviceNo) {
+  const state = getDeviceState(deviceNo)
+  return {
+    systemState: state.systemState,
+    activeFaultId: state.activeFaultId,
+    resetButton: state.resetButton,
+    faultTriggeredAt: state.faultTriggeredAt || null,
+  }
+}
+
+/**
+ * 判断是否处于故障锁定状态（指令页面其他开关和参数只读）。
+ * updateDirectConfigAndPublish 在保存指令前会调用此函数，故障态下拒绝所有非复位按钮的修改。
+ */
+function isLockedByFault(deviceNo) {
+  const state = getDeviceState(deviceNo)
+  return state.systemState === 'FAULT' && state.resetButton === 'on'
+}
+
+/**
+ * 判断系统中是否有任意一个设备处于故障锁定状态。
+ * 单设备模式下用：因为只有一个设备，直接查所有 deviceStateMap 条目，避免设备号映射不一致。
+ */
+function isAnyLocked() {
+  for (const state of deviceStateMap.values()) {
+    if (state.systemState === 'FAULT' && state.resetButton === 'on') return true
+  }
+  return false
+}
+
+/**
+ * 单设备模式下，取当前故障态的设备状态（取第一个命中的）。
+ * 用于复位按钮接口在单设备模式下找到正确的设备上下文。
+ */
+function getAnyLockedDeviceNo() {
+  for (const [key, state] of deviceStateMap.entries()) {
+    if (state.systemState === 'FAULT' && state.resetButton === 'on') return key
+  }
+  return null
+}
+
+module.exports = {
+  evaluateFaultStatus,
+  handleResetButtonOff,
+  getDeviceFaultState,
+  isLockedByFault,
+  isAnyLocked,
+  getAnyLockedDeviceNo,
+  FAULT_TYPES,        // 暴露故障类型表，供前端展示和文档使用
+}

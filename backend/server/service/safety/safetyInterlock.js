@@ -29,6 +29,7 @@ const { firstValue, getTopic, buildSwitchPayload } = require('../../utils/protoc
 const { resolveDeviceNo, resolveFieldAliases } = require('../../utils/mappedData')
 const { saveDirectData, getDirectValue } = require('../directData/saveDirectConfig')
 const { saveOperationHistory } = require('../operationHistory/saveOperationHistory')
+const { nowLocalDateTime, formatLocalDateTime } = require('../../utils/helper')
 
 /** 异常最大值哨兵：超过此值视为传感器异常（掉线/短路）。 */
 const ABNORMAL_MAX = 9999
@@ -84,7 +85,9 @@ async function resolveThresholdConfigId(slot) {
 }
 
 async function getModeConfigId() {
-  return resolveConfigIdByPrefix('mode')
+  // auto→manual 模式切换判定：跟 PID/autoControl/layeredControl 保持同一开关语义，
+  // 用 preffix='auto_control_enabled' 而不是 'mode'，保证跟指令中心配置一致。
+  return resolveConfigIdByPrefix('auto_control_enabled')
 }
 
 async function toNumber(raw) {
@@ -148,7 +151,8 @@ async function findSwitchConfig(prefix, name) {
 /* ============================ 告警与联锁 ============================ */
 
 async function recordAlarm(deviceNo, trigger, interlocked) {
-  const time = new Date().toISOString().slice(0, 19).replace('T', ' ')
+  // 使用本地时区时间，避免 toISOString() 的 UTC 时差（8小时偏差）
+  const time = nowLocalDateTime()
   const suffix = interlocked
     ? '，已执行安全联锁（关闭水泵和加热）'
     : '，安全联锁已记录（未执行关闭）'

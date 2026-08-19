@@ -36,6 +36,7 @@ const { saveDirectData, getDirectValue } = require('./saveDirectConfig')
 const { saveOperationHistory } = require('../operationHistory/saveOperationHistory')
 const systemConfig = require('../../config/systemConfig')
 const { getTopic, buildSwitchPayload } = require('../../utils/protocol')
+const { isLockedByFault, isAnyLocked, getAnyLockedDeviceNo, handleResetButtonOff } = require('../faultStatus/faultStatus')
 
 // ============================================================
 // 【模式切换变量】SINGLE_DEVICE_MODE
@@ -81,6 +82,20 @@ async function buildPayload(configId, value) {
 }
 
 /**
+ * 判断给定 config_id 是否对应"复位按钮"开关（preffix = reset_button）。
+ * 复位按钮有独立的状态机，不能走常规指令更新流程。
+ */
+async function isResetButtonConfig(configId) {
+  const [rows] = await promisePool.query(
+    "SELECT preffix FROM t_direct_config WHERE id = ? AND f_type = '1' LIMIT 1",
+    [configId]
+  )
+  if (!rows.length) return false
+  const prefix = String(rows[0].preffix || '').trim().toLowerCase()
+  return prefix === 'reset_button' || prefix === 'reset' || prefix === 'reset_btn'
+}
+
+/**
  * 处理指令更新请求
  * POST /directData/update
  * 
@@ -115,6 +130,65 @@ module.exports = async (req, res) => {
 
     const singleDeviceMode = isSingleDeviceMode()
     console.log('[DirectUpdate] 收到指令:', { config_id, value, d_no, mode: singleDeviceMode ? '单设备' : '多设备' })
+
+    // ========== 故障锁定 + 复位按钮联动 ==========
+    // 复位按钮有独立状态机，必须最先拦截：
+    //   - 拨到 off（用户人工修复后复位）：调 handleResetButtonOff 走快照恢复流程
+    //   - 拨到 on：拒绝，复位按钮只能由系统在故障触发时自动拨到 on，不能由用户手动设为 on
+    //     （正常运行时复位按钮始终为 off）
+    // 其他开关和参数：故障态且复位按钮为 on 期间全部锁定，只读不可改
+    const isResetBtn = await isResetButtonConfig(config_id)
+    if (isResetBtn) {
+      const v = String(value).trim().toLowerCase()
+      if (['off', 'close', 'closed', '0', 'false'].includes(v)) {
+        // 用户把复位按钮拨到 off -> 触发快照恢复
+        // 单设备模式下用 getAnyLockedDeviceNo 找到正确的设备上下文，
+        // 避免设备号映射不一致导致找不到故障态
+        // 多设备模式下用前端传的 d_no
+        let resetDNo = null
+        if (singleDeviceMode) {
+          resetDNo = getAnyLockedDeviceNo() ?? await getDefaultDeviceId()
+        } else {
+          resetDNo = (d_no && d_no !== 'null' && d_no !== 'undefined') ? String(d_no).trim() : null
+        }
+        const result = await handleResetButtonOff(resetDNo)
+        return res.json({
+          success: result.success,
+          message: result.message,
+          data: { status: 'fault_reset', ...result.data }
+        })
+      }
+      // 用户尝试手动拨到 on -> 拒绝
+      return res.status(403).json({
+        success: false,
+        message: '复位按钮只能由系统在故障触发时自动拨到"开"，不能手动置为开',
+        data: { status: 'rejected' }
+      })
+    }
+
+    // 非复位按钮的其他开关/参数：故障态下锁定，禁止修改
+    // 单设备模式下：系统只有一个设备，任意一把锁住就拒绝
+    // 多设备模式下：按 d_no 精确匹配
+    if (singleDeviceMode) {
+      if (isAnyLocked()) {
+        console.warn(`[DirectUpdate] 指令 ${config_id} 被故障锁定拒绝（单设备模式）`)
+        return res.status(403).json({
+          success: false,
+          message: '系统处于故障态，指令页面已锁定，请先把复位按钮拨到"关"以恢复',
+          data: { status: 'locked' }
+        })
+      }
+    } else {
+      const lockDNo = (d_no && d_no !== 'null' && d_no !== 'undefined') ? String(d_no).trim() : null
+      if (isLockedByFault(lockDNo)) {
+        console.warn(`[DirectUpdate] 指令 ${config_id} 被故障锁定拒绝（设备=${lockDNo || '全局'}）`)
+        return res.status(403).json({
+          success: false,
+          message: '系统处于故障态，指令页面已锁定，请先把复位按钮拨到"关"以恢复',
+          data: { status: 'locked' }
+        })
+      }
+    }
 
     // 1. 构建 MQTT 消息
     const payload = await buildPayload(config_id, value)
