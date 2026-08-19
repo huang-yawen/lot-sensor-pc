@@ -5,7 +5,9 @@
  * 当本次计量周期的累计流量 >= 目标值时，关闭水泵和加热，整套系统自动停机，完成定量换热。
  *
  * 总流量只做累计统计，不参与水泵/加热的实时调节，仅用于停机判定。
- * 每次进入自动模式会开启新的计量周期；切回手动模式则重置计量周期。
+ * 每次打开“定量停机”开关会开启新的计量周期；关闭开关则重置计量周期
+ * （项目里已经没有独立的设备“自动/手动模式”概念，改为直接跟着本模块自己的
+ * enabled 开关走）。
  * 【配置中心关联】QUANTITY_SHUTDOWN 每次评估动态读取。
  */
 const systemConfig = require('../../config/systemConfig')
@@ -22,8 +24,8 @@ const FLOW_FIELD = 'field3'
 const flowAccumulator = new Map()
 /** 每个设备是否已因定量停机触发（避免反复发送关闭指令）。 */
 const shutdownDone = new Map()
-/** 每个设备的当前模式（用于识别自动/手动切换，重置计量周期）。 */
-const lastMode = new Map()
+/** 每个设备上一次评估时“定量停机”开关是否启用（用于识别开关切换，重置计量周期）。 */
+const lastEnabled = new Map()
 
 async function resolveConfigIdByPrefix(prefix) {
   if (!prefix) return null
@@ -32,17 +34,6 @@ async function resolveConfigIdByPrefix(prefix) {
     [prefix]
   )
   return rows[0]?.id ?? null
-}
-
-async function getMode(deviceNo) {
-  const configId = await resolveConfigIdByPrefix('mode')
-  if (configId == null) return null
-  const value = await getDirectValue({ config_id: configId, d_no: deviceNo })
-  if (value == null) return null
-  const v = String(value).trim().toLowerCase()
-  if (['on', 'auto', 'open', '1', 'true'].includes(v)) return 'auto'
-  if (['off', 'manual', 'close', '0', 'false'].includes(v)) return 'manual'
-  return null
 }
 
 async function toNumber(raw) {
@@ -99,31 +90,29 @@ async function shutDown(deviceNo) {
  */
 async function evaluateQuantityShutdown(info) {
   const config = systemConfig.getConfig().QUANTITY_SHUTDOWN || {}
-  if (config.enabled !== true) return null
-
   const deviceNo = String((await resolveDeviceNo(info)) || '').trim() || null
-  const target = Number(config.totalFlowTarget)
-  if (!Number.isFinite(target) || target <= 0) return null
 
-  const mode = await getMode(deviceNo)
-  const prevMode = lastMode.get(deviceNo)
-  lastMode.set(deviceNo, mode)
+  const wasEnabled = lastEnabled.get(deviceNo)
+  lastEnabled.set(deviceNo, config.enabled === true)
 
-  // 切回手动模式：重置计量周期。
-  if (mode !== 'auto') {
-    if (prevMode === 'auto') {
+  // 关闭定量停机：重置计量周期。
+  if (config.enabled !== true) {
+    if (wasEnabled === true) {
       flowAccumulator.set(deviceNo, 0)
       shutdownDone.set(deviceNo, false)
-      console.log(`[QuantityShutdown] 设备 ${deviceNo || '全局'} 退出自动模式，计量周期重置`)
+      console.log(`[QuantityShutdown] 设备 ${deviceNo || '全局'} 定量停机已关闭，计量周期重置`)
     }
     return null
   }
 
-  // 进入自动模式：开始新的计量周期。
-  if (prevMode !== 'auto') {
+  const target = Number(config.totalFlowTarget)
+  if (!Number.isFinite(target) || target <= 0) return null
+
+  // 打开定量停机：开始新的计量周期。
+  if (wasEnabled !== true) {
     flowAccumulator.set(deviceNo, 0)
     shutdownDone.set(deviceNo, false)
-    console.log(`[QuantityShutdown] 设备 ${deviceNo || '全局'} 进入自动模式，开始计量`)
+    console.log(`[QuantityShutdown] 设备 ${deviceNo || '全局'} 定量停机已开启，开始计量`)
   }
 
   // 已触发过停机，不再累计和重复下发。

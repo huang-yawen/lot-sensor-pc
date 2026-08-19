@@ -12,22 +12,26 @@ function getOnlineLabel(value) {
 }
 
 /**
- * 消息没有携带设备号候选字段（DEVICE_ID_FIELDS）时，回退到 t_device 表里第一个
- * 已注册设备的编号，与 behaviorRealtimeRepository/errorHistoryRepository 的兜底逻辑保持一致，
- * 避免单设备场景下上报数据里没有设备号字段就存成 NULL。
+ * 上报数据里的设备号候选字段（DEVICE_ID_FIELDS，包含 id）必须能在 t_device.number
+ * 里找到完全一致的注册记录，才认为是这个设备的数据；找不到候选字段、或候选字段的值
+ * 没有匹配的注册设备，都返回 null——调用方据此跳过保存/上线判断，不再兜底成
+ * “数据库里第一个设备”，避免把未注册/编号对不上的数据错记到别的设备上。
  */
 async function resolveDeviceNo(info) {
   const reported = getDeviceNo(info)
-  if (reported != null) return reported
+  if (reported == null) return null
+  const normalized = String(reported).trim()
+  if (!normalized) return null
   try {
     const [rows] = await promisePool.query(
-      'SELECT `number` FROM `t_device` ORDER BY `id` ASC LIMIT 1'
+      'SELECT 1 FROM `t_device` WHERE TRIM(`number`) = ? LIMIT 1',
+      [normalized]
     )
-    if (rows && rows.length > 0) return String(rows[0].number).trim()
+    return rows.length > 0 ? normalized : null
   } catch (err) {
-    console.error('[MappedData] 查询默认设备编号失败:', err.message)
+    console.error('[MappedData] 校验设备编号失败:', err.message)
+    return null
   }
-  return null
 }
 
 const MAPPER_TABLE_BY_DATA_TABLE = {
@@ -57,6 +61,12 @@ async function resolveFieldAliases(sourceTable, sourceField) {
  * 不再需要为每道赛题改 Node.js 中的硬编码字段。
  */
 async function saveMappedData({ table, mapperTable, info, dateTime }) {
+  const deviceNo = await resolveDeviceNo(info)
+  if (!deviceNo) {
+    console.warn(`[MappedData] 上报数据的设备编号未匹配已注册设备，跳过保存（${table}）`)
+    return { deviceNo: null, mappedFieldCount: 0, skipped: true }
+  }
+
   const [mappers] = await promisePool.query(
     `SELECT db_name, p_name FROM ${mapperTable} WHERE visible = 1`
   )
@@ -67,7 +77,7 @@ async function saveMappedData({ table, mapperTable, info, dateTime }) {
   }
 
   const columns = ['d_no']
-  const values = [await resolveDeviceNo(info)]
+  const values = [deviceNo]
 
   for (const mapper of mappers) {
     const dbName = String(mapper.db_name || '').trim()

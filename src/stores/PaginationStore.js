@@ -19,8 +19,10 @@ export const PaginationStore = defineStore("paginationStore", () => {
     const loading = ref(false)
     const type = ref('数据监测中心')
 
-        const fetchPaginationData = async (params = {}) => {
-        loading.value = true
+        // silent=true 用于 WebSocket 推送触发的后台静默刷新，不切换 loading，
+        // 避免表格里的"加载中..."跟着推送频率一直闪烁。
+        const fetchPaginationData = async (params = {}, { silent = false } = {}) => {
+        if (!silent) loading.value = true
         try {
             // 传感器历史和行为历史共用分页接口，通过 type 切换数据表。
             const queryParams = {
@@ -59,7 +61,7 @@ export const PaginationStore = defineStore("paginationStore", () => {
         } catch (error) {
             console.error('请求失败:', error)
         } finally {
-            loading.value = false
+            if (!silent) loading.value = false
         }
     }
     return {

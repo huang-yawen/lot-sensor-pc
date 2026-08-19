@@ -1,10 +1,10 @@
 /** 【文件职责】行为实时数据仓储层。
  * 【配置中心关联】无直接读取。 */
 const promisePool = require('../../config/dbPool')
-const { saveMappedData } = require('../../utils/mappedData')
+const { saveMappedData, resolveDeviceNo } = require('../../utils/mappedData')
 const { saveOperationHistory } = require('../../service/operationHistory/saveOperationHistory')
 const { saveDirectData, getDirectValue } = require('../../service/directData/saveDirectConfig')
-const { getDeviceNo: getConfiguredDeviceNo, getReportedTime, toWireValue, fromWireValue } = require('../../utils/protocol')
+const { getReportedTime, toWireValue, fromWireValue } = require('../../utils/protocol')
 
 /** 开关类型指令（config_id=0,1,2,4,9），t_direct 存 on/off，MQTT 发 open/close */
 const SWITCH_CONFIG_IDS = new Set([0, 1, 2, 4, 9])
@@ -116,29 +116,14 @@ async function detectAndRecordChanges(info, d_no) {
     }
 }
 
-/**
- * 从行为数据中提取设备编号，优先级：info.VID > info.d_no > info.DNO > 从 t_device 表取第一个
- */
-async function getDeviceNo(info) {
-    const reported = getConfiguredDeviceNo(info)
-    if (reported != null) return String(reported).trim()
-    // 从 t_device 表取第一个设备编号
-    try {
-        const [rows] = await promisePool.query(
-            'SELECT `number` FROM `t_device` ORDER BY `id` ASC LIMIT 1'
-        )
-        if (rows && rows.length > 0) {
-            return String(rows[0].number).trim()
-        }
-    } catch (err) {
-        console.error('[BehaviorRealtime] 查询默认设备编号失败:', err.message)
-    }
-    return 'default_device' // 实在取不到才用兜底值
-}
-
 async function saveBehaviorData(info) {
-    // 从行为数据提取设备编号，不再硬编码
-    const d_no = await getDeviceNo(info)
+    // 设备编号必须能在 t_device.number 匹配上（见 utils/mappedData.js resolveDeviceNo），
+    // 匹配不上就跳过保存，不再兜底成数据库里第一个设备或 'default_device'。
+    const d_no = await resolveDeviceNo(info)
+    if (!d_no) {
+        console.warn('[BehaviorRealtime] 设备编号未匹配已注册设备，跳过保存')
+        return false
+    }
 
     try {
         const mappedInfo = { ...info, d_no }

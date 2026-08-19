@@ -1,5 +1,6 @@
 /**
- * 【文件职责】正常状况联动（自动控制）服务，仅在“自动模式”下运行。
+ * 【文件职责】正常状况联动（自动控制）服务，仅在 AUTO_CONTROL.enabled 开启时运行
+ * （项目里已经没有独立的设备“自动/手动模式”概念）。
  *
  * 自动启停水泵和加热，与安全联锁（safetyInterlock）相互独立：
  *   - 安全联锁负责“异常时强制关闭”（保护）。
@@ -20,6 +21,7 @@ const { firstValue, getTopic, buildSwitchPayload } = require('../../utils/protoc
 const { resolveDeviceNo, resolveFieldAliases } = require('../../utils/mappedData')
 const { getDirectValue, saveDirectData } = require('../directData/saveDirectConfig')
 const { saveOperationHistory } = require('../operationHistory/saveOperationHistory')
+const { isPidEnabled } = require('../pidHeating/pidHeating')
 
 /** 异常最大值哨兵。 */
 const ABNORMAL_MAX = 9999
@@ -80,17 +82,6 @@ async function getThresholdValue(slot, deviceNo) {
   const configId = await resolveThresholdConfigId(slot)
   if (configId == null) return null
   return toNumber(await getDirectValue({ config_id: configId, d_no: deviceNo }))
-}
-
-async function getMode(deviceNo) {
-  const configId = await resolveConfigIdByPrefix('mode')
-  if (configId == null) return null
-  const value = await getDirectValue({ config_id: configId, d_no: deviceNo })
-  if (value == null) return null
-  const v = String(value).trim().toLowerCase()
-  if (['on', 'auto', 'open', '1', 'true'].includes(v)) return 'auto'
-  if (['off', 'manual', 'close', '0', 'false'].includes(v)) return 'manual'
-  return null
 }
 
 async function readSensors(info) {
@@ -233,8 +224,6 @@ async function evaluateAutoControl(info) {
   if (config.enabled !== true) return []
 
   const deviceNo = String((await resolveDeviceNo(info)) || '').trim() || null
-  const mode = await getMode(deviceNo)
-  if (mode !== 'auto') return []
 
   const sensors = await readSensors(info)
   const states = await readSwitchStates(info)
@@ -245,7 +234,7 @@ async function evaluateAutoControl(info) {
   const faults = await detectFaults(sensors, deviceNo, states)
 
   const actions = []
-  const result = { mode, targetTemp, faults, sensors }
+  const result = { targetTemp, faults, sensors }
 
   // 水泵控制。
   if (config.pump !== false) {
@@ -257,8 +246,9 @@ async function evaluateAutoControl(info) {
     }
   }
 
-  // 加热控制。PID_HEATING.enabled=true 时改由 service/pidHeating/pidHeating.js 接管加热，这里跳过。
-  if (config.heater !== false && rootConfig.PID_HEATING?.enabled !== true) {
+  // 加热控制。“自动控制开关”（指令配置页面）开启时改由 service/pidHeating/pidHeating.js
+  // 接管加热，这里跳过，避免两边抢控制权。
+  if (config.heater !== false && !(await isPidEnabled(deviceNo))) {
     const desired = decideHeater(sensors, targetTemp, faults, states, diffOpenThreshold)
     result.heaterDesired = desired
     if (desired && states.heatOn !== undefined && states.heatOn !== (desired === 'on') && canAct(deviceNo, 'heater')) {

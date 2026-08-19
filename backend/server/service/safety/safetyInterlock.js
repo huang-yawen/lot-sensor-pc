@@ -9,6 +9,8 @@
  *   4. 温差过大（> tempDiffThreshold）
  *   5. 进入手动模式（自动 -> 手动切换时安全关闭一次）
  *   6. 任一传感器数值掉线（长期无数据上报 / 长期为 0 / 异常最大值）
+ *   7. 没打开水泵却打开了加热（水泵、加热开关状态均明确上报时才判断，避免消息里
+ *      缺行为字段时误触发）
  *
  * 阈值不是写死的，而是从指令中心 t_direct 实时读取（按 preffix 或名称匹配
  * t_direct_config），用户在页面上改阈值后立即生效。
@@ -120,6 +122,18 @@ async function readSensors(info) {
   return result
 }
 
+/** 读取水泵/加热开关的设备上报状态（跟 autoControl.js/layeredControl.js 保持一致）。 */
+async function readSwitchStates(info) {
+  const pumpAliases = await resolveFieldAliases('t_behavior_data', 'field2')
+  const heatAliases = await resolveFieldAliases('t_behavior_data', 'field3')
+  const toOn = v => {
+    if (v == null) return null
+    const s = String(v).trim().toLowerCase()
+    return ['on', 'open', '1', 'true'].includes(s)
+  }
+  return { pumpOn: toOn(firstValue(info, pumpAliases)), heatOn: toOn(firstValue(info, heatAliases)) }
+}
+
 /** 按 preffix/名称找开关类（f_type=1）配置。名称用 LIKE 兼容“水泵/水泵开关”等写法。 */
 async function findSwitchConfig(prefix, name) {
   const byPrefix = await resolveConfigIdByPrefix(prefix)
@@ -208,6 +222,7 @@ async function fire(trigger, deviceNo, safetyConfig, { interlock }) {
 
 async function evaluateValueConditions(info, deviceNo, safetyConfig) {
   const sensors = await readSensors(info)
+  const states = await readSwitchStates(info)
   const triggers = []
 
   // 1. 流量低于下限阈值或流量为 0（含异常最大值）。
@@ -255,6 +270,12 @@ async function evaluateValueConditions(info, deviceNo, safetyConfig) {
     if (diff > Number(safetyConfig.tempDiffThreshold)) {
       triggers.push({ id: 'temp_diff', name: '温差过大', detail: `温差=${diff.toFixed(2)} > ${safetyConfig.tempDiffThreshold}℃` })
     }
+  }
+
+  // 7. 没打开水泵不能打开加热：水泵确认关闭时，加热却确认开启。只在两个开关状态都明确
+  // 上报（不是 null/未知）时判断，避免消息里缺行为字段（如纯传感器消息）时误触发。
+  if (safetyConfig.heaterWithoutPump && states.heatOn === true && states.pumpOn === false) {
+    triggers.push({ id: 'heater_without_pump', name: '未开水泵却开启加热', detail: `水泵=关，加热=开` })
   }
 
   return triggers

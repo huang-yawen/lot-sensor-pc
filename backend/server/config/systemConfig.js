@@ -335,14 +335,16 @@ const defaultConfig = {
   // --------------------------------------------------------------------------
   // 普通数据包中“设备编号”的候选字段，按数组顺序查找，大小写不敏感。
   // 例如设备上报 {"deviceId":"water-01"} 时会命中 deviceId。
-  DEVICE_ID_FIELDS: ['VID', 'deviceId', 'device_id', 'd_no', 'DNO'],
+  // id 排第一个：现场设备上报的字段就叫 id（值是设备的硬件编号，需要跟 t_device.number
+  // 完全一致才会被采信，见 utils/mappedData.js resolveDeviceNo）。
+  DEVICE_ID_FIELDS: ['id', 'VID', 'deviceId', 'device_id', 'd_no', 'DNO'],
 
   // 普通数据包中“采集时间”的候选字段，按顺序查找；都没有时使用服务器当前时间。
   // 推荐设备直接上报 YYYY-MM-DD HH:mm:ss，避免现场时区解析差异。
   TIME_FIELDS: ['Time', 'time', 'timestamp', 'c_time'],
 
   // JSON 格式心跳中的设备编号候选字段。纯文本心跳（如 water-01）也支持。
-  HEARTBEAT_DEVICE_FIELDS: ['VID', 'deviceId', 'device_id', 'd_no', 'DNO'],
+  HEARTBEAT_DEVICE_FIELDS: ['id', 'VID', 'deviceId', 'device_id', 'd_no', 'DNO'],
 
   // 页面/数据库控制值 -> 设备真实值的映射。
   // 示例：页面存 on，设备协议要求 open，则下发 open；设备回报 open 时反向存为 on。
@@ -426,7 +428,9 @@ const defaultConfig = {
   //   tempDiffThreshold   - 温差阈值（℃），tempDiff=true 时生效
   //   manualMode          - 进入手动模式时安全关闭一次（人工修复）
   //   sensorOffline       - 任一传感器掉线（长期无数据上报 / 长期为 0 / 异常最大值）
+  //   heaterWithoutPump   - 没打开水泵却打开了加热（水泵、加热开关状态均明确上报时才判断）
   //   alarmCooldownMs     - 同一告警的冷却时间（毫秒），避免高频重复触发
+  //   showOnErrorPage     - 故障记录页面是否显示“安全联锁记录”表格（只控制前端展示，不影响联锁本身是否生效）
   // 模式语义：安全联锁在自动和手动模式下全程生效——触发任一启用条件都强制关闭水泵
   // 和加热。自动模式由自动控制按目标启停，手动模式人工开关，但安全联锁不会因手动
   // 强制开启而失效（如手动开加热但检测无水流仍会强制关闭加热）。
@@ -439,7 +443,9 @@ const defaultConfig = {
     tempDiffThreshold: 3,
     manualMode: true,
     sensorOffline: true,
+    heaterWithoutPump: true,
     alarmCooldownMs: 30000,
+    showOnErrorPage: true,
   },
 
   // --------------------------------------------------------------------------
@@ -481,7 +487,7 @@ const defaultConfig = {
   //   ---- 二、单一传感器独立控制层 ----
   //   tempSingle               - 温度：任一温度低于目标/下限开加热，高于目标/上限关加热
   //   tempHysteresis           - 温度滞回回差（℃），开、关阈值各向外扩这么多，避免频繁通断
-  //   flowSingle                - 流量：区间内开水泵，低于下限或高于上限关水泵
+  //   flowSingle                - 流量：区间内或低于下限开水泵（低于下限也要开泵才能把流量拉回来），高于上限关水泵保护
   //   pressureSingle            - 压力：低于下限开水泵，高于上限关水泵、关加热
   //   ---- 三、多传感器融合联动层 ----
   //   dualTemp                 - 双温度：温差超过 dualTempDiffThreshold 打开水泵
@@ -524,7 +530,10 @@ const defaultConfig = {
   // 与安全联锁（SAFETY_INTERLOCK）相互独立、都全程生效，条件可能同时命中（多层防护叠加，
   // 不冲突）。每条条件可用布尔值独立开关：
   //   enabled              - 故障状态总开关
-  //   heaterFault          - 加热模块故障：水泵和加热均开启时，流量低于下限阈值（干烧）
+  //   heaterFault          - 加热模块故障：(a) 水泵和加热均开启时，流量低于下限阈值（干烧）；
+  //                          (b) 加热开启后长时间温度都没有明显上升
+  //   heaterStallDurationMs - 加热开启后判定“温度不上升”所需的持续时长（毫秒），默认 60000
+  //   heaterStallMinRiseC   - 温度上升超过这个值（℃）就算“有在升温”，重新计时，默认 0.3
   //   pumpFault            - 水泵故障：水泵开启时，流量为 0 且压力为 0，且持续 >= pumpFaultDurationMs
   //   pumpFaultDurationMs  - 水泵故障判定所需的持续时长（毫秒），默认 2000
   //   blockage             - 管道堵塞：压力高于上限阈值且流量低于下限阈值
@@ -533,6 +542,8 @@ const defaultConfig = {
   FAULT_STATUS: {
     enabled: false,
     heaterFault: true,
+    heaterStallDurationMs: 60000,
+    heaterStallMinRiseC: 0.3,
     pumpFault: true,
     pumpFaultDurationMs: 2000,
     blockage: true,
@@ -764,7 +775,7 @@ function validate(config) {
   if (!['batch', 'single'].includes(config.INTELLIGENT_JUDGMENT.requestMode)) throw new Error('INTELLIGENT_JUDGMENT.requestMode 只能是 batch 或 single')
   const safety = config.SAFETY_INTERLOCK
   if (!safety || typeof safety !== 'object' || Array.isArray(safety)) throw new Error('SAFETY_INTERLOCK 必须是 JSON 对象')
-  for (const key of ['enabled', 'flowLow', 'pressureHigh', 'tempHigh', 'tempDiff', 'manualMode', 'sensorOffline']) {
+  for (const key of ['enabled', 'flowLow', 'pressureHigh', 'tempHigh', 'tempDiff', 'manualMode', 'sensorOffline', 'heaterWithoutPump', 'showOnErrorPage']) {
     if (typeof safety[key] !== 'boolean') throw new Error(`SAFETY_INTERLOCK.${key} 必须是布尔值`)
   }
   if (!Number.isFinite(safety.tempDiffThreshold)) throw new Error('SAFETY_INTERLOCK.tempDiffThreshold 必须是数字')
@@ -796,6 +807,8 @@ function validate(config) {
     if (typeof fault[key] !== 'boolean') throw new Error(`FAULT_STATUS.${key} 必须是布尔值`)
   }
   if (!Number.isFinite(fault.pumpFaultDurationMs) || fault.pumpFaultDurationMs < 0) throw new Error('FAULT_STATUS.pumpFaultDurationMs 必须是大于等于 0 的数字')
+  if (!Number.isFinite(fault.heaterStallDurationMs) || fault.heaterStallDurationMs < 0) throw new Error('FAULT_STATUS.heaterStallDurationMs 必须是大于等于 0 的数字')
+  if (!Number.isFinite(fault.heaterStallMinRiseC) || fault.heaterStallMinRiseC < 0) throw new Error('FAULT_STATUS.heaterStallMinRiseC 必须是大于等于 0 的数字')
   if (!Number.isFinite(fault.alarmCooldownMs) || fault.alarmCooldownMs < 0) throw new Error('FAULT_STATUS.alarmCooldownMs 必须是大于等于 0 的数字')
   const pid = config.PID_HEATING
   if (!pid || typeof pid !== 'object' || Array.isArray(pid)) throw new Error('PID_HEATING 必须是 JSON 对象')

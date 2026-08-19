@@ -53,6 +53,16 @@
       </el-form>
     </section>
 
+    <section class="safety-section">
+      <div class="section-heading">
+        <div>
+          <h3>故障记录页面显示</h3>
+          <p>只控制“故障记录”页面下方是否显示“安全联锁记录”表格，不影响安全联锁本身是否生效。</p>
+        </div>
+        <el-switch v-model="form.showOnErrorPage" active-text="显示安全联锁记录表格" />
+      </div>
+    </section>
+
     <div class="save-bar">
       <el-button :loading="loading" @click="load">刷新</el-button>
       <el-button type="primary" :loading="saving" @click="save">保存并应用</el-button>
@@ -77,7 +87,9 @@ const defaultForm = () => ({
   tempDiffThreshold: 3,
   manualMode: true,
   sensorOffline: true,
+  heaterWithoutPump: true,
   alarmCooldownMs: 30000,
+  showOnErrorPage: true,
 })
 
 const form = reactive(defaultForm())
@@ -89,6 +101,7 @@ const conditions = [
   { key: 'tempDiff', title: '温差过大', description: '两路温度差的绝对值超过温差阈值。' },
   { key: 'manualMode', title: '进入手动模式（人工修复）', description: '控制模式从自动切换到手动时，安全关闭一次水泵和加热。' },
   { key: 'sensorOffline', title: '任一传感器数值掉线', description: '设备长时间无数据上报（心跳超时）时判定离线。' },
+  { key: 'heaterWithoutPump', title: '没打开水泵却打开了加热', description: '水泵、加热开关状态均明确上报时才判断，避免消息里缺行为字段时误触发。' },
 ]
 
 async function load() {

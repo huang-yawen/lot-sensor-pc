@@ -17,6 +17,7 @@ const { firstValue, getTopic, buildSwitchPayload } = require('../../utils/protoc
 const { resolveDeviceNo, resolveFieldAliases } = require('../../utils/mappedData')
 const { getDirectValue, saveDirectData } = require('../directData/saveDirectConfig')
 const { saveOperationHistory } = require('../operationHistory/saveOperationHistory')
+const { isPidEnabled } = require('../pidHeating/pidHeating')
 
 /** 异常最大值哨兵：超过此值视为传感器异常（掉线/短路）。 */
 const ABNORMAL_MAX = 9999
@@ -77,17 +78,6 @@ async function getThresholdValue(slot, deviceNo) {
   const configId = await resolveThresholdConfigId(slot)
   if (configId == null) return null
   return toNumber(await getDirectValue({ config_id: configId, d_no: deviceNo }))
-}
-
-async function getMode(deviceNo) {
-  const configId = await resolveConfigIdByPrefix('mode')
-  if (configId == null) return null
-  const value = await getDirectValue({ config_id: configId, d_no: deviceNo })
-  if (value == null) return null
-  const v = String(value).trim().toLowerCase()
-  if (['on', 'auto', 'open', '1', 'true'].includes(v)) return 'auto'
-  if (['off', 'manual', 'close', '0', 'false'].includes(v)) return 'manual'
-  return null
 }
 
 async function readSensors(info) {
@@ -183,13 +173,14 @@ function decideTempSingle(sensors, targetTemp, tempLow, tempHigh, hysteresis) {
   return null
 }
 
-/** 流量：(1)区间内->打开水泵 (2)低于下限->关闭水泵 (3)高于上限->关闭水泵。 */
+/**
+ * 流量：(1)区间内->打开水泵 (2)低于下限->打开水泵（水泵关闭正是流量低的原因，关泵会
+ * 导致流量永远起不来，所以低于下限也要开泵，让流量恢复） (3)高于上限->关闭水泵（保护）。
+ */
 function decideFlowSingle(flow, flowLow, flowHigh) {
   if (flow == null) return null
-  if (flowLow != null && flow < flowLow) return 'off'
   if (flowHigh != null && flow > flowHigh) return 'off'
-  if (flowLow != null && flowHigh != null && flow >= flowLow && flow <= flowHigh) return 'on'
-  return null
+  return 'on'
 }
 
 /** 压力：(1)低于下限->打开水泵 (2)高于上限->关闭水泵、关闭加热。 */
@@ -275,8 +266,6 @@ async function evaluateLayeredControl(info) {
   if (config.enabled !== true) return []
 
   const deviceNo = String((await resolveDeviceNo(info)) || '').trim() || null
-  const mode = await getMode(deviceNo)
-  if (mode !== 'auto') return []
 
   const sensors = await readSensors(info)
   const states = await readSwitchStates(info)
@@ -334,8 +323,8 @@ async function evaluateLayeredControl(info) {
     await setSwitch('pump', '水泵', pumpDesired, deviceNo, 'layered_control')
     actions.push({ device: 'pump', action: pumpDesired })
   }
-  // PID_HEATING.enabled=true 时改由 service/pidHeating/pidHeating.js 接管加热，这里跳过。
-  if (heaterDesired && rootConfig.PID_HEATING?.enabled !== true
+  // “自动控制开关”（指令配置页面）开启时改由 service/pidHeating/pidHeating.js 接管加热，这里跳过。
+  if (heaterDesired && !(await isPidEnabled(deviceNo))
     && states.heatOn !== (heaterDesired === 'on') && canAct(deviceNo, 'heater')) {
     await setSwitch('heater', '加热', heaterDesired, deviceNo, 'layered_control')
     actions.push({ device: 'heater', action: heaterDesired })

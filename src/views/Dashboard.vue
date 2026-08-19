@@ -38,26 +38,11 @@
       </article>
     </section>
 
-    <!-- ==================== 累计派生指标独立图表区（standalone / both 模式） ==================== -->
+    <!-- ==================== 累计派生指标（合并成一张图，可切换柱状/折线） ==================== -->
     <section v-if="cumulativeEntries.length > 0" class="cumulative-section">
       <h2 class="section-title">累计统计</h2>
-      <div class="cumulative-grid" :style="{ gridTemplateColumns: `repeat(${Math.min(cumulativeEntries.length, 2)}, 1fr)` }">
-        <div v-for="entry in cumulativeEntries" :key="entry.key" class="cumulative-card">
-          <div class="cumulative-card-header">
-            <h3>{{ entry.config.metric_name }}</h3>
-            <el-tag size="small">{{ entry.config.unit }}</el-tag>
-          </div>
-          <div class="cumulative-chart-wrapper">
-            <div v-if="entry.rows.length === 0" class="empty-chart">
-              <el-empty description="暂无累计数据" :image-size="60" />
-            </div>
-            <div
-              v-else
-              :ref="(el) => setChartRef(entry.key, el)"
-              class="cumulative-chart"
-            ></div>
-          </div>
-        </div>
+      <div class="cumulative-card cumulative-card-wide">
+        <div ref="cumulativeChartRef" class="cumulative-chart cumulative-chart-tall"></div>
       </div>
     </section>
 
@@ -103,24 +88,11 @@
       </div>
     </section>
 
-    <!-- ==================== 平均温度 / 平均流速 趋势图 ==================== -->
-    <section v-if="computedEntry" class="cumulative-section">
+    <!-- ==================== 平均温度 / 平均流速（合并成一张图，可切换柱状/折线） ==================== -->
+    <section v-if="showAverageChart" class="cumulative-section">
       <h2 class="section-title">平均温度与平均流速</h2>
-      <div class="cumulative-grid">
-        <div v-if="computedEntry.flags?.averageTempChart" class="cumulative-card">
-          <div class="cumulative-card-header">
-            <h3>平均温度</h3>
-            <el-tag size="small">℃</el-tag>
-          </div>
-          <div :ref="(el) => setTrendChartRef('avgTemp', el)" class="cumulative-chart"></div>
-        </div>
-        <div v-if="computedEntry.flags?.averageVelocityChart" class="cumulative-card">
-          <div class="cumulative-card-header">
-            <h3>平均流速</h3>
-            <el-tag size="small">m/s</el-tag>
-          </div>
-          <div :ref="(el) => setTrendChartRef('avgVel', el)" class="cumulative-chart"></div>
-        </div>
+      <div class="cumulative-card cumulative-card-wide">
+        <div ref="averageChartRef" class="cumulative-chart cumulative-chart-tall"></div>
       </div>
     </section>
 
@@ -289,55 +261,70 @@ const computedMetricList = computed(() => {
   return list
 })
 
-// ==================== 平均温度 / 平均流速 趋势图数据源 ====================
+// ==================== 平均温度 / 平均流速（合并成一张图） ====================
 const computedEntry = computed(() => {
   const values = Object.values(computedMetrics.value || {})
   return values.find(v => v && v.series && v.series.length) || null
 })
+const showAverageChart = computed(() => {
+  const flags = computedEntry.value?.flags
+  return Boolean(flags?.averageTempChart || flags?.averageVelocityChart)
+})
 
-/** 趋势图实例与 refs（与累计图实例分开管理） */
-const trendChartInstances = {}
-const trendChartRefs = {}
+const averageChartRef = ref(null)
+let averageChartInstance = null
 
-function setTrendChartRef(key, el) {
-  if (el && !trendChartRefs[key]) {
-    trendChartRefs[key] = el
-    nextTick(() => renderTrendChart(key))
-  }
-}
-
-function renderTrendChart(key) {
+function renderAverageChart() {
   const entry = computedEntry.value
-  const el = trendChartRefs[key]
+  const el = averageChartRef.value
   if (!entry || !el || el.offsetWidth === 0) {
-    if (el) setTimeout(() => renderTrendChart(key), 50)
+    if (el) setTimeout(renderAverageChart, 50)
     return
   }
-  if (trendChartInstances[key]) trendChartInstances[key].dispose()
+  if (averageChartInstance) averageChartInstance.dispose()
   const chart = echarts.init(el)
-  trendChartInstances[key] = chart
+  averageChartInstance = chart
 
   const series = entry.series || []
   const times = series.map(p => p.time)
-  const data = series.map(p => (key === 'avgTemp' ? p.averageTemp : p.averageVelocity))
-  const name = key === 'avgTemp' ? '平均温度' : '平均流速'
-  const unit = key === 'avgTemp' ? '℃' : 'm/s'
-  const color = key === 'avgTemp' ? '#3b82f6' : '#10b981'
+  const flags = entry.flags || {}
+  const seriesList = []
+  if (flags.averageTempChart) {
+    seriesList.push({
+      name: '平均温度', type: 'line', yAxisIndex: 0, smooth: true,
+      data: series.map(p => p.averageTemp),
+      itemStyle: { color: '#3b82f6' }, lineStyle: { color: '#3b82f6' },
+    })
+  }
+  if (flags.averageVelocityChart) {
+    seriesList.push({
+      name: '平均流速', type: 'line', yAxisIndex: 1, smooth: true,
+      data: series.map(p => p.averageVelocity),
+      itemStyle: { color: '#10b981' }, lineStyle: { color: '#10b981' },
+    })
+  }
 
   chart.setOption({
     tooltip: { trigger: 'axis' },
-    toolbox: { feature: { saveAsImage: { title: '下载图片' } }, right: 10, top: 0 },
-    grid: { left: 14, right: 40, top: 40, bottom: 50 },
+    legend: { data: seriesList.map(s => s.name), top: 0 },
+    toolbox: {
+      feature: { magicType: { type: ['line', 'bar'] }, saveAsImage: { title: '下载图片' } },
+      right: 10,
+      top: 0,
+    },
+    grid: { left: 14, right: 60, top: 50, bottom: 50 },
     xAxis: { type: 'category', data: times, axisLabel: { rotate: 15, fontSize: 10 } },
-    yAxis: { type: 'value', name: unit, nameTextStyle: { fontSize: 11 } },
-    series: [{ name, type: 'line', data, smooth: true, itemStyle: { color }, lineStyle: { color } }]
+    yAxis: [
+      { type: 'value', name: '℃', nameTextStyle: { fontSize: 11 } },
+      { type: 'value', name: 'm/s', nameTextStyle: { fontSize: 11 } },
+    ],
+    series: seriesList
   }, true)
 }
 
-watch(computedEntry, () => {
+watch([computedEntry, averageChartRef], () => {
   nextTick(() => {
-    if (trendChartRefs.avgTemp) renderTrendChart('avgTemp')
-    if (trendChartRefs.avgVel) renderTrendChart('avgVel')
+    if (averageChartRef.value) renderAverageChart()
   })
 }, { deep: true })
 
@@ -361,7 +348,7 @@ function displayValue(value, field) {
   return unit ? `${value} ${unit}` : value
 }
 
-// ==================== 累计 + 时间窗口派生指标（共用的图表渲染引擎） ====================
+// ==================== 累计派生指标（合并成一张图） ====================
 const cumulativeEntries = computed(() => {
   const data = dashboard.value.cumulativeData || {}
   return Object.entries(data)
@@ -369,6 +356,78 @@ const cumulativeEntries = computed(() => {
     .map(([key, v]) => ({ key, config: v.config, rows: v.rows }))
 })
 
+const cumulativeChartRef = ref(null)
+let cumulativeChartInstance = null
+
+function renderCumulativeChart() {
+  const entries = cumulativeEntries.value
+  const el = cumulativeChartRef.value
+  if (!entries.length || !el || el.offsetWidth === 0) {
+    if (el) setTimeout(renderCumulativeChart, 50)
+    return
+  }
+  if (cumulativeChartInstance) cumulativeChartInstance.dispose()
+  const chart = echarts.init(el)
+  cumulativeChartInstance = chart
+
+  const formatTimes = (rows) => rows.map(r => r.c_time
+    ? new Date(r.c_time).toLocaleString('zh-CN', {
+        year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', second: '2-digit',
+        hour12: false,
+      })
+    : '')
+
+  // 不同累计指标可能来自不同数据表，各自独立取数、行数和时间点不一定完全对齐；
+  // 用数据点最多的一条作为共享横轴，其余按位置对齐，作为合理近似展示在同一张图里。
+  const base = entries.reduce((a, b) => (b.rows.length > a.rows.length ? b : a))
+  const times = formatTimes(base.rows)
+
+  // 按单位分左右两根纵轴，最多两种单位；超出的并入右轴。
+  const units = []
+  const series = entries.map(entry => {
+    const unit = entry.config.unit || ''
+    let axisIndex = units.indexOf(unit)
+    if (axisIndex === -1) {
+      axisIndex = units.length
+      units.push(unit)
+    }
+    return {
+      name: entry.config.metric_name,
+      type: entry.config.chart_type || 'line',
+      yAxisIndex: Math.min(axisIndex, 1),
+      data: entry.rows.map(r => r.cumulative),
+      itemStyle: { color: entry.config.color || '#0ea5e9' },
+      lineStyle: { color: entry.config.color || '#0ea5e9' },
+      smooth: true,
+    }
+  })
+
+  chart.setOption({
+    tooltip: { trigger: 'axis' },
+    legend: { data: entries.map(e => e.config.metric_name), top: 0 },
+    toolbox: {
+      feature: { magicType: { type: ['line', 'bar'] }, saveAsImage: { title: '下载图片' } },
+      right: 10,
+      top: 0,
+    },
+    grid: { left: 14, right: 60, top: 50, bottom: 50 },
+    xAxis: { type: 'category', data: times, axisLabel: { rotate: 15, fontSize: 10 } },
+    yAxis: [
+      { type: 'value', name: units[0] || '', nameTextStyle: { fontSize: 11 } },
+      { type: 'value', name: units[1] || '', nameTextStyle: { fontSize: 11 } },
+    ],
+    series
+  }, true)
+}
+
+watch([cumulativeEntries, cumulativeChartRef], () => {
+  nextTick(() => {
+    if (cumulativeChartRef.value) renderCumulativeChart()
+  })
+}, { deep: true })
+
+// ==================== 滑动统计（时间窗口派生指标，每个指标独立一张卡片） ====================
 const timeWindowEntries = computed(() => {
   const data = dashboard.value.timeWindowData || {}
   return Object.entries(data)
@@ -389,9 +448,7 @@ function setChartRef(key, el) {
 }
 
 function renderEntryChart(key) {
-  // 同时搜索两个 entry 列表
-  let entry = cumulativeEntries.value.find(e => e.key === key)
-  if (!entry) entry = timeWindowEntries.value.find(e => e.key === key)
+  const entry = timeWindowEntries.value.find(e => e.key === key)
   if (!entry) return
   const el = chartRefs[key]
   if (!el || el.offsetWidth === 0) {
@@ -406,10 +463,7 @@ function renderEntryChart(key) {
   const unit = entry.config.unit || ''
   const color = entry.config.color || '#0ea5e9'
   const type = entry.config.chart_type || 'line'
-
-  // 累计指标数据在 r.cumulative，时间窗口在 r.value
-  const isCumulative = cumulativeEntries.value.some(e => e.key === key)
-  const data = isCumulative ? rows.map(r => r.cumulative) : rows.map(r => r.value)
+  const data = rows.map(r => r.value)
 
   const times = rows.map(r => r.c_time
     ? new Date(r.c_time).toLocaleString('zh-CN', {
@@ -444,11 +498,9 @@ function renderEntryChart(key) {
   }, true)
 }
 
-// 监听两个列表变化
-const allEntries = computed(() => [...cumulativeEntries.value, ...timeWindowEntries.value])
-watch(allEntries, () => {
+watch(timeWindowEntries, () => {
   nextTick(() => {
-    allEntries.value.forEach(e => {
+    timeWindowEntries.value.forEach(e => {
       if (chartRefs[e.key]) renderEntryChart(e.key)
     })
   })
@@ -458,13 +510,16 @@ function disposeAllCharts() {
   Object.values(chartInstances).forEach(c => c?.dispose())
   for (const key in chartInstances) delete chartInstances[key]
   for (const key in chartRefs) delete chartRefs[key]
-  Object.values(trendChartInstances).forEach(c => c?.dispose())
-  for (const key in trendChartInstances) delete trendChartInstances[key]
-  for (const key in trendChartRefs) delete trendChartRefs[key]
+  cumulativeChartInstance?.dispose()
+  cumulativeChartInstance = null
+  averageChartInstance?.dispose()
+  averageChartInstance = null
 }
 
-async function loadDashboard() {
-  loading.value = true
+// showLoading=false 用于 WebSocket 推送触发的后台静默刷新，不切换 loading，
+// 避免刷新动画跟着推送频率一直闪烁；手动点“刷新数据”和首次进入页面仍然显示。
+async function loadDashboard(showLoading = true) {
+  if (showLoading) loading.value = true
   try {
     const [dataResult, deviceResult, mqttResult, computedResult] = await Promise.allSettled([
       api.get('/data', { params: { online: '实时数据' } }),
@@ -483,7 +538,7 @@ async function loadDashboard() {
       computedMetrics.value = computedResult.value.data?.data || {}
     }
   } finally {
-    loading.value = false
+    if (showLoading) loading.value = false
   }
 }
 
@@ -494,8 +549,8 @@ onMounted(async () => {
   unsubscribeStatus = wsOn('device_status', (payload) => {
     if (Array.isArray(payload)) deviceStatuses.value = payload
   })
-  unsubscribeSensor = wsOn('sensor_data', loadDashboard)
-  unsubscribeError = wsOn('error_data', loadDashboard)
+  unsubscribeSensor = wsOn('sensor_data', () => loadDashboard(false))
+  unsubscribeError = wsOn('error_data', () => loadDashboard(false))
 })
 
 onUnmounted(() => {
@@ -560,6 +615,8 @@ onUnmounted(() => {
 .cumulative-chart-wrapper { min-height: 240px; }
 .cumulative-chart { width: 100%; height: 240px; }
 .empty-chart { display: flex; align-items: center; justify-content: center; min-height: 240px; }
+.cumulative-card-wide { width: 100%; }
+.cumulative-chart-tall { height: 340px; }
 
 @media (max-width: 1050px) { .metric-grid { grid-template-columns: repeat(2, 1fr); } .dashboard-grid { grid-template-columns: 1fr; } .cumulative-grid { grid-template-columns: 1fr !important; } }
 @media (max-width: 700px) { .hero-panel { align-items: flex-start; flex-direction: column; } .metric-grid, .reading-grid { grid-template-columns: 1fr; } }

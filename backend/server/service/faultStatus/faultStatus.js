@@ -5,7 +5,8 @@
  * 多层防护重叠，不冲突。
  *
  * 触发条件（均可通过配置中心 FAULT_STATUS 独立开关）：
- *   1. 加热模块故障：水泵和加热均开启时，流量低于下限阈值（干烧）
+ *   1. 加热模块故障：(a) 水泵和加热均开启时，流量低于下限阈值（干烧）；
+ *      (b) 加热开启后长时间温度都没有明显上升，超过 heaterStallDurationMs（默认 60s）
  *   2. 水泵故障：水泵开启时，流量为 0 且压力为 0，且持续 >= pumpFaultDurationMs（默认 2s）
  *   3. 管道堵塞：压力高于上限阈值且流量低于下限阈值
  *   4. 管道漏水：压力为 0 且（流量低于下限阈值 或 流量为 0）
@@ -28,12 +29,15 @@ const THRESHOLD_SLOTS = {
 
 /** 传感器字段槽位。 */
 const SENSOR_SLOTS = {
+  temp1: 'field1',
   flow: 'field3',
   pressure: 'field4',
 }
 
 /** 水泵故障持续计时：记录条件首次成立的时间戳，条件中断则清除。 */
 const pumpFaultSince = new Map()
+/** 加热温度停滞检测：记录“最近一次明显升温”时的温度和时间戳，加热关闭时清除。 */
+const heaterStallState = new Map()
 /** 告警冷却时间戳，避免同一故障高频重复触发。 */
 const lastFired = new Map()
 
@@ -169,6 +173,32 @@ async function fire(trigger, deviceNo, faultConfig) {
 
 /* ============================ 主评估 ============================ */
 
+/**
+ * 加热开启后长时间温度都没有明显上升，判定为加热模块故障的另一种情形（比如干烧条件
+ * 触发不了，但加热管其实已经不发热了）。用“最近一次比基线明显升温”的时间戳滚动判断：
+ * 温度比基线高出 heaterStallMinRiseC 就更新基线、重新计时；一直没有明显升温，
+ * 超过 heaterStallDurationMs 才判定停滞。加热关闭时清空状态，不跨加热周期累计。
+ */
+function checkHeaterStall(deviceNo, heatOn, temp1, faultConfig) {
+  const key = deviceNo || 'global'
+  if (!heatOn || temp1 == null) {
+    heaterStallState.delete(key)
+    return false
+  }
+  const minRise = Number(faultConfig.heaterStallMinRiseC) >= 0 ? Number(faultConfig.heaterStallMinRiseC) : 0.3
+  const durationMs = Number(faultConfig.heaterStallDurationMs) > 0 ? Number(faultConfig.heaterStallDurationMs) : 60000
+  const state = heaterStallState.get(key)
+  if (!state) {
+    heaterStallState.set(key, { baselineTemp: temp1, since: Date.now() })
+    return false
+  }
+  if (temp1 >= state.baselineTemp + minRise) {
+    heaterStallState.set(key, { baselineTemp: temp1, since: Date.now() })
+    return false
+  }
+  return Date.now() - state.since >= durationMs
+}
+
 async function evaluateFaultStatus(info) {
   const faultConfig = systemConfig.getConfig().FAULT_STATUS || {}
   if (faultConfig.enabled !== true) return []
@@ -183,10 +213,17 @@ async function evaluateFaultStatus(info) {
 
   const triggers = []
 
-  // 1. 加热模块故障：水泵和加热均开启时，流量低于下限阈值（干烧）。
-  if (faultConfig.heaterFault !== false && states.pumpOn === true && states.heatOn === true
-    && flowLow != null && sensors.flow != null && sensors.flow < flowLow) {
-    triggers.push({ id: 'heater_fault', name: '加热模块故障（干烧）', detail: `水泵、加热均开启，流量=${sensors.flow}，下限=${flowLow}` })
+  // 1. 加热模块故障：(a) 水泵和加热均开启时，流量低于下限阈值（干烧）；
+  //    (b) 加热开启后长时间温度都没有明显上升（加热管可能已经不发热了）。
+  if (faultConfig.heaterFault !== false) {
+    if (states.pumpOn === true && states.heatOn === true
+      && flowLow != null && sensors.flow != null && sensors.flow < flowLow) {
+      triggers.push({ id: 'heater_fault', name: '加热模块故障（干烧）', detail: `水泵、加热均开启，流量=${sensors.flow}，下限=${flowLow}` })
+    }
+    if (checkHeaterStall(deviceNo, states.heatOn, sensors.temp1, faultConfig)) {
+      const durationMs = Number(faultConfig.heaterStallDurationMs) > 0 ? Number(faultConfig.heaterStallDurationMs) : 60000
+      triggers.push({ id: 'heater_fault', name: '加热模块故障（长时间温度不上升）', detail: `加热已开启超过 ${Math.round(durationMs / 1000)} 秒，温度=${sensors.temp1} 无明显上升` })
+    }
   }
 
   // 2. 水泵故障：水泵开启时，流量为 0 且压力为 0，且持续 >= pumpFaultDurationMs。

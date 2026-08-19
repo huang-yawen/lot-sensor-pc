@@ -14,6 +14,9 @@ export const ErrorStore = defineStore("ErrorStore", () => {
   const total = ref(0);
   const loading = ref(false);
   const errTypeStats = ref([]);
+  const safetyData = ref([]);
+  const safetyTotal = ref(0);
+  const safetyLoading = ref(false);
 
   const formatDateTime = (value) => {
     if (!value) return "";
@@ -63,6 +66,39 @@ export const ErrorStore = defineStore("ErrorStore", () => {
     }
   };
 
+  // 安全联锁记录：复用同一个 /errData 接口，传 category=safety 只取安全联锁/安全告警类型，
+  // 跟故障记录表格分开分页、互不影响。
+  const fetchSafetyData = async (params = {}) => {
+    safetyLoading.value = true;
+    try {
+      const response = await api.get("/errData", {
+        params: {
+          category: "safety",
+          page: params.currentPage || 1,
+          keyword: params.keyword || "",
+          pageSize: params.pageSize || 5,
+          startTime: formatDateTime(params.startTime),
+          endTime: formatDateTime(params.endTime),
+        },
+      });
+
+      const res = response.data;
+      if (res.success) {
+        const list = res.data?.list || [];
+        const displayStore = DisplayStore()
+        safetyData.value = list.map((item) => ({
+          ...item,
+          "报警时间": displayStore.formatTime(item["报警时间"]),
+        }));
+        safetyTotal.value = res.data?.total || list.length;
+      }
+    } catch (error) {
+      console.error("safetyData 请求失败:", error);
+    } finally {
+      safetyLoading.value = false;
+    }
+  };
+
   const fetchErrTypeStats = async (params = {}) => {
     try {
       // 统计接口复用列表筛选条件，保证图表和表格看到的是同一批故障数据。
@@ -86,9 +122,13 @@ export const ErrorStore = defineStore("ErrorStore", () => {
   return {
     fetchErrData,
     fetchErrTypeStats,
+    fetchSafetyData,
     errData,
     errTypeStats,
     total,
     loading,
+    safetyData,
+    safetyTotal,
+    safetyLoading,
   };
 });

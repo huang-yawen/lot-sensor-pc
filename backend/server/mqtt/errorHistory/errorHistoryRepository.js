@@ -1,7 +1,8 @@
 /** 【文件职责】异常历史数据仓储层。
  * 【配置中心关联】无直接读取。 */
 const promisePool = require('../../config/dbPool')
-const { getDeviceNo: getConfiguredDeviceNo, getReportedTime } = require('../../utils/protocol')
+const { getReportedTime } = require('../../utils/protocol')
+const { resolveDeviceNo } = require('../../utils/mappedData')
 const systemConfig = require('../../config/systemConfig')
 
 function warningFields() {
@@ -31,20 +32,14 @@ function buildErrorMessage(info) {
     return messages.join('，')
 }
 
-async function getDeviceNo(info) {
-    const reported = getConfiguredDeviceNo(info)
-    if (reported !== undefined && reported !== null && String(reported).trim()) {
-        return String(reported).trim()
-    }
-
-    const [rows] = await promisePool.query(
-        'SELECT `number` FROM `t_device` ORDER BY `id` ASC LIMIT 1'
-    )
-    return rows.length > 0 ? String(rows[0].number).trim() : null
-}
-
 async function saveErrorMsg(info) {
-    const deviceNo = await getDeviceNo(info)
+    // 设备编号必须能在 t_device.number 匹配上（见 utils/mappedData.js resolveDeviceNo），
+    // 匹配不上就跳过保存，不再兜底成数据库里第一个设备。
+    const deviceNo = await resolveDeviceNo(info)
+    if (!deviceNo) {
+        console.warn('[ErrorHistory] 设备编号未匹配已注册设备，跳过保存')
+        return false
+    }
     const params = [
         deviceNo,
         info.c_time ?? getReportedTime(info) ?? null,

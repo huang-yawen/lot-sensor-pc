@@ -52,6 +52,39 @@
           @size-change="handlePageSizeChange" @current-change="handlePageChange" />
       </div>
     </div>
+
+    <div class="error-info-container safety-container" v-if="showSafetyLog">
+      <h3 class="section-title">安全联锁记录</h3>
+      <div class="table-wrapper">
+        <el-table
+          :data="store.safetyData"
+          style="width: 100%"
+          v-if="store.safetyData.length > 0"
+          border
+          stripe
+          :header-cell-style="{ background: '#f8fafc', color: '#475569', fontWeight: 600 }"
+        >
+          <el-table-column
+            v-for="col in safetyHeaders"
+            :key="col"
+            :prop="col"
+            :label="col"
+            show-overflow-tooltip
+            align="center"
+          />
+        </el-table>
+        <div v-else class="empty-state">
+          {{ store.safetyLoading ? '加载中...' : '暂无安全联锁记录' }}
+        </div>
+      </div>
+
+      <div class="pagination-wrapper">
+        <el-pagination v-model:current-page="safetyCurrentPage" v-model:page-size="safetyPageSize" :page-sizes="pageSizeOptions"
+          :background="true" layout="sizes, prev, pager, next" :total="store.safetyTotal || 0"
+          @size-change="handleSafetyPageSizeChange" @current-change="handleSafetyPageChange" />
+      </div>
+    </div>
+
     <div class="chart-container" v-if="chartsEnabled">
       <div class="chart-panel">
         <PieChart :data="store.errTypeStats" />
@@ -80,9 +113,19 @@ const loading = ref(false);
 const chartsEnabled = computed(() => systemStore.config.ENABLE_CHARTS !== false);
 const pageSizeOptions = computed(() => [...new Set([pageSize.value, 5, 10, 15, 20])].sort((a, b) => a - b));
 
+// 安全联锁记录表格是否显示，由配置中心 SAFETY_INTERLOCK.showOnErrorPage 控制。
+const showSafetyLog = computed(() => systemStore.config.SAFETY_INTERLOCK?.showOnErrorPage !== false);
+const safetyCurrentPage = ref(1);
+const safetyPageSize = ref(5);
+
 // 故障记录是手写表格，也统一过滤 id/编号列。
 const headers = computed(() => {
   const data = store.errData;
+  return data.length ? Object.keys(data[0]).filter(displayStore.isFieldVisible) : [];
+});
+
+const safetyHeaders = computed(() => {
+  const data = store.safetyData;
   return data.length ? Object.keys(data[0]).filter(displayStore.isFieldVisible) : [];
 });
 
@@ -96,14 +139,20 @@ const handleSearch = async (page = 1) => {
   loading.value = true;
   try {
     const params = getSearchParams();
-    await Promise.all([
+    // 顶部这一个搜索框同时驱动故障记录表格和下面的安全联锁记录表格，两个表格各自独立分页。
+    safetyCurrentPage.value = 1;
+    const tasks = [
       store.fetchErrData({
         ...params,
         currentPage: page,
         pageSize: pageSize.value,
       }),
       store.fetchErrTypeStats(params),
-    ]);
+    ];
+    if (showSafetyLog.value) {
+      tasks.push(store.fetchSafetyData({ ...params, currentPage: 1, pageSize: safetyPageSize.value }));
+    }
+    await Promise.all(tasks);
   } finally {
     loading.value = false;
   }
@@ -118,6 +167,17 @@ const handlePageSizeChange = (size) => {
   pageSize.value = size;
   currentPage.value = 1;
   handleSearch(1);
+};
+
+const handleSafetyPageChange = (page) => {
+  safetyCurrentPage.value = page;
+  store.fetchSafetyData({ ...getSearchParams(), currentPage: page, pageSize: safetyPageSize.value });
+};
+
+const handleSafetyPageSizeChange = (size) => {
+  safetyPageSize.value = size;
+  safetyCurrentPage.value = 1;
+  store.fetchSafetyData({ ...getSearchParams(), currentPage: 1, pageSize: size });
 };
 
 onMounted(async () => {
@@ -141,6 +201,15 @@ onMounted(async () => {
 .error-info-container {
   width: 100%;
   flex: 0 0 auto;
+}
+
+.safety-container {
+  margin-top: 8px;
+}
+
+.section-title {
+  margin: 0 0 14px;
+  color: #0f172a;
 }
 
 .search-form {

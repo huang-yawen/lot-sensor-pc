@@ -16,12 +16,19 @@ const validateDateRange = (startTime, endTime) => {
     return start <= end
 }
 
+/** category=fault（默认）只看真正的硬故障；category=safety 看安全联锁记录，两者互不混淆。 */
+const CATEGORY_TYPES = {
+    fault: ['故障保护'],
+    safety: ['安全联锁', '安全告警'],
+}
+
 const buildWhere = (query) => {
     const keyword = query.keyword?.trim() || ''
     let startTime = query.startTime || ''
     let endTime = query.endTime || ''
-    const conditions = []
-    const params = []
+    const types = CATEGORY_TYPES[query.category] || CATEGORY_TYPES.fault
+    const conditions = [`type IN (${types.map(() => '?').join(',')})`]
+    const params = [...types]
 
     if (startTime && !isValidDateTime(startTime)) {
         throw new Error('开始时间格式不正确，应为 YYYY-MM-DD 或 YYYY-MM-DD HH:MM:SS')
@@ -63,7 +70,7 @@ module.exports = async function getErrorHistory(query) {
     const { whereClause, params } = buildWhere(query)
 
     const [rows] = await promisePool.query(
-        `SELECT id, d_no AS '设备编号', e_msg AS '故障信息', c_time AS '报警时间', type AS '故障类型'
+        `SELECT id, d_no AS '设备编号', e_msg AS '记录信息', c_time AS '报警时间', type AS '类型'
          FROM t_error_msg
          ${whereClause}
          ORDER BY id DESC
