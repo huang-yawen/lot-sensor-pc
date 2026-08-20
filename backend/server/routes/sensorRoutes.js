@@ -90,7 +90,7 @@ router.post('/directData/update', updateDirectConfigAndPublish)
 // ============================================================
 // 故障状态接口
 // ============================================================
-// GET /faultStatus/state
+// GET /api/faultStatus/state
 //   查询当前故障态 + 复位按钮状态（前端轮询用）。
 //   单设备模式：自动定位到当前故障态设备（无故障时返回默认 NORMAL 状态）
 //   多设备模式：通过 ?d_no=xxx 指定设备；不传 d_no 时返回所有设备故障态列表
@@ -100,7 +100,7 @@ router.post('/directData/update', updateDirectConfigAndPublish)
 //     single: { systemState, activeFaultId, resetButton, faultTriggeredAt },  // 单设备
 //     list:  [{ deviceNo, systemState, activeFaultId, resetButton, faultTriggeredAt }, ...]  // 多设备
 //   }
-router.get('/faultStatus/state', async (req, res) => {
+router.get('/api/faultStatus/state', async (req, res) => {
   try {
     const singleDeviceMode = systemConfig.getConfig().SINGLE_DEVICE_MODE === true
     const faultConfig = systemConfig.getConfig().FAULT_STATUS || {}
@@ -147,13 +147,13 @@ router.get('/faultStatus/state', async (req, res) => {
   }
 })
 
-// POST /faultStatus/reset
+// POST /api/faultStatus/reset
 //   手动复位（用户人工修复设备后点击"复位"按钮）。
 //   Body: { d_no?: string|null }
 //   行为：等价于把"复位按钮"开关从 on 拨到 off，触发 handleResetButtonOff 走快照恢复流程。
 //   单设备模式：自动定位到当前故障态设备；找不到时按默认设备号尝试。
 //   多设备模式：用前端传的 d_no；未传时取 'global'。
-router.post('/faultStatus/reset', async (req, res) => {
+router.post('/api/faultStatus/reset', async (req, res) => {
   try {
     const singleDeviceMode = systemConfig.getConfig().SINGLE_DEVICE_MODE === true
     let resetDNo = null

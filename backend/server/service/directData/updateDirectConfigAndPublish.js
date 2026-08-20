@@ -87,12 +87,13 @@ async function buildPayload(configId, value) {
  */
 async function isResetButtonConfig(configId) {
   const [rows] = await promisePool.query(
-    "SELECT preffix FROM t_direct_config WHERE id = ? AND f_type = '1' LIMIT 1",
+    "SELECT preffix, t_name FROM t_direct_config WHERE id = ? AND f_type = '1' LIMIT 1",
     [configId]
   )
   if (!rows.length) return false
   const prefix = String(rows[0].preffix || '').trim().toLowerCase()
-  return prefix === 'reset_button' || prefix === 'reset' || prefix === 'reset_btn'
+  const name = String(rows[0].t_name || '').trim()
+  return prefix === 'reset_button' || prefix === 'reset' || prefix === 'reset_btn' || prefix === 'reset_all' || name === '复位'
 }
 
 /**

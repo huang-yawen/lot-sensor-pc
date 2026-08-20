@@ -101,7 +101,7 @@ const conditions = [
   { key: 'tempDiff', title: '温差过大', description: '两路温度差的绝对值超过温差阈值。' },
   { key: 'manualMode', title: '进入手动模式（人工修复）', description: '控制模式从自动切换到手动时，安全关闭一次水泵和加热。' },
   { key: 'sensorOffline', title: '任一传感器数值掉线', description: '设备长时间无数据上报（心跳超时）时判定离线。' },
-  { key: 'heaterWithoutPump', title: '没打开水泵却打开了加热', description: '水泵、加热开关状态均明确上报时才判断，避免消息里缺行为字段时误触发。' },
+  { key: 'heaterWithoutPump', title: '加热开启但水泵未开', description: '加热器已开启但水泵未开启时触发，防止无水流干烧。仅当水泵、加热开关状态均明确上报时才判断，避免消息里缺行为字段时误触发。' },
 ]
 
 async function load() {

@@ -11,11 +11,11 @@
     <div class="quick-switches">
       <DynamicNode v-for="node in quickSwitches" :key="node.id" :node="node" :form-data="formData" :icons="icons"
         compact @save="handleSave" :id="prop.id" />
-      <div class="reset-card">
-        <span class="reset-title">复位</span>
-        <el-button type="danger" plain :icon="RefreshLeft" :loading="resetting" @click="handleReset">
-          关闭所有开关
-        </el-button>
+      <div class="status-card">
+        <div class="status-indicator">
+          <span class="status-dot" :class="isFault ? 'dot-red' : 'dot-green'"></span>
+          <span class="status-text">{{ isFault ? '故障' : '正常' }}</span>
+        </div>
       </div>
     </div>
 
@@ -28,12 +28,12 @@
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, markRaw, watch, onUnmounted, ref } from "vue";
-import { ElMessage, ElMessageBox } from "element-plus";
-import { RefreshLeft } from "@element-plus/icons-vue";
+import { computed, onMounted, reactive, markRaw, watch, onUnmounted } from "vue";
+import { ElMessage } from "element-plus";
 import DynamicNode from "@/components/direct/DynamicNode.vue";
 import * as Icons from "@element-plus/icons-vue";
 import { connect as connectWebSocket, on as wsOn } from "@/utils/websocket";
+import api from "@/api";
 
 const prop = defineProps({
   storeData: { type: Array, default: () => [] },
@@ -145,39 +145,27 @@ const handleSave = async (id, value) => {
   await handleUpdate(id, value);
 };
 
-// 复位：递归找出所有开关类指令项（不管在哪一层），逐个设成各自的“关”值，
-// 已经是关闭状态的跳过，不重复下发。只处理开关，不动数值类参数（Kp/Ki/Kd、阈值等）。
-const resetting = ref(false);
-const collectSwitches = (nodes, acc = []) => {
-  for (const node of nodes || []) {
-    if (String(node.f_type) === "1") {
-      const offValue = node.f_value?.split("|")[0]?.split(":")[1] ?? "off";
-      acc.push({ id: node.id, offValue: String(offValue) });
-    }
-    Object.values(node.children || {}).forEach(group => collectSwitches(group, acc));
-  }
-  return acc;
+// 故障状态：轮询 /faultStatus/state，绿灯=正常，红灯=故障。
+// 复位按钮由数据库里的 reset_button 开关承担（DynamicNode 渲染），
+// 后端 updateDirectConfigAndPublish.js 拦截 reset_button=off 触发 handleResetButtonOff。
+const faultState = reactive({ systemState: "NORMAL", resetButton: "off" });
+const isFault = computed(() => faultState.systemState === "FAULT");
+let faultTimer = null;
+
+const loadFaultState = async () => {
+  try {
+    const d_no = prop.id === "null" ? undefined : prop.id;
+    const resp = await api.get("/api/faultStatus/state", { params: { d_no } });
+    if (resp.data?.data) Object.assign(faultState, resp.data.data);
+  } catch { /* 静默失败，不打扰用户 */ }
 };
 
-const handleReset = async () => {
-  try {
-    await ElMessageBox.confirm("确定要把所有开关复位成关闭状态吗？", "复位确认", { type: "warning" });
-  } catch {
-    return;
-  }
-  resetting.value = true;
-  try {
-    const switches = collectSwitches(prop.storeData);
-    for (const sw of switches) {
-      if (String(formData[sw.id]) !== sw.offValue) {
-        await handleUpdate(sw.id, sw.offValue);
-      }
-    }
-    ElMessage.success("已复位");
-  } finally {
-    resetting.value = false;
-  }
-};
+// 故障状态变化时重新拉取指令数据：
+// - 正常→故障：后端已把 reset_button 写为 on、执行器全关，刷新页面显示最新状态
+// - 故障→正常：用户拨了 reset_button=off，后端从快照恢复，刷新页面显示恢复后的开关和参数
+watch(isFault, async (fault, prev) => {
+  if (fault !== prev) await initializeForm();
+});
 
 watch(
   () => prop.id,
@@ -203,10 +191,13 @@ onMounted(async () => {
   if (prop.storeData.length === 0) {
     await prop.fetchDirectData();
   }
+  await loadFaultState();
+  faultTimer = setInterval(loadFaultState, 5000);
 });
 
 onUnmounted(() => {
   unsubscribePendingCommands?.();
+  if (faultTimer) clearInterval(faultTimer);
 });
 </script>
 
@@ -222,8 +213,8 @@ onUnmounted(() => {
   margin-bottom: 20px;
 }
 
-/* 跟 DynamicNode.vue 里 .compact 开关卡片保持同一套视觉样式，让复位跟水泵/加热并列显示 */
-.reset-card {
+/* 跟 DynamicNode.vue 里 .compact 开关卡片保持同一套视觉样式，让状态指示跟水泵/加热并列显示 */
+.status-card {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -236,11 +227,40 @@ onUnmounted(() => {
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
 }
 
-.reset-title {
+.status-indicator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.status-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.dot-green {
+  background: #67c23a;
+  box-shadow: 0 0 6px rgba(103, 194, 58, 0.5);
+}
+
+.dot-red {
+  background: #f56c6c;
+  box-shadow: 0 0 6px rgba(245, 108, 108, 0.5);
+  animation: pulse 1s ease-in-out infinite;
+}
+
+.status-text {
   font-weight: 600;
   font-size: 16px;
   color: #1f2d3d;
   white-space: nowrap;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
 }
 
 .detail-nodes {

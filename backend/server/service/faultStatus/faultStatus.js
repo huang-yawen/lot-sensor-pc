@@ -167,19 +167,21 @@ async function findSwitchConfig(prefix, name) {
 
 /**
  * 下发开关指令：发布 MQTT + 写 t_direct + 写操作历史。
- * 注意：故障态下"强制关闭执行器"和"复位后按快照重启执行器"都走这个函数，
- * 但 saveSnapshot/restore 已经在外层完成，所以这里不会污染快照内容。
+ * skipPersist=true 时只发布 MQTT 断电/通电，不改 t_direct 中的开关显示值，
+ * 用于故障触发时"硬件断电但页面保持故障前开关状态"。
  */
-async function setSwitch(prefix, name, value, deviceNo, source) {
+async function setSwitch(prefix, name, value, deviceNo, source, skipPersist = false) {
   const conf = await findSwitchConfig(prefix, name)
   if (!conf) return false
   const mqttClient = require('../../mqtt')
   const payload = buildSwitchPayload(conf, value)
   if (!systemConfig.getConfig().SINGLE_DEVICE_MODE && deviceNo) payload.d_no = deviceNo
   await mqttClient.publish(getTopic('control'), payload, { qos: systemConfig.getConfig().MQTT_QOS })
-  const oldValue = await getDirectValue({ config_id: conf.id, d_no: deviceNo })
-  await saveDirectData({ config_id: conf.id, value, d_no: deviceNo })
-  await saveOperationHistory({ d_no: deviceNo, config_id: conf.id, old_value: oldValue, new_value: value, source })
+  if (!skipPersist) {
+    const oldValue = await getDirectValue({ config_id: conf.id, d_no: deviceNo })
+    await saveDirectData({ config_id: conf.id, value, d_no: deviceNo })
+    await saveOperationHistory({ d_no: deviceNo, config_id: conf.id, old_value: oldValue, new_value: value, source })
+  }
   return true
 }
 
@@ -333,15 +335,14 @@ async function detectFault(info, deviceNo, faultConfig) {
  * 故障触发统一流程。
  * 步骤（按需求文档要求顺序）：
  *   1. 保存故障前快照（含水泵/加热开关状态、目标温度、所有阈值、自动/手动模式、其他参数）
- *   2. 强制关闭水泵和加热（硬件断电，但不修改页面上的开关显示值——通过快照恢复即可保留显示）
+ *   2. 通过 MQTT 强制断电水泵和加热（不改 t_direct 中的开关显示值，页面保持故障前状态）
  *   3. 系统状态置为 FAULT
- *   4. 复位按钮自动拨到"开"（UI 显示为 on）
+ *   4. 复位按钮自动拨到"开"（写 t_direct reset_button=on，UI 显示为 on）
  *   5. 记录告警入库
  *
- * 注意：步骤 2 中我们其实更新了 t_direct 的开关值为 off（因为硬件需要真的关），
- * 但页面下次拉数据时仍会显示 off。这跟需求"页面显示仍保持故障前的状态"略有出入，
- * 不过——结合步骤 1 的快照，故障复位时页面会从快照恢复开关状态显示，体验等价。
- * 真正满足"页面保留故障前显示"的实现是把页面状态缓存在前端，本期先按后端方案实现。
+ * 页面显示规则：故障触发后，水泵/加热的开关显示保持故障前的状态（如泵原来是开就还显示开），
+ * 只有复位按钮自动变 ON、状态指示灯变红。实际硬件已断电，但页面不体现。
+ * 用户修复设备后拨复位到 OFF，系统从快照恢复参数和开关显示、按快照重启执行器。
  */
 async function triggerFault(deviceNo, trigger, faultConfig) {
   const state = getDeviceState(deviceNo)
@@ -360,11 +361,12 @@ async function triggerFault(deviceNo, trigger, faultConfig) {
   // 步骤 1：保存故障前快照
   await saveSnapshot(deviceNo, trigger.id)
 
-  // 步骤 2：强制关闭水泵和加热（执行器全关，写操作历史 source=fault_status）
+  // 步骤 2：强制关闭水泵和加热（通过 MQTT 断电，但不改 t_direct 中的开关显示值，
+  //         页面保持故障前的开关状态。只有 reset_button 自动变 ON。）
   for (const [prefix, name] of [['pump', '水泵'], ['heater', '加热']]) {
     try {
-      await setSwitch(prefix, name, 'off', deviceNo, 'fault_status')
-      console.log(`[FaultStatus] 已强制关闭 ${name}（${trigger.id}），设备 ${deviceNo || '全局'}`)
+      await setSwitch(prefix, name, 'off', deviceNo, 'fault_status', true)
+      console.log(`[FaultStatus] 已强制断电 ${name}（${trigger.id}），设备 ${deviceNo || '全局'}（页面开关保持故障前状态）`)
     } catch (err) {
       console.error(`[FaultStatus] 关闭 ${name} 失败:`, err.message)
     }

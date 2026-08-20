@@ -185,6 +185,10 @@ function getState(deviceNo) {
       lastEvalTs: 0,
       // 记住上一次下发的加热状态，避免因 heatOn=null（无行为上报）导致每次都重复下发
       lastSentHeater: null,  // 'on' / 'off' / null
+      // 精准控制增强字段
+      filteredDerivative: 0,   // 微分项一阶低通滤波值
+      lastDutyRaw: 0,          // 斜率限制前的原始 duty，用于计算变化量
+      lastTempIn: null,         // 上一次进水温度，用于前馈计算
     })
   }
   return stateMap.get(key)
@@ -245,6 +249,16 @@ async function evaluatePidHeating(info) {
   const dutyMin = Math.max(0, Math.min(100, Math.min(dutyMinRaw, dutyMaxRaw)))
   const dutyMax = Math.max(0, Math.min(100, Math.max(dutyMinRaw, dutyMaxRaw)))
 
+  // 精准控制增强参数（有兜底默认值，未配置时自动启用合理值）
+  // 死区：误差绝对值小于此值时保持上一次 duty，避免微小误差导致继电器抖动
+  const deadband = Number(await getPidNumber('死区(℃)', deviceNo, fallback.deadband ?? 0.2)) || 0
+  // 微分滤波系数 0~1：越大越跟踪原始值，越小滤波越强（0.3 = 70% 滤波）
+  const derivativeFilter = Math.max(0, Math.min(1, Number(await getPidNumber('微分滤波系数', deviceNo, fallback.derivativeFilter ?? 0.3)) || 0.3))
+  // 输出斜率限制(%/周期)：duty 单次最大变化幅度，防止阶跃跳变
+  const dutyRampLimit = Math.max(0, Number(await getPidNumber('占空比斜率限制(%/周期)', deviceNo, fallback.dutyRampLimit ?? 15)) || 0)
+  // 前馈系数：进水温度变化时提前调整 duty，补偿热惯性
+  const kff = Number(await getPidNumber('前馈系数', deviceNo, fallback.kff ?? 0)) || 0
+
   const state = getState(deviceNo)
   const now = Date.now()
 
@@ -275,58 +289,89 @@ async function evaluatePidHeating(info) {
     const dtSec = windowMs / 1000
     // 核心误差 = 目标出水温度 - 当前出水温度
     const error = targetTemp - tempOut
-    const pTerm = kp * error
-    // 微分项：第一次没有前一次误差，设为 0（避免出现巨大尖峰）
-    const derivative = state.hasLastError ? (error - state.lastError) / dtSec : 0
-    const dTerm = kd * derivative
 
-    // 条件积分抗饱和：只有当占空比真正顶到上/下限，且积分继续累加会让它更出界时，
-    // 才暂停积分累加。之前用 uWithNewIntegral > dutyMax 判定过于激进，会出现
-    // "占空比 96% 还没顶到 100%，却因为试算值>100 而锁死积分不增加"的问题，
-    // 导致水温长时间爬升后因积分不足无法弥补稳态残差。
-    const rawIntegral = state.integral + error * dtSec
-    // 先算加入当前积分后的 PID 输出
-    const uBefore = pTerm + ki * state.integral + dTerm
-    const dutyBefore = Math.max(dutyMin, Math.min(dutyMax, uBefore))
-    const uAfter  = pTerm + ki * rawIntegral + dTerm
-    const dutyAfter  = Math.max(dutyMin, Math.min(dutyMax, uAfter))
-    // 饱和判定条件（需要同时满足）：
-    //   A) 当前占空比已经到边界（顶上限/下下限）
-    //   B) 加入本次积分后仍然出不去
-    //   C) 误差方向还在把占空比往边界外推
-    //   D) 积分变化方向与误差方向一致（即本次积分确实在"推过界"而不是在拉回）
-    const kiBefore = ki * state.integral
-    const kiAfter  = ki * rawIntegral
-    const saturatedHigh =
-      dutyBefore >= dutyMax && dutyAfter >= dutyMax && error > 0 && kiAfter >= kiBefore
-    const saturatedLow =
-      dutyBefore <= dutyMin && dutyAfter <= dutyMin && error < 0 && kiAfter <= kiBefore
-    if (!saturatedHigh && !saturatedLow) state.integral = rawIntegral
+    // ① 死区：误差绝对值小于 deadband 时保持上一次 duty 不变
+    // 避免温度已在目标附近微小波动时继电器频繁切换
+    if (state.hasLastError && Math.abs(error) < deadband) {
+      // 保持上一次 duty，仅更新窗口时间戳，跳过 PID 计算
+      state.lastError = error
+      console.log(`[PidHeating] PWM窗口#${state.cycleIndex} 死区激活 | T_out=${tempOut.toFixed(1)}℃ 误差=${error.toFixed(2)}℃ < 死区${deadband}℃ | 保持占空比=${state.lastDuty}%`)
+    } else {
+      // 正常 PID 计算
+      const pTerm = kp * error
 
-    const u = pTerm + ki * state.integral + dTerm
-    const duty = Math.max(dutyMin, Math.min(dutyMax, u))
+      // ② 微分项一阶低通滤波：减小传感器噪声对 D 项的放大
+      // 公式：dFiltered = α·dRaw + (1-α)·dFiltered
+      const rawDerivative = state.hasLastError ? (error - state.lastError) / dtSec : 0
+      const alpha = derivativeFilter
+      state.filteredDerivative = state.hasLastError
+        ? alpha * rawDerivative + (1 - alpha) * state.filteredDerivative
+        : 0
+      const dTerm = kd * state.filteredDerivative
 
-    // 本窗口内加热器应该开启的时长（秒级 PWM，固定 200W 功率）
-    state.onDurationMs = Math.max(0, Math.min(windowMs, (duty / 100) * windowMs))
-    state.lastError = error
-    state.hasLastError = true
-    state.lastDuty = Number(duty.toFixed(1))
+      // ④ 前馈控制：进水温度变化时提前调整 duty，补偿热惯性
+      // ff = Kff × (T_target - T_in)，进水越冷前馈越大
+      let ffTerm = 0
+      if (kff > 0 && tempIn != null) {
+        ffTerm = kff * (targetTemp - tempIn)
+        state.lastTempIn = tempIn
+      }
 
-    // 诊断日志
-    const diag = [
-      `[PidHeating] PWM窗口#${state.cycleIndex}`,
-      `设备=${deviceNo || '全局'}`,
-    ]
-    if (tempIn != null) diag.push(`T_in=${tempIn.toFixed(1)}℃`)
-    diag.push(`T_out=${tempOut.toFixed(1)}℃`)
-    diag.push(`目标=${targetTemp}℃`)
-    diag.push(`误差=${Number(error.toFixed(2))}℃`)
-    diag.push(`P=${Number(pTerm.toFixed(2))} I=${Number((ki * state.integral).toFixed(2))} D=${Number(dTerm.toFixed(2))}`)
-    diag.push(`占空比=${state.lastDuty}% (开${Math.round(state.onDurationMs)}ms/周期${windowMs}ms)`)
-    if (saturatedHigh || saturatedLow) {
-      diag.push(`[抗饱和激活${saturatedHigh ? '上限' : '下限'}，积分暂停累加]`)
+      // 条件积分抗饱和：只有当占空比真正顶到上/下限，且积分继续累加会让它更出界时，
+      // 才暂停积分累加。
+      const rawIntegral = state.integral + error * dtSec
+      const uBefore = pTerm + ki * state.integral + dTerm + ffTerm
+      const dutyBefore = Math.max(dutyMin, Math.min(dutyMax, uBefore))
+      const uAfter  = pTerm + ki * rawIntegral + dTerm + ffTerm
+      const dutyAfter  = Math.max(dutyMin, Math.min(dutyMax, uAfter))
+      const kiBefore = ki * state.integral
+      const kiAfter  = ki * rawIntegral
+      const saturatedHigh =
+        dutyBefore >= dutyMax && dutyAfter >= dutyMax && error > 0 && kiAfter >= kiBefore
+      const saturatedLow =
+        dutyBefore <= dutyMin && dutyAfter <= dutyMin && error < 0 && kiAfter <= kiBefore
+      if (!saturatedHigh && !saturatedLow) state.integral = rawIntegral
+
+      const u = pTerm + ki * state.integral + dTerm + ffTerm
+      let duty = Math.max(dutyMin, Math.min(dutyMax, u))
+
+      // ③ 输出斜率限制：duty 单次最大变化幅度，防止阶跃跳变
+      // 限制变化量在 ±dutyRampLimit% 以内（0 = 不限制）
+      if (dutyRampLimit > 0 && state.hasLastError) {
+        const dutyChange = duty - state.lastDuty
+        if (Math.abs(dutyChange) > dutyRampLimit) {
+          duty = state.lastDuty + Math.sign(dutyChange) * dutyRampLimit
+          duty = Math.max(dutyMin, Math.min(dutyMax, duty))
+        }
+      }
+
+      // 本窗口内加热器应该开启的时长（秒级 PWM，固定 200W 功率）
+      state.onDurationMs = Math.max(0, Math.min(windowMs, (duty / 100) * windowMs))
+      state.lastError = error
+      state.hasLastError = true
+      state.lastDutyRaw = Number(duty.toFixed(1))
+      state.lastDuty = Number(duty.toFixed(1))
+
+      // 诊断日志
+      const diag = [
+        `[PidHeating] PWM窗口#${state.cycleIndex}`,
+        `设备=${deviceNo || '全局'}`,
+      ]
+      if (tempIn != null) diag.push(`T_in=${tempIn.toFixed(1)}℃`)
+      diag.push(`T_out=${tempOut.toFixed(1)}℃`)
+      diag.push(`目标=${targetTemp}℃`)
+      diag.push(`误差=${Number(error.toFixed(2))}℃`)
+      diag.push(`P=${Number(pTerm.toFixed(2))} I=${Number((ki * state.integral).toFixed(2))} D=${Number(dTerm.toFixed(2))}`)
+      if (kff > 0 && ffTerm !== 0) diag.push(`FF=${Number(ffTerm.toFixed(2))}`)
+      diag.push(`占空比=${state.lastDuty}% (开${Math.round(state.onDurationMs)}ms/周期${windowMs}ms)`)
+      if (saturatedHigh || saturatedLow) {
+        diag.push(`[抗饱和激活${saturatedHigh ? '上限' : '下限'}，积分暂停累加]`)
+      }
+      if (dutyRampLimit > 0 && Math.abs(duty - state.lastDutyRaw) >= dutyRampLimit) {
+        diag.push(`[斜率限制${dutyRampLimit}%/周期]`)
+      }
+      console.log(diag.join(' | '))
     }
-    console.log(diag.join(' | '))
   }
 
   // ============================================================
