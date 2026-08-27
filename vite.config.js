@@ -37,6 +37,7 @@ export default defineConfig({
       '/api/device-status': backendProxy,
       '/api/cumulative': backendProxy,
       '/api/time-window': backendProxy,
+      '/api/pid-autotune/apply': backendProxy,
       '/ws': {
         ...backendProxy,
         ws: true

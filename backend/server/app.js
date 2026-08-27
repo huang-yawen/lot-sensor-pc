@@ -69,6 +69,10 @@ app.get('/api/cumulative', cumulativeController)
 const timeWindowController = require('./controllers/timeWindow/timeWindowController')
 app.get('/api/time-window', timeWindowController)
 
+// PID 自整定：把自整定算出的建议 Kp/Ki/Kd 写入指令中心
+const { applyAutoTuneResult } = require('./controllers/system/pidAutoTuneController')
+app.post('/api/pid-autotune/apply', applyAutoTuneResult)
+
 // 设备状态只来源于 DeviceManager 对 t_device 的同步结果。
 app.get('/api/device-status', async (req, res) => {
     await mqttClient.waitForDeviceSync();

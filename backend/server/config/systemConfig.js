@@ -593,6 +593,32 @@ const defaultConfig = {
   },
 
   // --------------------------------------------------------------------------
+  // 12.3 PID 自整定（继电反馈整定法 / Relay Feedback Autotuning）
+  // --------------------------------------------------------------------------
+  // 开启后暂时接管加热输出：让加热器在“目标温度 ± 回差”之间强制切换高/低占空比，
+  // 逼出温度的稳定振荡，记录振荡周期和振幅后按 Ziegler-Nichols 公式反推 Kp/Ki/Kd，
+  // 只写入 result 作为“建议值”，不会自动覆盖当前生效的 Kp/Ki/Kd，需要在页面点“应用”。
+  //   enabled       - 开始/停止自整定
+  //   relayHighDuty - 继电测试高电平占空比(%)
+  //   relayLowDuty  - 继电测试低电平占空比(%)
+  //   hysteresis    - 温度回差(℃)，防止在目标温度附近抖动切换
+  //   minCycles     - 至少采集多少个完整振荡周期才计算结果（第 1 个周期数据不稳定会丢弃）
+  //   timeoutMs     - 整定超时时间，超时未完成自动判定失败并停止
+  // status/progress/message/result 由服务运行时写回，不需要手动填。
+  PID_AUTOTUNE: {
+    enabled: false,
+    relayHighDuty: 100,
+    relayLowDuty: 0,
+    hysteresis: 0.3,
+    minCycles: 4,
+    timeoutMs: 1800000,
+    status: 'idle',   // idle | running | done | failed
+    progress: 0,
+    message: '',
+    result: null,     // { ku, pu, amplitude, kp, ki, kd, tunedAt }
+  },
+
+  // --------------------------------------------------------------------------
   // 13. 需要计算的数据（首页专用展示板块）
   // --------------------------------------------------------------------------
   // 每个指标可用布尔值独立控制是否在首页展示；enabled 是总开关。
@@ -837,6 +863,19 @@ function validate(config) {
     if (!Number.isFinite(pid[key])) throw new Error(`PID_HEATING.${key} 必须是数字`)
   }
   if (!Number.isFinite(pid.windowMs) || pid.windowMs <= 0) throw new Error('PID_HEATING.windowMs 必须是大于 0 的数字')
+  const autoTune = config.PID_AUTOTUNE
+  if (!autoTune || typeof autoTune !== 'object' || Array.isArray(autoTune)) throw new Error('PID_AUTOTUNE 必须是 JSON 对象')
+  if (typeof autoTune.enabled !== 'boolean') throw new Error('PID_AUTOTUNE.enabled 必须是布尔值')
+  for (const key of ['relayHighDuty', 'relayLowDuty', 'hysteresis']) {
+    if (!Number.isFinite(autoTune[key])) throw new Error(`PID_AUTOTUNE.${key} 必须是数字`)
+  }
+  if (!Number.isInteger(autoTune.minCycles) || autoTune.minCycles < 2) throw new Error('PID_AUTOTUNE.minCycles 必须是大于等于 2 的整数')
+  if (!Number.isFinite(autoTune.timeoutMs) || autoTune.timeoutMs <= 0) throw new Error('PID_AUTOTUNE.timeoutMs 必须是大于 0 的数字')
+  if (!['idle', 'running', 'done', 'failed'].includes(autoTune.status)) throw new Error('PID_AUTOTUNE.status 取值非法')
+  if (!Number.isFinite(autoTune.progress) || autoTune.progress < 0) throw new Error('PID_AUTOTUNE.progress 必须是大于等于 0 的数字')
+  if (autoTune.result !== null && (typeof autoTune.result !== 'object' || Array.isArray(autoTune.result))) {
+    throw new Error('PID_AUTOTUNE.result 必须是 null 或 JSON 对象')
+  }
   const computed = config.COMPUTED_METRICS
   if (!computed || typeof computed !== 'object' || Array.isArray(computed)) throw new Error('COMPUTED_METRICS 必须是 JSON 对象')
   for (const key of ['enabled', 'resistanceK', 'pressureDropRate', 'tempChangeRate', 'heatExchangeEfficiency', 'eerHeatBalance', 'flowPressureCurve', 'cumulativeFlow', 'averageVelocity', 'waterLevel', 'averageTempChart', 'averageVelocityChart']) {

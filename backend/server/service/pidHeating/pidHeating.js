@@ -87,6 +87,9 @@ async function readSwitchOn(prefix, deviceNo) {
  * PID 专属开关的两级结构）。两个指令项都还没配置时才退回 PID_HEATING.enabled 兜底。
  */
 async function isPidEnabled(deviceNo) {
+  // 自整定运行期间也要接管加热，autoControl.js/layeredControl.js 都是靠这个函数
+  // 判断是否让位给 PID，顺带让它们在自整定时也让位，不需要额外改这两个文件。
+  if (systemConfig.getConfig().PID_AUTOTUNE?.enabled === true) return true
   const master = await readSwitchOn('auto_control_enabled', deviceNo)
   const pid = await readSwitchOn('pid_enabled', deviceNo)
   if (master == null && pid == null) {
@@ -220,6 +223,13 @@ async function evaluatePidHeating(info) {
     if (isAnyLocked()) return []
   } else {
     if (isLockedByFault(deviceNo)) return []
+  }
+
+  // ====== 自整定接管 ======
+  // 自整定开启时，这条消息交给继电反馈测试处理，不跑正常 PID，避免两边抢控加热。
+  if (rootConfig.PID_AUTOTUNE?.enabled === true) {
+    const { evaluateAutoTune } = require('./pidAutoTune')
+    return evaluateAutoTune(info)
   }
 
   if (!(await isPidEnabled(deviceNo))) return []
@@ -424,4 +434,6 @@ async function evaluatePidHeating(info) {
   return actions
 }
 
-module.exports = { evaluatePidHeating, isPidEnabled }
+// readTempOut/getTargetTemp/setHeater/resolveConfigIdByName 额外导出给 pidAutoTune.js 复用，
+// 避免自整定服务重复实现同一套字段读取/指令下发逻辑。
+module.exports = { evaluatePidHeating, isPidEnabled, readTempOut, getTargetTemp, setHeater, resolveConfigIdByName }

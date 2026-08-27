@@ -57,6 +57,7 @@ const formData = reactive({});
 const pendingUpdates = new Set();
 // 以“设备编号+配置项+值”标识请求中的操作，拦截控件事件重复触发造成的双重下发。
 let unsubscribePendingCommands = null;
+let unsubscribeDirectUpdate = null;
 const icons = markRaw({
   0: Icons.Pointer, 1: Icons.SwitchButton, 2: Icons.Edit,
   3: Icons.Operation, 4: Icons.Guide, 5: Icons.Memo
@@ -188,6 +189,14 @@ onMounted(async () => {
   });
   connectWebSocket();
 
+  unsubscribeDirectUpdate = wsOn('direct_data_updated', async (payload) => {
+    const targetId = String(payload?.d_no ?? 'null')
+    const myId = String(prop.id)
+    if (targetId === myId || targetId === 'null' || payload?.reset) {
+      await initializeForm()
+    }
+  })
+
   if (prop.storeData.length === 0) {
     await prop.fetchDirectData();
   }
@@ -197,6 +206,7 @@ onMounted(async () => {
 
 onUnmounted(() => {
   unsubscribePendingCommands?.();
+  unsubscribeDirectUpdate?.();
   if (faultTimer) clearInterval(faultTimer);
 });
 </script>

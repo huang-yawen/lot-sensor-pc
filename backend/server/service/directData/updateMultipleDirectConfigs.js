@@ -19,6 +19,9 @@ module.exports = async (req, res) => {
             console.warn('[Backend Update] no row changed')
         }
 
+        const wsBroadcast = req.app.get('wsBroadcast')
+        if (wsBroadcast) wsBroadcast('direct_data_updated', { config_id, value, d_no })
+
         res.json({ success: true, message: 'Configuration saved successfully.' })
     } catch (err) {
         console.error('Backend /multipleDirectData error:', err)
