@@ -58,6 +58,30 @@ const pendingUpdates = new Set();
 // 以“设备编号+配置项+值”标识请求中的操作，拦截控件事件重复触发造成的双重下发。
 let unsubscribePendingCommands = null;
 let unsubscribeDirectUpdate = null;
+let unsubscribeBehaviorSync = null;
+
+// 硬编码的开关 preffix ↔ t_behavior_field_mapper.f_name 映射：数据库里没有能直接
+// 关联“指令项”和“行为数据字段”的字段，只能靠这份约定维护；如果以后改了水泵/加热
+// 的中文名或 preffix，这里要同步改。只覆盖开关类字段，不碰目标温度等参数配置项。
+const SWITCH_FIELD_MAP = { pump: "水泵", heater: "加热" };
+
+// 收到设备行为数据上报时，把水泵/加热的真实开关状态同步进表单，这样即使设备状态是
+// 被网页以外的方式（物理按钮、设备自身逻辑等）改变的，页面也能实时反映真实值，
+// 不用手动刷新。只同步这两个开关字段，不影响用户正在编辑的其他参数。
+const syncSwitchStates = async () => {
+  try {
+    const res = await api.get("/dataByType", { params: { type: "behavior", pageSize: 1, page: 1 } });
+    const latest = res.data?.data?.list?.[0];
+    if (!latest) return;
+    prop.storeData.forEach((node) => {
+      const fieldLabel = SWITCH_FIELD_MAP[node.preffix];
+      if (!fieldLabel || latest[fieldLabel] == null) return;
+      formData[node.id] = latest[fieldLabel] === "开" ? "on" : "off";
+    });
+  } catch (err) {
+    console.error("[DeviceSetting] 同步开关真实状态失败:", err);
+  }
+};
 const icons = markRaw({
   0: Icons.Pointer, 1: Icons.SwitchButton, 2: Icons.Edit,
   3: Icons.Operation, 4: Icons.Guide, 5: Icons.Memo
@@ -197,6 +221,8 @@ onMounted(async () => {
     }
   })
 
+  unsubscribeBehaviorSync = wsOn("behavior_data", syncSwitchStates);
+
   if (prop.storeData.length === 0) {
     await prop.fetchDirectData();
   }
@@ -207,6 +233,7 @@ onMounted(async () => {
 onUnmounted(() => {
   unsubscribePendingCommands?.();
   unsubscribeDirectUpdate?.();
+  unsubscribeBehaviorSync?.();
   if (faultTimer) clearInterval(faultTimer);
 });
 </script>

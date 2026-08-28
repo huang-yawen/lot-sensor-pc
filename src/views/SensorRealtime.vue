@@ -15,7 +15,7 @@
       </div>
 
       <div class="chart-wrapper" v-if="chartsEnabled">
-        <LineBarCharts :data="chartData" :settings="store.sensorData?.chartSettings || {}" />
+        <LineBarCharts :data="data" :settings="store.sensorData?.chartSettings || {}" />
       </div>
     </div>
   </div>
@@ -41,9 +41,8 @@ const data = computed(() => {
   console.log('computed data:', result)
   return result
 })
-// 接口按 id DESC（最新在前）最多返回 20 条，图表只展示最新 5 条（LineBarCharts 默认 pageSize）；
-// 卡片保留原顺序展示最新数据，图表单独反转成"越靠右越新"，二者不再冲突。
-const chartData = computed(() => [...(data.value || [])].slice(0, 5).reverse())
+// 接口按 id DESC（最新在前）最多返回 20 条；LineBarCharts 组件内部会自动截取最新
+// pageSize 条（默认 5）并反转成时间递增顺序，卡片和图表都直接用原始顺序的 data 即可。
 const chartsEnabled = computed(() => systemStore.config.ENABLE_CHARTS !== false)
 
 const startAutoRefresh = () => {

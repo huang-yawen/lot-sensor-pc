@@ -100,12 +100,13 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref } from "vue";
 import { Search } from "@element-plus/icons-vue";
 import PieChart from "../components/PieChart.vue";
 import { ErrorStore } from "../stores/ErrorStore";
 import { DisplayStore } from "@/stores/DisplayStore";
 import { useSystemConfigStore } from "@/stores/SystemConfigStore";
+import { connect, on as wsOn } from "@/utils/websocket";
 
 const store = ErrorStore();
 const displayStore = DisplayStore();
@@ -141,8 +142,8 @@ const getSearchParams = () => ({
   endTime: dateRange.value?.[1] || null,
 });
 
-const handleSearch = async (page = 1) => {
-  loading.value = true;
+const handleSearch = async (page = 1, showLoading = true) => {
+  if (showLoading) loading.value = true;
   try {
     const params = getSearchParams();
     // 顶部这一个搜索框同时驱动故障记录表格和下面的安全联锁记录表格，两个表格各自独立分页。
@@ -161,7 +162,7 @@ const handleSearch = async (page = 1) => {
     }
     await Promise.all(tasks);
   } finally {
-    loading.value = false;
+    if (showLoading) loading.value = false;
   }
 };
 
@@ -187,10 +188,21 @@ const handleSafetyPageSizeChange = (size) => {
   store.fetchSafetyData({ ...getSearchParams(), currentPage: 1, pageSize: size });
 };
 
+// WebSocket 推送新故障/告警数据时，用当前页码和筛选条件静默刷新（不切换 loading），
+// 让故障记录表格和饼图能实时看到最新数据，不用手动刷新页面。
+let unsubscribeError = null;
+
 onMounted(async () => {
   await Promise.all([systemStore.load(), displayStore.loadDisplayConfig()]);
   pageSize.value = systemStore.config.DEFAULT_PAGE_SIZE || 5;
   await handleSearch();
+
+  connect();
+  unsubscribeError = wsOn("error_data", () => handleSearch(currentPage.value, false));
+});
+
+onUnmounted(() => {
+  unsubscribeError?.();
 });
 </script>
 

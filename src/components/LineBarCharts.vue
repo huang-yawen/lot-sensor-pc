@@ -36,7 +36,8 @@ const currentChartType = ref(null)
 
 /**
  * @description 组件属性定义
- * @property {Array} data - 图表数据源
+ * @property {Array} data - 图表数据源，需按接口原始顺序传入（id DESC，最新在前）；
+ *   组件内部会自动截取最新 pageSize 条并反转成时间递增顺序，调用方不需要自己 reverse。
  * @property {Number} pageSize - 显示数据条数，默认5条
  */
 const props = defineProps({
@@ -91,8 +92,9 @@ const updateChart = (source) => {
   try {
     console.log('updateChart called with source:', source)
     
-    // 截取指定条数的数据
-    const json = source?.slice(0, props.pageSize) || []
+    // 调用方传入的数据统一按接口原始顺序（id DESC，最新在前）。先截取最新 pageSize 条，
+    // 再反转成时间递增顺序，保证图表横坐标从左到右时间变大，不需要调用方各自处理。
+    const json = (source?.slice(0, props.pageSize) || []).reverse()
     
     console.log('processed json:', json)
 
