@@ -31,7 +31,10 @@ const snapshotMap = new Map()
 async function saveSnapshot(deviceNo, triggerId) {
   const key = deviceNo || 'global'
   try {
-    // 1) 抓取所有 t_direct_config（开关 + 数值参数）的当前值
+    // 1) 抓取所有 t_direct_config（开关 + 数值参数）的当前值，不按 f_type 过滤——
+    //    必须覆盖输入框/滑块等数值类型（目标温度、Kp/Ki/Kd、各类阈值等），只排除
+    //    复位按钮自身（它是独立状态机，见文件头部说明）。之前这里误写成只取
+    //    f_type IN ('1','0')，导致数值参数没被快照覆盖，与本文件顶部文档描述不符。
     //    优先设备专属值，缺失则取全局值
     const [rows] = await promisePool.query(`
       SELECT
@@ -46,7 +49,7 @@ async function saveSnapshot(deviceNo, triggerId) {
         ON d_specific.config_id = c.id AND d_specific.d_no = ?
       LEFT JOIN t_direct d_global
         ON d_global.config_id = c.id AND d_global.d_no IS NULL
-      WHERE c.f_type IN ('1', '0')
+      WHERE (c.preffix IS NULL OR LOWER(c.preffix) != 'reset_button')
       ORDER BY c.id ASC
     `, [deviceNo || null])
 
