@@ -7,6 +7,7 @@
  */
 const promisePool = require('../../config/dbPool')
 const { getEnabledMetrics, compileMetricSql } = require('./derivedMetricService')
+const { calcBucketSeconds } = require('../../utils/timeRange')
 
 /**
  * @param {Object} [options]
@@ -23,28 +24,32 @@ async function queryDerivedMetricHistory(options = {}) {
 
   const safeLimit = Math.min(2000, Math.max(1, Number.parseInt(limit, 10) || 300))
   const conditions = []
-  const params = []
-  if (d_no) { conditions.push('d_no = ?'); params.push(d_no) }
-  if (startTime) { conditions.push('c_time >= ?'); params.push(startTime) }
-  if (endTime) { conditions.push('c_time <= ?'); params.push(endTime) }
+  const whereParams = []
+  if (d_no) { conditions.push('d_no = ?'); whereParams.push(d_no) }
+  if (startTime) { conditions.push('c_time >= ?'); whereParams.push(startTime) }
+  if (endTime) { conditions.push('c_time <= ?'); whereParams.push(endTime) }
   const whereExtra = conditions.length ? `AND ${conditions.join(' AND ')}` : ''
+
+  // 自定义公式基于单行传感器读数计算，属于瞬时量，按时间等宽分桶后取均值——道理跟
+  // averageChartQuery.js 一致，保证不同时间范围能展现横跨整个范围的趋势。
+  const bucketSeconds = startTime ? calcBucketSeconds({ startTime, endTime, pointLimit: safeLimit }) : 1
 
   const results = {}
   await Promise.all(metrics.map(async (metric) => {
     try {
       const valueExpr = compileMetricSql(metric)
       const sql = `
-        SELECT c_time, value
+        SELECT MIN(c_time) AS c_time, AVG(value) AS value
         FROM (
-          SELECT id, c_time, ${valueExpr} AS value
+          SELECT FLOOR(UNIX_TIMESTAMP(c_time) / ?) AS bucket, c_time, ${valueExpr} AS value
           FROM t_sensor_data
           WHERE 1=1 ${whereExtra}
-          ORDER BY c_time DESC, id DESC
-          LIMIT ?
-        ) AS recent
-        ORDER BY c_time ASC, id ASC
+        ) AS calculated
+        GROUP BY bucket
+        ORDER BY c_time ASC
+        LIMIT ?
       `
-      const [rows] = await promisePool.query(sql, [...params, safeLimit])
+      const [rows] = await promisePool.query(sql, [bucketSeconds, ...whereParams, safeLimit])
       results[metric.metric_key] = {
         config: {
           metric_key: metric.metric_key,

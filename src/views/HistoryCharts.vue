@@ -79,7 +79,10 @@
 
     <!-- ==================== PID跟踪对比（目标温度参考线 + 温度2实际值） ==================== -->
     <section v-if="showPidTrackingChart" class="chart-section">
-      <h2 class="section-title">PID跟踪对比</h2>
+      <h2 class="section-title">
+        PID跟踪对比
+        <span class="target-temp-badge">当前目标温度 {{ targetTemp }}℃</span>
+      </h2>
       <div class="chart-card chart-card-wide">
         <div ref="pidTrackingChartRef" class="chart-el chart-el-tall"></div>
       </div>
@@ -90,6 +93,22 @@
       <h2 class="section-title">设备状态时间线</h2>
       <div class="chart-card chart-card-wide">
         <div ref="deviceStateChartRef" class="chart-el chart-el-tall"></div>
+      </div>
+    </section>
+
+    <!-- ==================== 累计流量（从累计统计里单独摘出来，自己一张图） ==================== -->
+    <section v-if="cumulativeFlowEntry" class="chart-section">
+      <h2 class="section-title">累计流量</h2>
+      <div class="chart-card chart-card-wide">
+        <div ref="cumulativeFlowChartRef" class="chart-el chart-el-tall"></div>
+      </div>
+    </section>
+
+    <!-- ==================== 累计运行时长（加热+水泵合并对比，自己一张图） ==================== -->
+    <section v-if="switchDurationEntries.length > 0" class="chart-section">
+      <h2 class="section-title">累计运行时长</h2>
+      <div class="chart-card chart-card-wide">
+        <div ref="switchDurationChartRef" class="chart-el chart-el-tall"></div>
       </div>
     </section>
 
@@ -110,7 +129,7 @@
     </section>
 
     <el-empty
-      v-if="!loading && !cumulativeEntries.length && !timeWindowEntries.length && !showAverageChart && !showTempChart && !showFlowPressureChart && !showPidTrackingChart && !showDeviceStateChart && !derivedMetricEntries.length"
+      v-if="!loading && !cumulativeEntries.length && !timeWindowEntries.length && !showAverageChart && !showTempChart && !showFlowPressureChart && !showPidTrackingChart && !showDeviceStateChart && !cumulativeFlowEntry && !switchDurationEntries.length && !derivedMetricEntries.length"
       description="所选时间范围内暂无数据，或配置中心还没启用相关图表"
     />
   </div>
@@ -216,11 +235,16 @@ const cumulativeMetricConfigs = computed(() => {
   return map
 })
 
+// 累计流量、累计加热时长、累计水泵运行时长单独成图（见下方"累计流量"/"累计运行时长"），
+// 不再重复出现在这张合并图里；以后配置中心新增别的累计指标仍然走这里。
+const SPLIT_OUT_CUMULATIVE_KEYS = new Set(['cumulative_flow', 'cumulative_heat_time', 'cumulative_pump_time'])
+
 const cumulativeEntries = computed(() => {
   if (historyChartsConfig.value.showCumulative === false) return []
   const configs = cumulativeMetricConfigs.value
   return Object.entries(cumulativeData.value)
     .filter(([key, rows]) => {
+      if (SPLIT_OUT_CUMULATIVE_KEYS.has(key)) return false
       const cfg = configs[key]
       return Array.isArray(rows) && rows.length > 0 && cfg && (cfg.mode === 'standalone' || cfg.mode === 'both')
     })
@@ -563,8 +587,14 @@ function renderPidTrackingChart() {
         lineStyle: { color: '#3b82f6' },
         markLine: {
           symbol: 'none',
-          label: { formatter: '目标温度 {c}℃' },
-          lineStyle: { color: '#ef4444', type: 'dashed' },
+          label: {
+            formatter: '{c}℃',
+            position: 'insideEndTop',
+            fontSize: 13,
+            fontWeight: 'bold',
+            color: '#ef4444',
+          },
+          lineStyle: { color: '#ef4444', type: 'dashed', width: 2 },
           data: [{ yAxis: targetTemp.value }],
         },
       },
@@ -626,6 +656,120 @@ function renderDeviceStateChart() {
 watch([deviceStateRows, deviceStateChartRef], () => {
   nextTick(() => {
     if (deviceStateChartRef.value) renderDeviceStateChart()
+  })
+}, { deep: true })
+
+// ==================== 累计流量（从累计统计里单独摘出来，自己一张图） ====================
+const cumulativeFlowEntry = computed(() => {
+  if (historyChartsConfig.value.showCumulative === false) return null
+  const configs = cumulativeMetricConfigs.value
+  const key = 'cumulative_flow'
+  const rows = cumulativeData.value[key]
+  const cfg = configs[key]
+  if (!Array.isArray(rows) || !rows.length || !cfg || !(cfg.mode === 'standalone' || cfg.mode === 'both')) return null
+  return { key, config: cfg, rows }
+})
+
+const cumulativeFlowChartRef = ref(null)
+let cumulativeFlowChartInstance = null
+
+function renderCumulativeFlowChart() {
+  const entry = cumulativeFlowEntry.value
+  const el = cumulativeFlowChartRef.value
+  if (!entry || !el || el.offsetWidth === 0) {
+    if (el) setTimeout(renderCumulativeFlowChart, 50)
+    return
+  }
+  if (cumulativeFlowChartInstance) cumulativeFlowChartInstance.dispose()
+  const chart = echarts.init(el)
+  cumulativeFlowChartInstance = chart
+
+  const times = formatTimes(entry.rows)
+  chart.setOption({
+    tooltip: { trigger: 'axis' },
+    legend: { data: [entry.config.metric_name], top: 0 },
+    toolbox: {
+      feature: { magicType: { type: ['line', 'bar'] }, saveAsImage: { title: '下载图片' } },
+      right: 10,
+      top: 0,
+    },
+    grid: { left: 14, right: 20, top: 50, bottom: 50 },
+    xAxis: { type: 'category', data: times, axisLabel: { rotate: 15, fontSize: 10 } },
+    yAxis: { type: 'value', name: entry.config.unit || '', nameTextStyle: { fontSize: 11 } },
+    series: [{
+      name: entry.config.metric_name,
+      type: entry.config.chart_type || 'line',
+      data: entry.rows.map((r) => r.cumulative),
+      itemStyle: { color: entry.config.color || '#0ea5e9' },
+      lineStyle: { color: entry.config.color || '#0ea5e9' },
+      smooth: true,
+    }],
+  }, true)
+}
+
+watch([cumulativeFlowEntry, cumulativeFlowChartRef], () => {
+  nextTick(() => {
+    if (cumulativeFlowChartRef.value) renderCumulativeFlowChart()
+  })
+}, { deep: true })
+
+// ==================== 累计运行时长（累计加热时长 + 累计水泵运行时长，同图对比） ====================
+const switchDurationEntries = computed(() => {
+  if (historyChartsConfig.value.showCumulative === false) return []
+  const configs = cumulativeMetricConfigs.value
+  return ['cumulative_heat_time', 'cumulative_pump_time']
+    .map((key) => {
+      const rows = cumulativeData.value[key]
+      const cfg = configs[key]
+      if (!Array.isArray(rows) || !rows.length || !cfg || !(cfg.mode === 'standalone' || cfg.mode === 'both')) return null
+      return { key, config: cfg, rows }
+    })
+    .filter(Boolean)
+})
+
+const switchDurationChartRef = ref(null)
+let switchDurationChartInstance = null
+
+function renderSwitchDurationChart() {
+  const entries = switchDurationEntries.value
+  const el = switchDurationChartRef.value
+  if (!entries.length || !el || el.offsetWidth === 0) {
+    if (el) setTimeout(renderSwitchDurationChart, 50)
+    return
+  }
+  if (switchDurationChartInstance) switchDurationChartInstance.dispose()
+  const chart = echarts.init(el)
+  switchDurationChartInstance = chart
+
+  const base = entries.reduce((a, b) => (b.rows.length > a.rows.length ? b : a))
+  const times = formatTimes(base.rows)
+  const series = entries.map((entry) => ({
+    name: entry.config.metric_name,
+    type: entry.config.chart_type || 'line',
+    data: entry.rows.map((r) => r.cumulative),
+    itemStyle: { color: entry.config.color || '#0ea5e9' },
+    lineStyle: { color: entry.config.color || '#0ea5e9' },
+    smooth: true,
+  }))
+
+  chart.setOption({
+    tooltip: { trigger: 'axis' },
+    legend: { data: entries.map((e) => e.config.metric_name), top: 0 },
+    toolbox: {
+      feature: { magicType: { type: ['line', 'bar'] }, saveAsImage: { title: '下载图片' } },
+      right: 10,
+      top: 0,
+    },
+    grid: { left: 14, right: 20, top: 50, bottom: 50 },
+    xAxis: { type: 'category', data: times, axisLabel: { rotate: 15, fontSize: 10 } },
+    yAxis: { type: 'value', name: entries[0]?.config.unit || '', nameTextStyle: { fontSize: 11 } },
+    series,
+  }, true)
+}
+
+watch([switchDurationEntries, switchDurationChartRef], () => {
+  nextTick(() => {
+    if (switchDurationChartRef.value) renderSwitchDurationChart()
   })
 }, { deep: true })
 
@@ -709,6 +853,10 @@ function disposeAllCharts() {
   pidTrackingChartInstance = null
   deviceStateChartInstance?.dispose()
   deviceStateChartInstance = null
+  cumulativeFlowChartInstance?.dispose()
+  cumulativeFlowChartInstance = null
+  switchDurationChartInstance?.dispose()
+  switchDurationChartInstance = null
 }
 
 onMounted(async () => {
@@ -727,7 +875,8 @@ onUnmounted(() => {
 .range-panel { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; padding: 16px 20px; margin-bottom: 16px; border: 1px solid #e5e7eb; border-radius: 14px; background: #fff; box-shadow: 0 6px 20px rgba(15, 23, 42, .05); }
 
 .chart-section { margin: 0 0 16px; }
-.section-title { margin: 0 0 12px; font-size: 20px; color: #0f172a; }
+.section-title { margin: 0 0 12px; font-size: 20px; color: #0f172a; display: flex; align-items: center; gap: 12px; }
+.target-temp-badge { font-size: 13px; font-weight: 400; color: #ef4444; background: #fef2f2; border: 1px solid #fecaca; border-radius: 8px; padding: 2px 10px; }
 .chart-grid { display: grid; gap: 14px; }
 .chart-card { box-sizing: border-box; border: 1px solid #e5e7eb; border-radius: 14px; background: #fff; box-shadow: 0 6px 20px rgba(15, 23, 42, .05); padding: 20px; }
 .chart-card-header { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }

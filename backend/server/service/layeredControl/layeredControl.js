@@ -91,8 +91,8 @@ async function readSensors(info) {
 }
 
 async function readSwitchStates(info) {
-  const pumpAliases = await resolveFieldAliases('t_behavior_data', 'field2')
-  const heatAliases = await resolveFieldAliases('t_behavior_data', 'field3')
+  const pumpAliases = await resolveFieldAliases('t_behavior_data', 'field1')
+  const heatAliases = await resolveFieldAliases('t_behavior_data', 'field2')
   const rawPump = firstValue(info, pumpAliases)
   const rawHeat = firstValue(info, heatAliases)
   const toOn = v => {

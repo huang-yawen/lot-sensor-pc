@@ -12,6 +12,7 @@
  */
 const promisePool = require('../../config/dbPool')
 const systemConfig = require('../../config/systemConfig')
+const { calcBucketSeconds } = require('../../utils/timeRange')
 
 /**
  * 获取所有已启用的累计指标配置
@@ -68,29 +69,38 @@ async function querySingleCumulative(metric, options = {}) {
   if (startTime) { conditions.push('c_time >= ?'); subParams.push(startTime) }
   if (endTime) { conditions.push('c_time <= ?'); subParams.push(endTime) }
   const whereExtra = conditions.length ? `AND ${conditions.join(' AND ')}` : ''
-  subParams.push(safeLimit)
 
-  // 先对时间范围内的记录累计，再截取最近 N 条用于展示。id 用于相同时间下稳定排序。
+  // 累计值必须先在全部原始数据上逐行精确计算（窗口函数不能先分桶再算，否则语义错误：
+  // 分桶后的“累计”会变成对已经丢失中间行的近似值累加，跟真实累计对不上），算好之后
+  // 再按时间等宽分桶降采样，每桶只保留时间最新的一行——因为累计值单调递增，最能代表
+  // 这段时间结束时的读数。SQL 里 ? 的物理出现顺序：FLOOR(...) 里的桶宽度最先出现
+  // （calculated 的 SELECT 列表在文本上先于它 FROM 的子查询展开），然后是 WHERE 条件，
+  // 最后是外层 LIMIT。
+  const bucketSeconds = startTime ? calcBucketSeconds({ startTime, endTime, pointLimit: safeLimit }) : 1
+  const params = [bucketSeconds, ...subParams, safeLimit]
+
   const sql = `
     SELECT c_time, value, cumulative
     FROM (
-      SELECT id, c_time, value, cumulative
+      SELECT
+        c_time, value, cumulative,
+        ROW_NUMBER() OVER (PARTITION BY bucket ORDER BY c_time DESC, id DESC) AS rn
       FROM (
         SELECT
           id,
           c_time,
+          FLOOR(UNIX_TIMESTAMP(c_time) / ?) AS bucket,
           ROUND(${valueExpr}, ${precision}) AS value,
           ROUND(${aggregationSql(metric)}, ${precision}) AS cumulative
         FROM ${table}
         WHERE 1=1 ${whereExtra}
       ) AS calculated
-      ORDER BY c_time DESC, id DESC
-      LIMIT ?
-    ) AS recent
-    ORDER BY c_time ASC, id ASC
+    ) AS bucketed
+    WHERE rn = 1
+    ORDER BY c_time ASC
+    LIMIT ?
   `
 
-  const params = [...subParams]
   const [rows] = await promisePool.query(sql, params)
   return rows
 }
@@ -122,16 +132,23 @@ async function querySingleOnDurationCumulative(metric, options = {}) {
   if (startTime) { conditions.push('c_time >= ?'); subParams.push(startTime) }
   if (endTime) { conditions.push('c_time <= ?'); subParams.push(endTime) }
   const whereExtra = conditions.length ? `AND ${conditions.join(' AND ')}` : ''
-  subParams.push(safeLimit)
+
+  // 同 querySingleCumulative：先精确算出逐行累计时长，再按时间分桶，每桶取最新一行。
+  // SQL 里 ? 的物理出现顺序：FLOOR(...) 的桶宽度（calculated 的 SELECT 列表）最先出现，
+  // 然后是 with_dt 内层的 WHERE 条件，最后是外层 LIMIT。
+  const bucketSeconds = startTime ? calcBucketSeconds({ startTime, endTime, pointLimit: safeLimit }) : 1
+  const params = [bucketSeconds, ...subParams, safeLimit]
 
   const sql = `
     SELECT c_time, value, cumulative
     FROM (
-      SELECT id, c_time, value, cumulative
+      SELECT
+        c_time, value, cumulative,
+        ROW_NUMBER() OVER (PARTITION BY bucket ORDER BY c_time DESC, id DESC) AS rn
       FROM (
         SELECT
-          id,
-          c_time,
+          id, c_time,
+          FLOOR(UNIX_TIMESTAMP(c_time) / ?) AS bucket,
           is_on AS value,
           ROUND(
             SUM(COALESCE(is_on * LEAST(dt_sec, ${MAX_GAP_SEC}), 0))
@@ -148,13 +165,13 @@ async function querySingleOnDurationCumulative(metric, options = {}) {
           WHERE 1=1 ${whereExtra}
         ) AS with_dt
       ) AS calculated
-      ORDER BY c_time DESC, id DESC
-      LIMIT ?
-    ) AS recent
-    ORDER BY c_time ASC, id ASC
+    ) AS bucketed
+    WHERE rn = 1
+    ORDER BY c_time ASC
+    LIMIT ?
   `
 
-  const [rows] = await promisePool.query(sql, subParams)
+  const [rows] = await promisePool.query(sql, params)
   return rows
 }
 

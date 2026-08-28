@@ -142,9 +142,9 @@ async function readSensors(info) {
 }
 
 async function readSwitchStates(info) {
-  // 行为数据：field2=水泵，field3=加热器（与 safetyInterlock / autoControl 保持一致）
-  const pumpAliases = await resolveFieldAliases('t_behavior_data', 'field2')
-  const heatAliases = await resolveFieldAliases('t_behavior_data', 'field3')
+  // 行为数据：field1=水泵，field2=加热器（与 safetyInterlock / autoControl 保持一致）
+  const pumpAliases = await resolveFieldAliases('t_behavior_data', 'field1')
+  const heatAliases = await resolveFieldAliases('t_behavior_data', 'field2')
   const toOn = v => {
     if (v == null) return null
     const s = String(v).trim().toLowerCase()
@@ -593,6 +593,51 @@ function getAnyLockedDeviceNo() {
   return null
 }
 
+/**
+ * 服务启动时调用一次：从数据库 t_direct 里读取复位按钮当前的持久化值，同步恢复内存
+ * deviceStateMap 的故障态。
+ *
+ * 背景：deviceStateMap 是纯内存 Map，没有持久化；服务重启会把它清空、重新初始化成
+ * 默认的 NORMAL/off。但 t_direct 里的 reset_button 值不会因为重启而改变，仍停留在
+ * 重启前最后一次真实故障触发时写入的值。如果那时候还没走完"人工复位"流程（写回
+ * off），重启后就会出现"数据库里 reset_button 还是 on，但内存以为是 NORMAL"的不一致：
+ * 状态灯显示正常，复位开关却卡在"开"，且用户无法通过页面把它拨回去——因为
+ * handleResetButtonOff 会先检查 systemState !== 'FAULT' 而直接拒绝，压根不会走到
+ * "写回 t_direct 为 off"那一步。
+ *
+ * 这里只负责让内存状态跟数据库保持一致（重启后 systemState 会正确变回 FAULT，而不是
+ * 错误地显示 NORMAL），具体的故障原因（activeFaultId）在重启前没有持久化，恢复不出来，
+ * 只能留空——但至少指令页面会被正确锁定、复位开关也能正常操作触发快照恢复了。
+ */
+async function initFaultStateFromDb() {
+  try {
+    const resetConfId = await resolveConfigIdByPrefix('reset_button')
+    if (resetConfId == null) return
+
+    const singleDeviceMode = systemConfig.getConfig().SINGLE_DEVICE_MODE === true
+    let deviceNos = []
+    if (singleDeviceMode) {
+      const [rows] = await promisePool.query('SELECT `number` FROM `t_device` ORDER BY `id` ASC LIMIT 1')
+      if (rows[0]?.number) deviceNos = [String(rows[0].number).trim()]
+    } else {
+      const [rows] = await promisePool.query('SELECT `number` FROM `t_device`')
+      deviceNos = rows.map(r => String(r.number).trim()).filter(Boolean)
+    }
+
+    for (const deviceNo of deviceNos) {
+      const value = await getDirectValue({ config_id: resetConfId, d_no: deviceNo })
+      if (String(value).trim().toLowerCase() === 'on') {
+        const state = getDeviceState(deviceNo)
+        state.systemState = 'FAULT'
+        state.resetButton = 'on'
+        console.warn(`[FaultStatus] 启动时检测到数据库里复位按钮仍是 ON（设备=${deviceNo}），已同步内存故障态，避免状态不一致`)
+      }
+    }
+  } catch (err) {
+    console.error('[FaultStatus] 启动时同步复位状态失败:', err.message)
+  }
+}
+
 module.exports = {
   evaluateFaultStatus,
   handleResetButtonOff,
@@ -600,5 +645,6 @@ module.exports = {
   isLockedByFault,
   isAnyLocked,
   getAnyLockedDeviceNo,
+  initFaultStateFromDb,
   FAULT_TYPES,        // 暴露故障类型表，供前端展示和文档使用
 }

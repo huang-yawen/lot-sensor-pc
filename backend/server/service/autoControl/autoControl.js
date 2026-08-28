@@ -115,8 +115,8 @@ async function getTargetTemp(deviceNo, fallback) {
 
 /** 读取设备当前水泵/加热开关线上状态（water_Y2/heat_Y1）。 */
 async function readSwitchStates(info) {
-  const pumpAliases = await resolveFieldAliases('t_behavior_data', 'field2')
-  const heatAliases = await resolveFieldAliases('t_behavior_data', 'field3')
+  const pumpAliases = await resolveFieldAliases('t_behavior_data', 'field1')
+  const heatAliases = await resolveFieldAliases('t_behavior_data', 'field2')
   const rawPump = firstValue(info, pumpAliases)
   const rawHeat = firstValue(info, heatAliases)
   const toOn = v => {

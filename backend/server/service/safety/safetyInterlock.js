@@ -127,8 +127,8 @@ async function readSensors(info) {
 
 /** 读取水泵/加热开关的设备上报状态（跟 autoControl.js/layeredControl.js 保持一致）。 */
 async function readSwitchStates(info) {
-  const pumpAliases = await resolveFieldAliases('t_behavior_data', 'field2')
-  const heatAliases = await resolveFieldAliases('t_behavior_data', 'field3')
+  const pumpAliases = await resolveFieldAliases('t_behavior_data', 'field1')
+  const heatAliases = await resolveFieldAliases('t_behavior_data', 'field2')
   const toOn = v => {
     if (v == null) return null
     const s = String(v).trim().toLowerCase()

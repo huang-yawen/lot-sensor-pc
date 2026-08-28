@@ -3,6 +3,7 @@
  */
 const promisePool = require('../../config/dbPool')
 const systemConfig = require('../../config/systemConfig')
+const { calcBucketSeconds } = require('../../utils/timeRange')
 
 function getEnabledTimeWindowMetrics() {
   return (systemConfig.getConfig().TIME_WINDOW_METRICS || []).filter(metric => metric.enabled)
@@ -28,26 +29,34 @@ async function querySingleTimeWindow(metric, options = {}) {
   const precision = metric.precision ?? 2
   const safeLimit = Math.min(2000, Math.max(1, Number.parseInt(limit, 10) || 300))
   const conditions = []
-  const params = []
-  if (d_no) { conditions.push('d_no = ?'); params.push(d_no) }
+  const whereParams = []
+  if (d_no) { conditions.push('d_no = ?'); whereParams.push(d_no) }
   // 时间范围过滤放在窗口函数计算之前，保证滑动窗口只在所选时间范围内的数据上滚动。
-  if (startTime) { conditions.push('c_time >= ?'); params.push(startTime) }
-  if (endTime) { conditions.push('c_time <= ?'); params.push(endTime) }
+  if (startTime) { conditions.push('c_time >= ?'); whereParams.push(startTime) }
+  if (endTime) { conditions.push('c_time <= ?'); whereParams.push(endTime) }
   const whereExtra = conditions.length ? `AND ${conditions.join(' AND ')}` : ''
-  params.push(safeLimit)
 
-  // 窗口函数先在时间范围内的匹配行上计算，随后才取最近 N 条，避免窗口在分页边界被截断。
+  // 滑动窗口值必须先在全部原始数据上逐行精确计算（窗口函数不能先分桶再算），算好之后
+  // 再按时间等宽分桶降采样，每桶取最新一行——滑动平均/波动/变化率本身已经是平滑过的
+  // 计算结果，取桶内最后一个值即可代表这段时间的水平，不需要对已算好的值再求一次平均。
+  const bucketSeconds = startTime ? calcBucketSeconds({ startTime, endTime, pointLimit: safeLimit }) : 1
+  const params = [bucketSeconds, ...whereParams, safeLimit]
+
   const sql = `
     SELECT c_time, ROUND(raw_result, ${precision}) AS value
     FROM (
-      SELECT id, c_time, ${aggregationSql(metric)} AS raw_result
-      FROM ${metric.source_table}
-      WHERE 1=1 ${whereExtra}
-      ORDER BY c_time DESC, id DESC
-      LIMIT ?
-    ) AS recent
-    WHERE raw_result IS NOT NULL
-    ORDER BY c_time ASC, id ASC
+      SELECT
+        c_time, raw_result,
+        ROW_NUMBER() OVER (PARTITION BY bucket ORDER BY c_time DESC, id DESC) AS rn
+      FROM (
+        SELECT id, c_time, FLOOR(UNIX_TIMESTAMP(c_time) / ?) AS bucket, ${aggregationSql(metric)} AS raw_result
+        FROM ${metric.source_table}
+        WHERE 1=1 ${whereExtra}
+      ) AS calculated
+    ) AS bucketed
+    WHERE rn = 1 AND raw_result IS NOT NULL
+    ORDER BY c_time ASC
+    LIMIT ?
   `
   const [rows] = await promisePool.query(sql, params)
   return rows

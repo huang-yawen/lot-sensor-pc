@@ -140,7 +140,7 @@ async function readTempOut(info) {
  * 注意：返回 null 代表"未知"，调用方应保守处理（视为需要同步下发，避免永远不开/永远不关）。
  */
 async function readHeatOn(info) {
-  const aliases = await resolveFieldAliases('t_behavior_data', 'field3')
+  const aliases = await resolveFieldAliases('t_behavior_data', 'field2')
   const raw = firstValue(info, aliases)
   if (raw == null || raw === '') return null
   const s = String(raw).trim().toLowerCase()
@@ -407,7 +407,7 @@ async function evaluatePidHeating(info) {
       // 行为上报存在，只在不一致时下发
       shouldSend = heatOn !== (desired === 'on')
     } else {
-      // 行为上报未知（无 field3），与上一次实际下发不一致时同步
+      // 行为上报未知（无 field2），与上一次实际下发不一致时同步
       shouldSend = state.lastSentHeater !== desired
     }
   }

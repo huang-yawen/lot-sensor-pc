@@ -68,8 +68,8 @@ async function readSensors(info) {
 
 /** 读取水泵/加热开关线上状态。 */
 async function readSwitchStates(info) {
-  const pumpAliases = await resolveFieldAliases('t_behavior_data', 'field2')
-  const heatAliases = await resolveFieldAliases('t_behavior_data', 'field3')
+  const pumpAliases = await resolveFieldAliases('t_behavior_data', 'field1')
+  const heatAliases = await resolveFieldAliases('t_behavior_data', 'field2')
   const toOn = v => {
     if (v == null) return null
     const s = String(v).trim().toLowerCase()
@@ -320,14 +320,14 @@ async function refreshFromDB() {
   const temp2Aliases = await resolveFieldAliases('t_sensor_data', 'field2')
   const flowAliases = await resolveFieldAliases('t_sensor_data', 'field3')
   const pressureAliases = await resolveFieldAliases('t_sensor_data', 'field4')
-  const pumpAliases = await resolveFieldAliases('t_behavior_data', 'field2')
-  const heatAliases = await resolveFieldAliases('t_behavior_data', 'field3')
+  const pumpAliases = await resolveFieldAliases('t_behavior_data', 'field1')
+  const heatAliases = await resolveFieldAliases('t_behavior_data', 'field2')
 
   const [[behaviorLatest]] = await promisePool.query(
-    'SELECT field2, field3 FROM t_behavior_data ORDER BY id DESC LIMIT 1'
+    'SELECT field1, field2 FROM t_behavior_data ORDER BY id DESC LIMIT 1'
   )
-  const pumpState = behaviorLatest ? behaviorLatest.field2 : null
-  const heatState = behaviorLatest ? behaviorLatest.field3 : null
+  const pumpState = behaviorLatest ? behaviorLatest.field1 : null
+  const heatState = behaviorLatest ? behaviorLatest.field2 : null
 
   const [sensorRows] = await promisePool.query(
     'SELECT d_no, field1, field2, field3, field4, c_time FROM t_sensor_data ORDER BY id ASC'

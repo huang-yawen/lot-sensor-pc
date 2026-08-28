@@ -12,6 +12,7 @@
 const promisePool = require('../../config/dbPool')
 const systemConfig = require('../../config/systemConfig')
 const { getTargetTemp } = require('../pidHeating/pidHeating')
+const { calcBucketSeconds } = require('../../utils/timeRange')
 
 /**
  * @param {Object} [options]
@@ -33,18 +34,32 @@ async function queryAverageChart(options = {}) {
     : 'NULL'
 
   const conditions = []
-  const params = []
-  if (d_no) { conditions.push('d_no = ?'); params.push(d_no) }
-  if (startTime) { conditions.push('c_time >= ?'); params.push(startTime) }
-  if (endTime) { conditions.push('c_time <= ?'); params.push(endTime) }
+  const whereParams = []
+  if (d_no) { conditions.push('d_no = ?'); whereParams.push(d_no) }
+  if (startTime) { conditions.push('c_time >= ?'); whereParams.push(startTime) }
+  if (endTime) { conditions.push('c_time <= ?'); whereParams.push(endTime) }
   const whereExtra = conditions.length ? `AND ${conditions.join(' AND ')}` : ''
-  params.push(safeLimit)
+
+  // 按时间等宽分桶聚合降采样：把选定范围切成约 safeLimit 个桶，每桶取均值。保证不管
+  // 选多大的时间范围，图表都能展现横跨整个范围的趋势，而不会因为范围内数据量超过
+  // safeLimit，被"取最新 N 条"吃成同一批挤在末尾的数据（跟工业监控里 Grafana/InfluxDB
+  // 的按时间桶聚合思路一致）。范围内数据本来就稀疏时桶宽度会算得很小，等于不聚合。
+  const bucketSeconds = startTime ? calcBucketSeconds({ startTime, endTime, pointLimit: safeLimit }) : 1
+  const params = [bucketSeconds, ...whereParams]
 
   const sql = `
-    SELECT c_time, averageTemp, averageVelocity, temp1, temp2, flow, pressure
+    SELECT
+      MIN(c_time) AS c_time,
+      AVG(averageTemp) AS averageTemp,
+      AVG(averageVelocity) AS averageVelocity,
+      AVG(temp1) AS temp1,
+      AVG(temp2) AS temp2,
+      AVG(flow) AS flow,
+      AVG(pressure) AS pressure
     FROM (
       SELECT
-        id, c_time,
+        c_time,
+        FLOOR(UNIX_TIMESTAMP(c_time) / ?) AS bucket,
         CASE WHEN NULLIF(field1, '') IS NOT NULL AND NULLIF(field2, '') IS NOT NULL
           THEN ROUND((CAST(field1 AS DECIMAL(20,6)) + CAST(field2 AS DECIMAL(20,6))) / 2, 2)
           ELSE NULL END AS averageTemp,
@@ -55,10 +70,9 @@ async function queryAverageChart(options = {}) {
         CAST(NULLIF(field4, '') AS DECIMAL(20,6)) AS pressure
       FROM t_sensor_data
       WHERE 1=1 ${whereExtra}
-      ORDER BY c_time DESC, id DESC
-      LIMIT ?
-    ) AS recent
-    ORDER BY c_time ASC, id ASC
+    ) AS calculated
+    GROUP BY bucket
+    ORDER BY c_time ASC
   `
   const [rows] = await promisePool.query(sql, params)
   return rows

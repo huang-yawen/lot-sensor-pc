@@ -17,6 +17,7 @@ const sensorRoutes = require('./routes/sensorRoutes');
 const systemConfig = require('./config/systemConfig');
 const configController = require('./controllers/system/configController');
 const { startMonitor: startSafetyMonitor } = require('./service/safety/safetyInterlock');
+const { initFaultStateFromDb } = require('./service/faultStatus/faultStatus');
 const { getLatest: getLatestComputed, refreshFromDB: refreshComputedFromDB } = require('./service/computedMetrics/computedMetrics');
 const mqttClient = require('./mqtt/index')
 const app = express();
@@ -274,6 +275,11 @@ setTimeout(() => {
 
 // 启动安全联锁掉线监测（条件 6：传感器长时间无数据上报）。
 startSafetyMonitor();
+
+// 从数据库同步复位按钮的持久化状态到内存故障态，避免服务重启后内存被重置成
+// NORMAL，但数据库里 reset_button 仍停留在重启前的 on，导致状态显示不一致、
+// 复位开关卡死无法通过页面操作恢复。
+initFaultStateFromDb();
 
 server.listen(port, host, () => {
   console.log(`Server started: http://${host}:${port}`);
