@@ -28,7 +28,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, markRaw, watch, onUnmounted } from "vue";
+import { computed, onMounted, reactive, markRaw, watch, onUnmounted, ref, nextTick } from "vue";
 import { ElMessage } from "element-plus";
 import DynamicNode from "@/components/direct/DynamicNode.vue";
 import * as Icons from "@element-plus/icons-vue";
@@ -117,21 +117,41 @@ const initNode = (node, customRenderData) => {
   }
 };
 
+// 表单初始化（程序化给 formData 批量赋值）期间，如果某个开关组件因为 model-value
+// 变化意外把这次赋值当成"用户操作"往上冒泡了 save 事件（曾经真实发生过：找不到
+// 对应渲染数据时，initNode 会把开关填成默认值 off，结果被当成用户把开关拨到了
+// off 一样保存了出去），这里直接拦截，不管底层具体是什么机制触发的都挡住——
+// 初始化阶段本来就不该产生任何保存请求。
+const isInitializing = ref(false);
+
 const initializeForm = async () => {
-  const result = await prop.handleRender(prop.id);
-  const latestRenderData = result.data || result || [];
+  isInitializing.value = true;
+  try {
+    const result = await prop.handleRender(prop.id);
+    const latestRenderData = result.data || result || [];
 
-  Object.keys(formData).forEach(key => delete formData[key]);
+    Object.keys(formData).forEach(key => delete formData[key]);
 
-  if (prop.storeData && prop.storeData.length > 0 && latestRenderData) {
-    prop.storeData.forEach(node => initNode(node, latestRenderData));
-    console.log("[Frontend Init] 表单初始化完成，d_no: " + prop.id);
-  } else {
-    console.warn("[Frontend Init] 初始化失败");
+    if (prop.storeData && prop.storeData.length > 0 && latestRenderData) {
+      prop.storeData.forEach(node => initNode(node, latestRenderData));
+      console.log("[Frontend Init] 表单初始化完成，d_no: " + prop.id);
+    } else {
+      console.warn("[Frontend Init] 初始化失败");
+    }
+    // 等 DOM 更新完成后再多等一轮 tick，覆盖住子组件对 formData 变化做出响应、
+    // 从而可能延迟一拍才触发的事件。
+    await nextTick();
+    await nextTick();
+  } finally {
+    isInitializing.value = false;
   }
 };
 
 const handleUpdate = async (id, value) => {
+  if (isInitializing.value) {
+    console.warn(`[Frontend] 表单初始化期间收到意外的保存请求，已忽略: id=${id}, value=${JSON.stringify(value)}`);
+    return;
+  }
   formData[id] = value;
   const updateKey = String(id) + ":" + JSON.stringify(value);
   if (pendingUpdates.has(updateKey)) {
