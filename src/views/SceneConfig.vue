@@ -248,6 +248,11 @@
         <PidHeatingConfig class="embedded-config" />
       </el-tab-pane>
 
+      <el-tab-pane label="智能判定" name="judgment">
+        <el-alert type="info" :closable="false" show-icon title="配置怎么把选中的历史数据发给现场判定服务、怎么解析返回结果。请求体格式（json/form-data）、请求方法（GET/POST）、响应格式（json/text）、同步/异步任务模式都能在这里切换，赛场拿到接口文档后改配置即可，不用改代码。" />
+        <IntelligentJudgmentConfig class="embedded-config" />
+      </el-tab-pane>
+
       <el-tab-pane label="完整字段说明" name="reference">
         <div class="reference-toolbar">
           <el-input v-model="helpKeyword" clearable placeholder="搜索配置名、中文用途、示例或注意事项，例如：operation、主题、超时" />
@@ -281,6 +286,7 @@ import FaultStatusConfig from '@/views/FaultStatusConfig.vue'
 import QuantityShutdownConfig from '@/views/QuantityShutdownConfig.vue'
 import ComputedMetricsConfig from '@/views/ComputedMetricsConfig.vue'
 import PidHeatingConfig from '@/views/PidHeatingConfig.vue'
+import IntelligentJudgmentConfig from '@/views/IntelligentJudgmentConfig.vue'
 import {
   CONNECTION_MODES,
   getApiBaseUrl,
@@ -355,6 +361,7 @@ const quickGuide = [
   { title: '定量停机', tab: 'quantity', description: '累计流量达到设定值后自动停机，完成定量换热。', items: ['设定定量值（如 500L）', '达到目标关闭水泵和加热', '总流量仅做停机判定'] },
   { title: '需要计算的数据', tab: 'computed', description: '阻力系数、流速、换热效率、液位等工程指标，在首页专用板块展示；同一页面底部还能开关首页"水泵/加热累计运行时长、本次已运行时长"的显示。', items: ['系统阻力系数 K、压力陡降速率、温度变化率', '换热效率、能效比、流量-压力曲线', '累计流量、平均流速、平均温度（图表见历史图表页面）'] },
   { title: 'PID恒温', tab: 'pid', description: '加热模块只有开关量、没有功率输出，用时间比例控制模拟 PWM 占空比实现连续调温。', items: ['Kp/Ki/Kd 三个系数可调', '固定周期内按占空比开关加热，而不是简单全开/全关', '只接管加热，与“自动控制”“分层联动”的加热下发互斥'] },
+  { title: '智能判定', tab: 'judgment', description: '把选中的历史数据发给现场判定服务、解析并落库判定结果，接口形态每年可能不同，这里做成配置项现场直接改。', items: ['请求体 json/form-data、请求方法 GET/POST 可切换', '响应 json（点路径取值）/text（正则提取）可切换', '同步直接返回结果 / 异步先提交任务再轮询，可切换'] },
 ]
 
 const configHelp = [

@@ -393,16 +393,34 @@ const defaultConfig = {
     timeoutMs: 10000,
 
     // HTTP 请求头。若接口需要 Token，可增加 Authorization: 'Bearer xxx'。
+    // bodyFormat='form-data' 时这里配的 Content-Type 会被忽略（浏览器/Node fetch 会
+    // 给 FormData 自动生成带边界串的 multipart Content-Type，手动指定反而会传错）。
     headers: { 'Content-Type': 'application/json' },
 
     // batch：勾选的多条数据一次提交；single：每条数据分别请求一次再汇总。
     requestMode: 'batch',
 
+    // 请求体格式：
+    //   'json'      - 默认，整个请求体按 JSON.stringify 发送（Content-Type: application/json）。
+    //   'form-data' - 按 multipart/form-data 发送（比如现场服务要求文件上传/表单字段），
+    //                  requestTemplate 渲染出的每个顶层字段会被当成一个 FormData 字段。
+    //                  常见于去年那种“Python + 模型”接口，图像/数据文件用 multipart 传。
+    bodyFormat: 'json',
+
     // 请求体模板。可用占位符：
     // {{records}}=全部数据数组，{{record}}=当前/第一条数据，{{ids}}=原数据 ID 数组；
     // 也可取具体字段，如 {{record.field1}}。占位符独占整个字符串时保留原数据类型。
+    // method 为 GET/HEAD 时，这里渲染出的对象会被拼接成 URL 查询参数（不再放进请求体）。
     requestTemplate: { data: '{{records}}' },
 
+    // 响应格式：
+    //   'json' - 默认，把响应体当 JSON 解析，用下面的 resultPath/conclusionPath/
+    //            confidencePath 这三个“点路径”从解析后的对象里取值。
+    //   'text' - 响应不是规范 JSON（纯文字描述、或者解析失败），改用下面的
+    //            conclusionRegex/confidenceRegex 两个正则直接从原始文本里抠结论和置信度。
+    responseFormat: 'json',
+
+    // ↓↓↓ responseFormat='json' 时生效 ↓↓↓
     // 从 HTTP 响应中提取结果的点路径。例如响应 {data:{results:[]}} 对应 data.results。
     // 留空字符串表示直接使用完整响应。
     resultPath: 'data.results',
@@ -412,6 +430,50 @@ const defaultConfig = {
 
     // 从单条结果中提取“置信度”的点路径；无法转成数字时保存为 null。
     confidencePath: 'confidence',
+
+    // ↓↓↓ responseFormat='text' 时生效 ↓↓↓
+    // 从原始响应文本里提取“结论”的正则表达式，取第 1 个捕获组，例如响应文本是
+    // “检测结果：异常，置信度0.87”，可以填 '检测结果：(\\S+?)，' 取出“异常”。
+    // 留空表示不解析，结论会是 null。
+    conclusionRegex: '',
+
+    // 同上，用于提取“置信度”，取第 1 个捕获组并转成数字，例如上面例子可以填
+    // '置信度([\\d.]+)' 取出 0.87。
+    confidenceRegex: '',
+
+    // 是否为异步任务模式：
+    //   false - 默认，一次请求直接同步拿到判定结果（下面 async 开头的参数不生效）。
+    //   true  - 现场服务处理较慢时的常见设计：第一次请求只是“提交任务”，响应里带一个
+    //           任务 ID，真正的判定结果要另外发请求去查、且可能还没算完，需要轮询几次
+    //           直到状态变成“完成”。开启后走 asyncJobIdPath 起手的这一组参数。
+    asyncMode: false,
+
+    // ↓↓↓ asyncMode=true 时生效 ↓↓↓
+    // 从“提交任务”这次响应里提取任务 ID 的点路径，例如响应 {job_id:"abc"} 对应 job_id。
+    asyncJobIdPath: 'job_id',
+
+    // 查询任务结果的地址模板，用 {{jobId}} 占位符代入上面提取到的任务 ID，
+    // 例如 'http://127.0.0.1:5000/result/{{jobId}}'。
+    asyncPollUrl: '',
+
+    // 查询任务结果用的 HTTP 方法，通常是 GET。
+    asyncPollMethod: 'GET',
+
+    // 两次轮询之间的间隔（毫秒）。
+    asyncPollIntervalMs: 1000,
+
+    // 从提交任务算起，最多等待多久（毫秒）；超过这个时间还没等到完成状态就判定超时失败。
+    // 会覆盖上面的 timeoutMs（timeoutMs 只管每一次单独的 HTTP 请求本身，不管整个轮询过程）。
+    asyncMaxWaitMs: 30000,
+
+    // 从轮询响应里判断任务状态的点路径，例如响应 {status:"done"} 对应 status。
+    asyncStatusPath: 'status',
+
+    // 状态值命中这个列表里的任意一个，视为“已完成”，停止轮询、按 json/text 规则解析结果。
+    asyncDoneStatusValues: ['done', 'success', 'completed'],
+
+    // 状态值命中这个列表里的任意一个，视为“任务失败”，停止轮询并记录失败（不会一直轮询到超时）。
+    asyncFailedStatusValues: ['failed', 'error'],
   },
 
   // --------------------------------------------------------------------------
@@ -860,6 +922,23 @@ function validate(config) {
   if (!config.INTELLIGENT_JUDGMENT.url || !/^https?:\/\//i.test(config.INTELLIGENT_JUDGMENT.url)) throw new Error('INTELLIGENT_JUDGMENT.url 必须是 http:// 或 https:// 地址')
   if (!Number.isFinite(config.INTELLIGENT_JUDGMENT.timeoutMs) || config.INTELLIGENT_JUDGMENT.timeoutMs <= 0) throw new Error('INTELLIGENT_JUDGMENT.timeoutMs 必须大于 0')
   if (!['batch', 'single'].includes(config.INTELLIGENT_JUDGMENT.requestMode)) throw new Error('INTELLIGENT_JUDGMENT.requestMode 只能是 batch 或 single')
+  if (!['json', 'form-data'].includes(config.INTELLIGENT_JUDGMENT.bodyFormat)) throw new Error('INTELLIGENT_JUDGMENT.bodyFormat 只能是 json 或 form-data')
+  if (!['json', 'text'].includes(config.INTELLIGENT_JUDGMENT.responseFormat)) throw new Error('INTELLIGENT_JUDGMENT.responseFormat 只能是 json 或 text')
+  // asyncPollUrl/间隔/等待时长只在开启异步模式时才要求填对，避免没用到异步的场景被强制填一堆用不上的字段。
+  if (config.INTELLIGENT_JUDGMENT.asyncMode) {
+    if (!config.INTELLIGENT_JUDGMENT.asyncPollUrl || !/^https?:\/\//i.test(config.INTELLIGENT_JUDGMENT.asyncPollUrl)) {
+      throw new Error('INTELLIGENT_JUDGMENT.asyncMode 开启时，asyncPollUrl 必须是 http:// 或 https:// 地址')
+    }
+    if (!Number.isFinite(config.INTELLIGENT_JUDGMENT.asyncPollIntervalMs) || config.INTELLIGENT_JUDGMENT.asyncPollIntervalMs <= 0) {
+      throw new Error('INTELLIGENT_JUDGMENT.asyncPollIntervalMs 必须大于 0')
+    }
+    if (!Number.isFinite(config.INTELLIGENT_JUDGMENT.asyncMaxWaitMs) || config.INTELLIGENT_JUDGMENT.asyncMaxWaitMs <= 0) {
+      throw new Error('INTELLIGENT_JUDGMENT.asyncMaxWaitMs 必须大于 0')
+    }
+    if (!Array.isArray(config.INTELLIGENT_JUDGMENT.asyncDoneStatusValues) || config.INTELLIGENT_JUDGMENT.asyncDoneStatusValues.length === 0) {
+      throw new Error('INTELLIGENT_JUDGMENT.asyncDoneStatusValues 至少需要一个值，否则轮询永远等不到"完成"状态')
+    }
+  }
   const safety = config.SAFETY_INTERLOCK
   if (!safety || typeof safety !== 'object' || Array.isArray(safety)) throw new Error('SAFETY_INTERLOCK 必须是 JSON 对象')
   for (const key of ['enabled', 'flowLow', 'pressureHigh', 'tempHigh', 'tempDiff', 'manualMode', 'sensorOffline', 'heaterWithoutPump', 'showOnErrorPage']) {
