@@ -83,11 +83,17 @@
           :background="true" layout="sizes, prev, pager, next" :total="store.safetyTotal || 0"
           @size-change="handleSafetyPageSizeChange" @current-change="handleSafetyPageChange" />
       </div>
+
+      <div class="chart-container" v-if="chartsEnabled">
+        <div class="chart-panel">
+          <PieChart :data="store.safetyTypeStats" title="安全联锁类型分布" />
+        </div>
+      </div>
     </div>
 
     <div class="chart-container" v-if="chartsEnabled">
       <div class="chart-panel">
-        <PieChart :data="store.errTypeStats" />
+        <PieChart :data="store.errTypeStats" title="故障类型分布" />
       </div>
     </div>
   </div>
@@ -151,6 +157,7 @@ const handleSearch = async (page = 1) => {
     ];
     if (showSafetyLog.value) {
       tasks.push(store.fetchSafetyData({ ...params, currentPage: 1, pageSize: safetyPageSize.value }));
+      tasks.push(store.fetchSafetyTypeStats(params));
     }
     await Promise.all(tasks);
   } finally {

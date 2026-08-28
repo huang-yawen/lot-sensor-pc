@@ -17,6 +17,7 @@ export const ErrorStore = defineStore("ErrorStore", () => {
   const safetyData = ref([]);
   const safetyTotal = ref(0);
   const safetyLoading = ref(false);
+  const safetyTypeStats = ref([]);
 
   const formatDateTime = (value) => {
     if (!value) return "";
@@ -119,10 +120,33 @@ export const ErrorStore = defineStore("ErrorStore", () => {
     }
   };
 
+  // 安全联锁类型统计：复用同一个 /errTypeStats 接口，传 category=safety 只统计安全联锁
+  // 记录自己的数据，跟故障统计（errTypeStats）完全分开，互不影响。
+  const fetchSafetyTypeStats = async (params = {}) => {
+    try {
+      const response = await api.get("/errTypeStats", {
+        params: {
+          category: "safety",
+          keyword: params.keyword || "",
+          startTime: formatDateTime(params.startTime),
+          endTime: formatDateTime(params.endTime),
+        },
+      });
+
+      const res = response.data;
+      if (res.success) {
+        safetyTypeStats.value = res.data || [];
+      }
+    } catch (error) {
+      console.error("safetyTypeStats 请求失败:", error);
+    }
+  };
+
   return {
     fetchErrData,
     fetchErrTypeStats,
     fetchSafetyData,
+    fetchSafetyTypeStats,
     errData,
     errTypeStats,
     total,
@@ -130,5 +154,6 @@ export const ErrorStore = defineStore("ErrorStore", () => {
     safetyData,
     safetyTotal,
     safetyLoading,
+    safetyTypeStats,
   };
 });

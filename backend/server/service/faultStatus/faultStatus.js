@@ -27,7 +27,10 @@
  *
  * === 配置中心关联 ===
  *   FAULT_STATUS 每次评估动态读取（enabled / alarmCooldownMs / 五种故障独立开关 /
- *   dryBurnDurationMs / dryBurnMinRiseC / tempDiffThreshold）；阈值从指令中心 t_direct 实时读取。
+ *   dryBurnDurationMs / dryBurnMinRiseC）。flowLow/pressureLow/pressureHigh 只从指令中心
+ *   t_direct 实时读取；温差阈值（tempDiff）指令中心配置了就优先用指令中心的，没配置时
+ *   退回 FAULT_STATUS.tempDiffThreshold 兜底（跟 PID 的 Kp/Ki/Kd 同一套"指令中心优先、
+ *   配置中心兜底"模式）。
  */
 const promisePool = require('../../config/dbPool')
 const systemConfig = require('../../config/systemConfig')
@@ -256,12 +259,18 @@ async function detectFault(info, deviceNo, faultConfig) {
   const sensors = await readSensors(info)
   const states = await readSwitchStates(info)
 
-  const [flowLow, pressureLow, pressureHigh, tempDiffThreshold] = await Promise.all([
+  const [flowLow, pressureLow, pressureHigh, tempDiffFromDirect] = await Promise.all([
     getThresholdValue('flowLow', deviceNo),
     getThresholdValue('pressureLow', deviceNo),
     getThresholdValue('pressureHigh', deviceNo),
     getThresholdValue('tempDiff', deviceNo),
   ])
+  // 温差阈值：指令中心配置了"温差阈值"指令项就优先用指令中心的（跟其余阈值一样，
+  // 保存后立即生效）；指令中心没配置时才退回配置中心 FAULT_STATUS.tempDiffThreshold
+  // 兜底，不影响 flowLow/pressureLow/pressureHigh 这几个仍然只认指令中心的阈值。
+  const tempDiffThreshold = tempDiffFromDirect != null
+    ? tempDiffFromDirect
+    : (Number.isFinite(faultConfig.tempDiffThreshold) ? faultConfig.tempDiffThreshold : 3)
 
   const triggers = []
 

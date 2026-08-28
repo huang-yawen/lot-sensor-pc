@@ -6,7 +6,33 @@
  * -->
 <template>
   <div class="aggregation-config" v-loading="loading">
-    <el-alert type="info" :closable="false" show-icon title="累计与滑动指标统一在这里维护。保存后，首页独立图表和历史页内嵌列会按显示位置立即生效。" />
+    <el-alert type="info" :closable="false" show-icon title="累计与滑动指标统一在这里维护。保存后，历史图表页面的独立图表和历史页内嵌列会按显示位置立即生效。" />
+
+    <!-- ==================== 历史图表页面显示控制 ==================== -->
+    <section class="metric-section">
+      <div class="section-heading">
+        <div>
+          <h3>历史图表页面显示控制</h3>
+          <p>控制"历史图表"页面上每张图是否展示、每张图最多显示多少个数据点。比赛现场可以按需临时关掉不需要的图，减少页面干扰。</p>
+        </div>
+        <el-button type="primary" :loading="savingDisplay" @click="saveDisplayConfig">保存</el-button>
+      </div>
+      <el-form label-width="140px" class="display-form">
+        <el-form-item label="每张图最多显示">
+          <el-input-number v-model="displayConfig.pointLimit" :min="10" :max="2000" :step="50" />
+          <span class="display-hint">个数据点；所选时间范围内数据超过这个数量时，只显示最近的这些点</span>
+        </el-form-item>
+      </el-form>
+      <el-table :data="chartSwitches" border stripe>
+        <el-table-column prop="label" label="图表" min-width="180" />
+        <el-table-column prop="description" label="说明" min-width="260" />
+        <el-table-column label="显示" width="90" align="center">
+          <template #default="scope">
+            <el-switch v-model="displayConfig[scope.row.key]" />
+          </template>
+        </el-table-column>
+      </el-table>
+    </section>
 
     <section v-for="section in sections" :key="section.type" class="metric-section">
       <div class="section-heading">
@@ -65,7 +91,7 @@
           <el-form-item label="单位"><el-input v-model="form.unit" placeholder="例如：L、℃" /></el-form-item>
           <el-form-item label="小数位"><el-input-number v-model="form.precision" :min="0" :max="6" /></el-form-item>
           <el-form-item label="显示位置">
-            <el-select v-model="form.mode"><el-option label="仅首页独立图表" value="standalone" /><el-option label="仅历史页" value="inline" /><el-option label="首页和历史页" value="both" /></el-select>
+            <el-select v-model="form.mode"><el-option label="仅历史图表页面独立图表" value="standalone" /><el-option label="仅历史页" value="inline" /><el-option label="历史图表页面和历史页" value="both" /></el-select>
           </el-form-item>
           <el-form-item label="图表类型"><el-select v-model="form.chart_type"><el-option label="折线图" value="line" /><el-option label="柱状图" value="bar" /></el-select></el-form-item>
           <el-form-item label="系列颜色"><el-color-picker v-model="form.color" /></el-form-item>
@@ -86,8 +112,24 @@ import api from '@/api'
 const loading = ref(false)
 const saving = ref(false)
 const toggling = ref(false)
+const savingDisplay = ref(false)
 const cumulative = ref([])
 const windows = ref([])
+const displayConfig = reactive({
+  pointLimit: 300,
+  showCumulative: true,
+  showTimeWindow: true,
+  showAverageChart: true,
+  showTempChart: true,
+  showFlowPressureChart: true,
+})
+const chartSwitches = [
+  { key: 'showCumulative', label: '累计统计', description: '累计流量等持续累加指标的历史趋势图。' },
+  { key: 'showTimeWindow', label: '滑动统计', description: '滑动平均、波动幅度、相邻变化量。' },
+  { key: 'showAverageChart', label: '平均温度与平均流速', description: '(温度1+温度2)/2、流量÷管道面积算出的平均流速。' },
+  { key: 'showTempChart', label: '温度曲线', description: '温度1、温度2 原始读数对比，能直接看出两路温差。' },
+  { key: 'showFlowPressureChart', label: '瞬时流量与压力', description: '瞬时流量、压力原始读数，双轴对照。' },
+]
 const dialogVisible = ref(false)
 const dialogType = ref('cumulative')
 const editingIndex = ref(-1)
@@ -102,7 +144,7 @@ const rowsFor = type => type === 'cumulative' ? cumulative.value : windows.value
 const tableLabel = table => table === 't_behavior_data' ? '运行状态' : '传感数据'
 const aggregationLabel = value => ({ avg: '滑动平均', volatility: '波动幅度', rate: '相邻变化量' }[value] || value)
 const cumulativeAggregationLabel = value => (value === 'avg' ? '累计平均' : '累计求和')
-const modeLabel = value => ({ standalone: '首页', inline: '历史页', both: '首页 + 历史页' }[value] || value)
+const modeLabel = value => ({ standalone: '历史图表页面', inline: '历史页', both: '历史图表页面 + 历史页' }[value] || value)
 
 async function load() {
   loading.value = true
@@ -110,8 +152,21 @@ async function load() {
     const response = await api.get('/api/system-config')
     cumulative.value = structuredClone(response.data.data.CUMULATIVE_METRICS || [])
     windows.value = structuredClone(response.data.data.TIME_WINDOW_METRICS || [])
+    Object.assign(displayConfig, response.data.data.HISTORY_CHARTS || {})
   } catch (error) { ElMessage.error(error.response?.data?.message || '指标配置加载失败') }
   finally { loading.value = false }
+}
+
+async function saveDisplayConfig() {
+  savingDisplay.value = true
+  try {
+    await api.post('/api/system-config', { HISTORY_CHARTS: { ...displayConfig } })
+    ElMessage.success('已保存并立即生效')
+  } catch (error) {
+    ElMessage.error(error.response?.data?.message || '保存失败，改动未生效')
+  } finally {
+    savingDisplay.value = false
+  }
 }
 
 function openCreate(type) {
@@ -200,6 +255,8 @@ load()
 .section-heading { display: flex; align-items: center; justify-content: space-between; gap: 18px; margin-bottom: 14px; }
 .section-heading h3 { margin: 0 0 5px; color: #0f172a; }
 .section-heading p { margin: 0; color: #64748b; }
+.display-form { margin-bottom: 14px; }
+.display-hint { margin-left: 10px; color: #94a3b8; font-size: 12px; }
 .save-bar { display: flex; gap: 10px; margin-top: 18px; }
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 18px; }
 @media (max-width: 760px) { .form-grid { grid-template-columns: 1fr; } .section-heading { align-items: flex-start; flex-direction: column; } }

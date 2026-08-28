@@ -24,20 +24,25 @@ function aggregationSql(metric) {
 }
 
 async function querySingleTimeWindow(metric, options = {}) {
-  const { d_no, limit = 30 } = options
+  const { d_no, limit = 300, startTime, endTime } = options
   const precision = metric.precision ?? 2
-  const safeLimit = Math.min(500, Math.max(1, Number.parseInt(limit, 10) || 30))
+  const safeLimit = Math.min(2000, Math.max(1, Number.parseInt(limit, 10) || 300))
+  const conditions = []
   const params = []
-  if (d_no) params.push(d_no)
+  if (d_no) { conditions.push('d_no = ?'); params.push(d_no) }
+  // 时间范围过滤放在窗口函数计算之前，保证滑动窗口只在所选时间范围内的数据上滚动。
+  if (startTime) { conditions.push('c_time >= ?'); params.push(startTime) }
+  if (endTime) { conditions.push('c_time <= ?'); params.push(endTime) }
+  const whereExtra = conditions.length ? `AND ${conditions.join(' AND ')}` : ''
   params.push(safeLimit)
 
-  // 窗口函数先在全部匹配行上计算，随后才取最近 N 条，避免窗口在分页边界被截断。
+  // 窗口函数先在时间范围内的匹配行上计算，随后才取最近 N 条，避免窗口在分页边界被截断。
   const sql = `
     SELECT c_time, ROUND(raw_result, ${precision}) AS value
     FROM (
       SELECT id, c_time, ${aggregationSql(metric)} AS raw_result
       FROM ${metric.source_table}
-      WHERE 1=1 ${d_no ? 'AND d_no = ?' : ''}
+      WHERE 1=1 ${whereExtra}
       ORDER BY c_time DESC, id DESC
       LIMIT ?
     ) AS recent

@@ -37,11 +37,13 @@ function aggregationSql(metric) {
  * @param {Object} metric     - 单条 CUMULATIVE_METRICS 配置
  * @param {Object} [options]  - 可选参数
  * @param {string} [options.d_no]     - 设备编号过滤
- * @param {number} [options.limit=30] - 返回最近 N 条
+ * @param {number} [options.limit=300] - 返回最近 N 条
+ * @param {string} [options.startTime] - 时间范围起点（含），历史图表页面的时间选择器传入
+ * @param {string} [options.endTime]   - 时间范围终点（含），不传表示到当前时刻
  * @returns {Array<{c_time, value, cumulative}>}
  */
 async function querySingleCumulative(metric, options = {}) {
-  const { d_no, limit = 30 } = options
+  const { d_no, limit = 300, startTime, endTime } = options
   const table = metric.source_table
   const field = metric.source_field
   const precision = metric.precision ?? 2
@@ -49,13 +51,19 @@ async function querySingleCumulative(metric, options = {}) {
   // 统一对数值型字段做 CAST 防止空串报错
   const valueExpr = `CAST(NULLIF(\`${field}\`, '') AS DECIMAL(20,6))`
 
-  const safeLimit = Math.min(500, Math.max(1, Number.parseInt(limit, 10) || 30))
+  const safeLimit = Math.min(2000, Math.max(1, Number.parseInt(limit, 10) || 300))
+  const conditions = []
   const subParams = []
-  if (d_no) subParams.push(d_no)
+  if (d_no) { conditions.push('d_no = ?'); subParams.push(d_no) }
+  // 时间范围过滤必须放在窗口函数计算“累计值”之前（即下面最内层查询的 WHERE），
+  // 否则窗口函数会扫到范围外的历史行，导致“累计”变成“从有数据以来的全部总和”，
+  // 而不是所选时间范围内的累计——这是历史图表页面时间选择器要求的正确性前提。
+  if (startTime) { conditions.push('c_time >= ?'); subParams.push(startTime) }
+  if (endTime) { conditions.push('c_time <= ?'); subParams.push(endTime) }
+  const whereExtra = conditions.length ? `AND ${conditions.join(' AND ')}` : ''
   subParams.push(safeLimit)
 
-  // 先对全部匹配记录累计，再截取最近 N 条。原实现先 LIMIT 再 SUM，
-  // 会把“累计值”错误地变成“最近 N 条之和”。id 用于相同时间下稳定排序。
+  // 先对时间范围内的记录累计，再截取最近 N 条用于展示。id 用于相同时间下稳定排序。
   const sql = `
     SELECT c_time, value, cumulative
     FROM (
@@ -67,7 +75,7 @@ async function querySingleCumulative(metric, options = {}) {
           ROUND(${valueExpr}, ${precision}) AS value,
           ROUND(${aggregationSql(metric)}, ${precision}) AS cumulative
         FROM ${table}
-        WHERE 1=1 ${d_no ? 'AND d_no = ?' : ''}
+        WHERE 1=1 ${whereExtra}
       ) AS calculated
       ORDER BY c_time DESC, id DESC
       LIMIT ?

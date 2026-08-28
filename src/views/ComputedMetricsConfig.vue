@@ -109,8 +109,8 @@ const items = [
   { key: 'cumulativeFlow', title: '累计流量', description: '上一时刻总流量 + 瞬时流量 × 时间。' },
   { key: 'averageVelocity', title: '平均流速', description: 'v = Q / A（瞬时流量除以水管截面积）。' },
   { key: 'waterLevel', title: '液位', description: '基于两水箱初始水量与累计流量推算液位高度。' },
-  { key: 'averageTempChart', title: '平均温度趋势图', description: '首页专用折线图，展示 (T1+T2)/2 随时间变化。' },
-  { key: 'averageVelocityChart', title: '平均流速趋势图', description: '首页专用折线图，展示平均流速随时间变化。' },
+  { key: 'averageTempChart', title: '平均温度趋势图', description: '历史图表页面专用折线图，展示 (T1+T2)/2 随时间变化。' },
+  { key: 'averageVelocityChart', title: '平均流速趋势图', description: '历史图表页面专用折线图，展示平均流速随时间变化。' },
 ]
 
 async function load() {

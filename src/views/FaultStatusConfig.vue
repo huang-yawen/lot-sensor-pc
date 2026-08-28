@@ -60,6 +60,10 @@
           <el-input-number v-model="form.alarmCooldownMs" :min="0" :step="1000" :disabled="!form.enabled" />
           <div class="hint">同一故障（设备+故障ID）在冷却期内不重复触发告警，避免告警风暴。</div>
         </el-form-item>
+        <el-form-item label="温差阈值兜底值（℃）">
+          <el-input-number v-model="form.tempDiffThreshold" :min="0" :step="0.5" :disabled="!form.enabled || !form.pumpFault" />
+          <div class="hint">水泵开启时进出水温差超过此值判定为水泵故障（故障⑤）。指令中心配置了"温差阈值"指令项就优先用指令中心的，这里只是没配置时的兜底默认值。</div>
+        </el-form-item>
       </el-form>
     </section>
 
@@ -118,6 +122,7 @@ const defaultForm = () => ({
   dryBurnDurationMs: 5000,
   dryBurnMinRiseC: 0.1,
   alarmCooldownMs: 30000,
+  tempDiffThreshold: 3,
 })
 
 const form = reactive(defaultForm())
@@ -125,7 +130,7 @@ const form = reactive(defaultForm())
 const conditions = [
   { key: 'dryBurn', code: '③', priority: 1, title: '干烧', description: '加热器开启后，出水温度连续 dryBurnDurationMs 内升幅未达到 dryBurnMinRiseC。' },
   { key: 'pipeBlockage', code: '①', priority: 2, title: '进水口/管道堵塞', description: '压力传感器读数 < 压力下限 或 > 压力上限。' },
-  { key: 'pumpFault', code: '⑤', priority: 3, title: '水泵故障', description: '水泵开启时，进出水温差超过指令中心的温差阈值。' },
+  { key: 'pumpFault', code: '⑤', priority: 3, title: '水泵故障', description: '水泵开启时，进出水温差超过温差阈值（指令中心配置了就用指令中心的，否则用下面"参数"里的兜底值）。' },
   { key: 'pumpIdle', code: '④', priority: 4, title: '水泵空转', description: '水泵开启，但流量传感器读数为 0。' },
   { key: 'outletBlockage', code: '②', priority: 5, title: '出水口堵塞', description: '流量传感器读数 < 流量下限阈值。' },
 ]

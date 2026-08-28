@@ -69,6 +69,10 @@ app.get('/api/cumulative', cumulativeController)
 const timeWindowController = require('./controllers/timeWindow/timeWindowController')
 app.get('/api/time-window', timeWindowController)
 
+// 平均温度/平均流速历史图表接口（历史图表页面专用，按时间范围查数据库）
+const averageChartController = require('./controllers/computedMetrics/averageChartController')
+app.get('/api/average-chart', averageChartController)
+
 // PID 自整定：把自整定算出的建议 Kp/Ki/Kd 写入指令中心
 const { applyAutoTuneResult } = require('./controllers/system/pidAutoTuneController')
 app.post('/api/pid-autotune/apply', applyAutoTuneResult)

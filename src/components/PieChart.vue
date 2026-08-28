@@ -18,7 +18,8 @@ const piechart = ref(null)
 let mychart = null
 
 const props = defineProps({
-  data: { type: Array, default: () => [] }
+  data: { type: Array, default: () => [] },
+  title: { type: String, default: '故障类型分布' }
 })
 
 const handleResize = () => {
@@ -74,7 +75,7 @@ const updateChart = (source) => {
 
     mychart.setOption({
       title: {
-        text: '故障类型分布',
+        text: props.title,
         left: 'center',
         bottom: 0,
         textStyle: { color: '#64748b', fontSize: 14, fontWeight: 500 }

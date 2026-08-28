@@ -2,6 +2,7 @@
  * 【配置中心关联】无直接读取。 */
 const promisePool = require('../../config/dbPool')
 const systemConfig = require('../../config/systemConfig')
+const { CATEGORY_TYPES, resolveCategory, friendlyName } = require('./errorTypeNames')
 
 const isValidDateTime = (dateStr) => {
     if (!dateStr) return true
@@ -14,12 +15,6 @@ const validateDateRange = (startTime, endTime) => {
     const start = new Date(startTime)
     const end = new Date(endTime)
     return start <= end
-}
-
-/** category=fault（默认）只看真正的硬故障；category=safety 看安全联锁记录，两者互不混淆。 */
-const CATEGORY_TYPES = {
-    fault: ['故障保护'],
-    safety: ['安全联锁', '安全告警'],
 }
 
 const buildWhere = (query) => {
@@ -67,16 +62,25 @@ module.exports = async function getErrorHistory(query) {
     const page = parseInt(query.page) || 1
     const pageSize = Math.min(100, Math.max(1, parseInt(query.pageSize) || systemConfig.getConfig().DEFAULT_PAGE_SIZE))
     const offset = (page - 1) * pageSize
+    const category = resolveCategory(query)
     const { whereClause, params } = buildWhere(query)
 
     const [rows] = await promisePool.query(
-        `SELECT id, d_no AS '设备编号', e_msg AS '记录信息', c_time AS '报警时间', type AS '类型'
+        `SELECT id, d_no AS '设备编号', e_msg AS '记录信息', c_time AS '报警时间', type AS '类型', e_no
          FROM t_error_msg
          ${whereClause}
          ORDER BY id DESC
          LIMIT ? OFFSET ?`,
         [...params, pageSize, offset]
     )
+
+    // "类型"列原本只有"故障保护"/"安全联锁"/"安全告警"这种笼统大类，这里按 e_no 换成
+    // 具体的故障/触发条件名称（比如"干烧""未开水泵却开启加热"），e_no 之外的字段不变。
+    const list = rows.map((row) => {
+        const { e_no, ...rest } = row
+        rest['类型'] = friendlyName(category, e_no, rest['类型'])
+        return rest
+    })
 
     const countSql = `
         SELECT COUNT(*) AS total
@@ -88,7 +92,7 @@ module.exports = async function getErrorHistory(query) {
     return {
         success: true,
         data: {
-            list: rows,
+            list,
             total: countResult[0].total,
             page,
             size: pageSize,

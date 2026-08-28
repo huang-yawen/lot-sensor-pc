@@ -38,64 +38,6 @@
       </article>
     </section>
 
-    <!-- ==================== 累计派生指标（合并成一张图，可切换柱状/折线） ==================== -->
-    <section v-if="cumulativeEntries.length > 0" class="cumulative-section">
-      <h2 class="section-title">累计统计</h2>
-      <div class="cumulative-card cumulative-card-wide">
-        <div ref="cumulativeChartRef" class="cumulative-chart cumulative-chart-tall"></div>
-      </div>
-    </section>
-
-    <!-- ==================== 时间窗口派生指标独立图表区（standalone / both 模式） ==================== -->
-    <section v-if="timeWindowEntries.length > 0" class="cumulative-section">
-      <h2 class="section-title">滑动统计</h2>
-      <div class="cumulative-grid" :style="{ gridTemplateColumns: `repeat(${Math.min(timeWindowEntries.length, 2)}, 1fr)` }">
-        <div v-for="entry in timeWindowEntries" :key="entry.key" class="cumulative-card">
-          <div class="cumulative-card-header">
-            <h3>{{ entry.config.metric_name }}</h3>
-            <el-tag size="small" :type="entry.config.aggregation === 'avg' ? 'success' : entry.config.aggregation === 'volatility' ? 'warning' : 'info'">
-              {{ entry.config.aggregation === 'avg' ? '平滑' : entry.config.aggregation === 'volatility' ? '波动' : '变化率' }}
-            </el-tag>
-            <el-tag size="small">{{ entry.config.unit }}</el-tag>
-          </div>
-          <div class="cumulative-chart-wrapper">
-            <div v-if="entry.rows.length === 0" class="empty-chart">
-              <el-empty description="暂无窗口数据" :image-size="60" />
-            </div>
-            <div
-              v-else
-              :ref="(el) => setChartRef(entry.key, el)"
-              class="cumulative-chart"
-            ></div>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <!-- ==================== 需要计算的数据（工程指标专用板块） ==================== -->
-    <section v-if="computedMetricList.length" class="computed-section">
-      <h2 class="section-title">计算数据</h2>
-      <div class="computed-grid">
-        <div v-for="item in computedMetricList" :key="item.key" class="computed-card">
-          <div class="computed-card-label">{{ item.label }}</div>
-          <div class="computed-card-value">
-            <template v-if="item.value != null">{{ item.value }}</template>
-            <span v-else class="muted">--</span>
-            <span v-if="item.value != null && item.unit" class="unit">{{ item.unit }}</span>
-          </div>
-          <div v-if="item.note" class="computed-card-note">{{ item.note }}</div>
-        </div>
-      </div>
-    </section>
-
-    <!-- ==================== 平均温度 / 平均流速（合并成一张图，可切换柱状/折线） ==================== -->
-    <section v-if="showAverageChart" class="cumulative-section">
-      <h2 class="section-title">平均温度与平均流速</h2>
-      <div class="cumulative-card cumulative-card-wide">
-        <div ref="averageChartRef" class="cumulative-chart cumulative-chart-tall"></div>
-      </div>
-    </section>
-
     <section class="dashboard-grid">
       <article class="panel sensor-panel">
         <div class="panel-heading">
@@ -147,13 +89,35 @@
         <el-empty v-else description="等待设备心跳" :image-size="72" />
       </article>
     </section>
+
+    <!-- ==================== 需要计算的数据（工程指标专用板块） ==================== -->
+    <section v-if="computedMetricList.length" class="computed-section">
+      <article class="panel computed-panel">
+        <div class="panel-heading">
+          <div>
+            <h2>计算数据</h2>
+            <p>后端实时派生的工程指标</p>
+          </div>
+        </div>
+        <div class="computed-grid">
+          <div v-for="item in computedMetricList" :key="item.key" class="computed-card">
+            <div class="computed-card-label">{{ item.label }}</div>
+            <div class="computed-card-value">
+              <template v-if="item.value != null">{{ item.value }}</template>
+              <span v-else class="muted">--</span>
+              <span v-if="item.value != null && item.unit" class="unit">{{ item.unit }}</span>
+            </div>
+            <div v-if="item.note" class="computed-card-note">{{ item.note }}</div>
+          </div>
+        </div>
+      </article>
+    </section>
   </div>
 </template>
 
 <script setup>
-import { computed, onMounted, onUnmounted, ref, watch, nextTick } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import api from '@/api'
-import * as echarts from 'echarts'
 import { connect, on as wsOn } from '@/utils/websocket'
 import { useSystemConfigStore } from '@/stores/SystemConfigStore'
 import { DisplayStore } from '@/stores/DisplayStore'
@@ -261,73 +225,6 @@ const computedMetricList = computed(() => {
   return list
 })
 
-// ==================== 平均温度 / 平均流速（合并成一张图） ====================
-const computedEntry = computed(() => {
-  const values = Object.values(computedMetrics.value || {})
-  return values.find(v => v && v.series && v.series.length) || null
-})
-const showAverageChart = computed(() => {
-  const flags = computedEntry.value?.flags
-  return Boolean(flags?.averageTempChart || flags?.averageVelocityChart)
-})
-
-const averageChartRef = ref(null)
-let averageChartInstance = null
-
-function renderAverageChart() {
-  const entry = computedEntry.value
-  const el = averageChartRef.value
-  if (!entry || !el || el.offsetWidth === 0) {
-    if (el) setTimeout(renderAverageChart, 50)
-    return
-  }
-  if (averageChartInstance) averageChartInstance.dispose()
-  const chart = echarts.init(el)
-  averageChartInstance = chart
-
-  const series = entry.series || []
-  const times = series.map(p => p.time)
-  const flags = entry.flags || {}
-  const seriesList = []
-  if (flags.averageTempChart) {
-    seriesList.push({
-      name: '平均温度', type: 'line', yAxisIndex: 0, smooth: true,
-      data: series.map(p => p.averageTemp),
-      itemStyle: { color: '#3b82f6' }, lineStyle: { color: '#3b82f6' },
-    })
-  }
-  if (flags.averageVelocityChart) {
-    seriesList.push({
-      name: '平均流速', type: 'line', yAxisIndex: 1, smooth: true,
-      data: series.map(p => p.averageVelocity),
-      itemStyle: { color: '#10b981' }, lineStyle: { color: '#10b981' },
-    })
-  }
-
-  chart.setOption({
-    tooltip: { trigger: 'axis' },
-    legend: { data: seriesList.map(s => s.name), top: 0 },
-    toolbox: {
-      feature: { magicType: { type: ['line', 'bar'] }, saveAsImage: { title: '下载图片' } },
-      right: 10,
-      top: 0,
-    },
-    grid: { left: 14, right: 60, top: 50, bottom: 50 },
-    xAxis: { type: 'category', data: times, axisLabel: { rotate: 15, fontSize: 10 } },
-    yAxis: [
-      { type: 'value', name: '℃', nameTextStyle: { fontSize: 11 } },
-      { type: 'value', name: 'm/s', nameTextStyle: { fontSize: 11 } },
-    ],
-    series: seriesList
-  }, true)
-}
-
-watch([computedEntry, averageChartRef], () => {
-  nextTick(() => {
-    if (averageChartRef.value) renderAverageChart()
-  })
-}, { deep: true })
-
 const recentErrors = computed(() => Object.values(dashboard.value.sortedData || {}).flat())
 const onlineCount = computed(() => deviceStatuses.value.filter((item) => item.online).length)
 const sensorFields = computed(() => {
@@ -346,174 +243,6 @@ function displayValue(value, field) {
   if (value === null || value === undefined || value === '') return '--'
   const unit = fieldUnits.value[field]
   return unit ? `${value} ${unit}` : value
-}
-
-// ==================== 累计派生指标（合并成一张图） ====================
-const cumulativeEntries = computed(() => {
-  const data = dashboard.value.cumulativeData || {}
-  return Object.entries(data)
-    .filter(([, v]) => v.rows && v.rows.length > 0)
-    .map(([key, v]) => ({ key, config: v.config, rows: v.rows }))
-})
-
-const cumulativeChartRef = ref(null)
-let cumulativeChartInstance = null
-
-function renderCumulativeChart() {
-  const entries = cumulativeEntries.value
-  const el = cumulativeChartRef.value
-  if (!entries.length || !el || el.offsetWidth === 0) {
-    if (el) setTimeout(renderCumulativeChart, 50)
-    return
-  }
-  if (cumulativeChartInstance) cumulativeChartInstance.dispose()
-  const chart = echarts.init(el)
-  cumulativeChartInstance = chart
-
-  const formatTimes = (rows) => rows.map(r => r.c_time
-    ? new Date(r.c_time).toLocaleString('zh-CN', {
-        year: 'numeric', month: '2-digit', day: '2-digit',
-        hour: '2-digit', minute: '2-digit', second: '2-digit',
-        hour12: false,
-      })
-    : '')
-
-  // 不同累计指标可能来自不同数据表，各自独立取数、行数和时间点不一定完全对齐；
-  // 用数据点最多的一条作为共享横轴，其余按位置对齐，作为合理近似展示在同一张图里。
-  const base = entries.reduce((a, b) => (b.rows.length > a.rows.length ? b : a))
-  const times = formatTimes(base.rows)
-
-  // 按单位分左右两根纵轴，最多两种单位；超出的并入右轴。
-  const units = []
-  const series = entries.map(entry => {
-    const unit = entry.config.unit || ''
-    let axisIndex = units.indexOf(unit)
-    if (axisIndex === -1) {
-      axisIndex = units.length
-      units.push(unit)
-    }
-    return {
-      name: entry.config.metric_name,
-      type: entry.config.chart_type || 'line',
-      yAxisIndex: Math.min(axisIndex, 1),
-      data: entry.rows.map(r => r.cumulative),
-      itemStyle: { color: entry.config.color || '#0ea5e9' },
-      lineStyle: { color: entry.config.color || '#0ea5e9' },
-      smooth: true,
-    }
-  })
-
-  chart.setOption({
-    tooltip: { trigger: 'axis' },
-    legend: { data: entries.map(e => e.config.metric_name), top: 0 },
-    toolbox: {
-      feature: { magicType: { type: ['line', 'bar'] }, saveAsImage: { title: '下载图片' } },
-      right: 10,
-      top: 0,
-    },
-    grid: { left: 14, right: 60, top: 50, bottom: 50 },
-    xAxis: { type: 'category', data: times, axisLabel: { rotate: 15, fontSize: 10 } },
-    yAxis: [
-      { type: 'value', name: units[0] || '', nameTextStyle: { fontSize: 11 } },
-      { type: 'value', name: units[1] || '', nameTextStyle: { fontSize: 11 } },
-    ],
-    series
-  }, true)
-}
-
-watch([cumulativeEntries, cumulativeChartRef], () => {
-  nextTick(() => {
-    if (cumulativeChartRef.value) renderCumulativeChart()
-  })
-}, { deep: true })
-
-// ==================== 滑动统计（时间窗口派生指标，每个指标独立一张卡片） ====================
-const timeWindowEntries = computed(() => {
-  const data = dashboard.value.timeWindowData || {}
-  return Object.entries(data)
-    .filter(([, v]) => v.rows && v.rows.length > 0)
-    .map(([key, v]) => ({ key, config: v.config, rows: v.rows }))
-})
-
-/** 存放每个图表的 ECharts 实例 */
-const chartInstances = {}
-/** element refs 的 map */
-const chartRefs = {}
-
-function setChartRef(key, el) {
-  if (el && !chartRefs[key]) {
-    chartRefs[key] = el
-    nextTick(() => renderEntryChart(key))
-  }
-}
-
-function renderEntryChart(key) {
-  const entry = timeWindowEntries.value.find(e => e.key === key)
-  if (!entry) return
-  const el = chartRefs[key]
-  if (!el || el.offsetWidth === 0) {
-    setTimeout(() => renderEntryChart(key), 50)
-    return
-  }
-  if (chartInstances[key]) chartInstances[key].dispose()
-  const chart = echarts.init(el)
-  chartInstances[key] = chart
-  const rows = entry.rows
-  const name = entry.config.metric_name
-  const unit = entry.config.unit || ''
-  const color = entry.config.color || '#0ea5e9'
-  const type = entry.config.chart_type || 'line'
-  const data = rows.map(r => r.value)
-
-  const times = rows.map(r => r.c_time
-    ? new Date(r.c_time).toLocaleString('zh-CN', {
-        year: 'numeric', month: '2-digit', day: '2-digit',
-        hour: '2-digit', minute: '2-digit', second: '2-digit',
-        hour12: false,
-      })
-    : '')
-  chart.setOption({
-    tooltip: { trigger: 'axis' },
-    toolbox: {
-      feature: {
-        magicType: { type: ['line', 'bar'] },
-        saveAsImage: { title: '下载图片' },
-      },
-      right: 10,
-      top: 0,
-    },
-    grid: { left: 14, right: 60, top: 40, bottom: 50 },
-    xAxis: { type: 'category', data: times, axisLabel: { rotate: 15, fontSize: 10 } },
-    yAxis: { type: 'value', name: unit, nameTextStyle: { fontSize: 11 } },
-    series: [
-      {
-        name,
-        type,
-        data,
-        itemStyle: { color },
-        lineStyle: { color },
-        smooth: true,
-      }
-    ]
-  }, true)
-}
-
-watch(timeWindowEntries, () => {
-  nextTick(() => {
-    timeWindowEntries.value.forEach(e => {
-      if (chartRefs[e.key]) renderEntryChart(e.key)
-    })
-  })
-}, { deep: true })
-
-function disposeAllCharts() {
-  Object.values(chartInstances).forEach(c => c?.dispose())
-  for (const key in chartInstances) delete chartInstances[key]
-  for (const key in chartRefs) delete chartRefs[key]
-  cumulativeChartInstance?.dispose()
-  cumulativeChartInstance = null
-  averageChartInstance?.dispose()
-  averageChartInstance = null
 }
 
 // showLoading=false 用于 WebSocket 推送触发的后台静默刷新，不切换 loading，
@@ -557,7 +286,6 @@ onUnmounted(() => {
   unsubscribeStatus?.()
   unsubscribeSensor?.()
   unsubscribeError?.()
-  disposeAllCharts()
 })
 </script>
 
@@ -591,9 +319,10 @@ onUnmounted(() => {
 .updated-at { margin-top: 18px; color: #64748b; font-size: 13px; }
 
 /* ===== 需要计算的数据 ===== */
-.computed-section { margin: 0 0 16px; }
-.computed-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
-.computed-card { padding: 16px; border: 1px solid #e5e7eb; border-radius: 14px; background: #fff; box-shadow: 0 6px 20px rgba(15, 23, 42, .05); }
+.computed-section { margin: 16px 0 0; }
+.computed-panel { min-height: 0; }
+.computed-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 14px; }
+.computed-card { padding: 16px; border-radius: 12px; background: #f8fafc; border-left: 3px solid #0ea5e9; }
 .computed-card-label { color: #64748b; font-size: 13px; }
 .computed-card-value { margin-top: 8px; font-size: 24px; font-weight: 700; color: #0f172a; }
 .computed-card-value .unit { margin-left: 6px; font-size: 13px; font-weight: 400; color: #64748b; }
@@ -605,19 +334,6 @@ onUnmounted(() => {
 .status-dot { width: 10px; height: 10px; border-radius: 50%; background: #94a3b8; }
 .status-dot.active { background: #10b981; box-shadow: 0 0 0 4px #d1fae5; }
 
-/* ===== 累计图表区 ===== */
-.cumulative-section { margin: 0 0 16px; }
-.section-title { margin: 0 0 12px; font-size: 20px; color: #0f172a; }
-.cumulative-grid { display: grid; gap: 14px; }
-.cumulative-card { border: 1px solid #e5e7eb; border-radius: 14px; background: #fff; box-shadow: 0 6px 20px rgba(15, 23, 42, .05); padding: 20px; }
-.cumulative-card-header { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
-.cumulative-card-header h3 { margin: 0; font-size: 16px; color: #0f172a; }
-.cumulative-chart-wrapper { min-height: 240px; }
-.cumulative-chart { width: 100%; height: 240px; }
-.empty-chart { display: flex; align-items: center; justify-content: center; min-height: 240px; }
-.cumulative-card-wide { width: 100%; }
-.cumulative-chart-tall { height: 340px; }
-
-@media (max-width: 1050px) { .metric-grid { grid-template-columns: repeat(2, 1fr); } .dashboard-grid { grid-template-columns: 1fr; } .cumulative-grid { grid-template-columns: 1fr !important; } }
+@media (max-width: 1050px) { .metric-grid { grid-template-columns: repeat(2, 1fr); } .dashboard-grid { grid-template-columns: 1fr; } }
 @media (max-width: 700px) { .hero-panel { align-items: flex-start; flex-direction: column; } .metric-grid, .reading-grid { grid-template-columns: 1fr; } }
 </style>

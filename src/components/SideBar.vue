@@ -73,6 +73,10 @@
                             <span>操作历史</span>
                         </el-menu-item>
                     </el-sub-menu>
+                    <el-menu-item index="/history-charts" to="/history-charts">
+                        <el-icon><TrendCharts /></el-icon>
+                        <span>历史图表</span>
+                    </el-menu-item>
                     <el-menu-item index="/error-info" to="/error-info">
                         <el-icon>
                             <Document />

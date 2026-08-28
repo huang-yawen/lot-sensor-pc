@@ -553,8 +553,11 @@ const defaultConfig = {
   //   dryBurnDurationMs    - 加热开启后判定"温度不上升"所需的持续时长（毫秒），默认 5000
   //   dryBurnMinRiseC      - 温度上升超过这个值（℃）就算"有在升温"，重新计时，默认 0.1
   //   alarmCooldownMs      - 同一故障的冷却时间（毫秒），避免高频重复触发
-  // 注：温差阈值（tempDiffThreshold）、压力上下限、流量下限、目标温度等阈值类参数从
-  //     指令中心 t_direct 实时读取，不在配置中心维护，前端修改即时生效。
+  //   tempDiffThreshold    - 故障⑤水泵故障的温差阈值兜底默认值（℃）。指令中心配置了
+  //     "温差阈值"指令项（preffix=temp_diff）就优先用指令中心的，未配置时才用这里的值；
+  //     跟 Kp/Ki/Kd 那套"指令中心优先、配置中心兜底"是同一套模式。
+  // 注：压力上下限、流量下限、目标温度等其余阈值类参数仍然只从指令中心 t_direct 实时
+  //     读取，不在配置中心维护，本次改动不影响它们。
   FAULT_STATUS: {
     enabled: false,
     pipeBlockage: true,
@@ -565,6 +568,7 @@ const defaultConfig = {
     dryBurnDurationMs: 5000,
     dryBurnMinRiseC: 0.1,
     alarmCooldownMs: 30000,
+    tempDiffThreshold: 3,
   },
 
   // --------------------------------------------------------------------------
@@ -652,6 +656,26 @@ const defaultConfig = {
     initialWaterTank1: 5,
     initialWaterTank2: 5,
     tankAreaCm2: 100,
+  },
+
+  // --------------------------------------------------------------------------
+  // 13.1 历史图表页面显示控制
+  // --------------------------------------------------------------------------
+  // 控制"历史图表"页面上每张图是否展示、每张图最多显示多少个数据点（对应各查询接口
+  // 的 limit 参数）。比赛现场可以按需临时关掉不需要的图，减少页面干扰、加快加载。
+  //   pointLimit             - 每张图最多显示多少个数据点
+  //   showCumulative          - 显示"累计统计"
+  //   showTimeWindow          - 显示"滑动统计"
+  //   showAverageChart        - 显示"平均温度与平均流速"
+  //   showTempChart           - 显示"温度曲线"（温度1/温度2 原始读数对比）
+  //   showFlowPressureChart   - 显示"瞬时流量与压力"
+  HISTORY_CHARTS: {
+    pointLimit: 300,
+    showCumulative: true,
+    showTimeWindow: true,
+    showAverageChart: true,
+    showTempChart: true,
+    showFlowPressureChart: true,
   },
 
   // --------------------------------------------------------------------------
@@ -856,6 +880,7 @@ function validate(config) {
   if (!Number.isFinite(fault.dryBurnDurationMs) || fault.dryBurnDurationMs < 0) throw new Error('FAULT_STATUS.dryBurnDurationMs 必须是大于等于 0 的数字')
   if (!Number.isFinite(fault.dryBurnMinRiseC) || fault.dryBurnMinRiseC < 0) throw new Error('FAULT_STATUS.dryBurnMinRiseC 必须是大于等于 0 的数字')
   if (!Number.isFinite(fault.alarmCooldownMs) || fault.alarmCooldownMs < 0) throw new Error('FAULT_STATUS.alarmCooldownMs 必须是大于等于 0 的数字')
+  if (!Number.isFinite(fault.tempDiffThreshold) || fault.tempDiffThreshold < 0) throw new Error('FAULT_STATUS.tempDiffThreshold 必须是大于等于 0 的数字')
   const pid = config.PID_HEATING
   if (!pid || typeof pid !== 'object' || Array.isArray(pid)) throw new Error('PID_HEATING 必须是 JSON 对象')
   if (typeof pid.enabled !== 'boolean') throw new Error('PID_HEATING.enabled 必须是布尔值')
@@ -883,6 +908,14 @@ function validate(config) {
   }
   for (const key of ['heaterRatedPower', 'pipeAreaCm2', 'initialWaterTank1', 'initialWaterTank2', 'tankAreaCm2']) {
     if (!Number.isFinite(computed[key]) || computed[key] < 0) throw new Error(`COMPUTED_METRICS.${key} 必须是大于等于 0 的数字`)
+  }
+  const historyCharts = config.HISTORY_CHARTS
+  if (!historyCharts || typeof historyCharts !== 'object' || Array.isArray(historyCharts)) throw new Error('HISTORY_CHARTS 必须是 JSON 对象')
+  for (const key of ['showCumulative', 'showTimeWindow', 'showAverageChart', 'showTempChart', 'showFlowPressureChart']) {
+    if (typeof historyCharts[key] !== 'boolean') throw new Error(`HISTORY_CHARTS.${key} 必须是布尔值`)
+  }
+  if (!Number.isInteger(historyCharts.pointLimit) || historyCharts.pointLimit < 10 || historyCharts.pointLimit > 2000) {
+    throw new Error('HISTORY_CHARTS.pointLimit 必须是 10~2000 之间的整数')
   }
   validateAggregationMetrics(config)
   return true

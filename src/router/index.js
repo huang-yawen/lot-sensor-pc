@@ -47,9 +47,13 @@ const routes=[
                 component:()=>import('@/views/OperationHistory.vue'),
                 meta: { title: '设备数据/操作历史' }
             },{
+                path:'/history-charts',
+                component:()=>import('@/views/HistoryCharts.vue'),
+                meta: { title: '历史图表' }
+            },{
                 path:'/error-info',
                 component:()=>import('@/views/ErrorInfo.vue'),
-                meta: { title: '故障记录' }         
+                meta: { title: '故障记录' }
             },{
                 path:'/judgment-history',
                 component:()=>import('@/views/JudgmentHistory.vue'),
