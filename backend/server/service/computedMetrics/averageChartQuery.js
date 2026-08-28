@@ -11,6 +11,7 @@
  */
 const promisePool = require('../../config/dbPool')
 const systemConfig = require('../../config/systemConfig')
+const { getTargetTemp } = require('../pidHeating/pidHeating')
 
 /**
  * @param {Object} [options]
@@ -63,4 +64,15 @@ async function queryAverageChart(options = {}) {
   return rows
 }
 
-module.exports = { queryAverageChart }
+/**
+ * 当前生效的目标温度（PID 跟踪对比图用作水平参考线）。指令中心只存"当前值"，
+ * 没有历史记录，所以没法画成随时间变化的曲线，只能取当前值画一条参考线。
+ * @param {string} [d_no]
+ * @returns {Promise<number>}
+ */
+async function getCurrentTargetTemp(d_no) {
+  const fallback = systemConfig.getConfig().PID_HEATING?.targetTemp ?? 22
+  return getTargetTemp(d_no, fallback)
+}
+
+module.exports = { queryAverageChart, getCurrentTargetTemp }

@@ -77,8 +77,40 @@
       </div>
     </section>
 
+    <!-- ==================== PID跟踪对比（目标温度参考线 + 温度2实际值） ==================== -->
+    <section v-if="showPidTrackingChart" class="chart-section">
+      <h2 class="section-title">PID跟踪对比</h2>
+      <div class="chart-card chart-card-wide">
+        <div ref="pidTrackingChartRef" class="chart-el chart-el-tall"></div>
+      </div>
+    </section>
+
+    <!-- ==================== 设备状态时间线（水泵/加热开关阶梯图） ==================== -->
+    <section v-if="showDeviceStateChart" class="chart-section">
+      <h2 class="section-title">设备状态时间线</h2>
+      <div class="chart-card chart-card-wide">
+        <div ref="deviceStateChartRef" class="chart-el chart-el-tall"></div>
+      </div>
+    </section>
+
+    <!-- ==================== 自定义公式指标（每条一张卡片） ==================== -->
+    <section v-if="derivedMetricEntries.length > 0" class="chart-section">
+      <h2 class="section-title">自定义公式指标</h2>
+      <div class="chart-grid" :style="{ gridTemplateColumns: `repeat(${Math.min(derivedMetricEntries.length, 2)}, 1fr)` }">
+        <div v-for="entry in derivedMetricEntries" :key="entry.key" class="chart-card">
+          <div class="chart-card-header">
+            <h3>{{ entry.config.metric_name }}</h3>
+            <el-tag size="small">{{ entry.config.unit }}</el-tag>
+          </div>
+          <div class="chart-el-wrapper">
+            <div :ref="(el) => setDerivedChartRef(entry.key, el)" class="chart-el"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
     <el-empty
-      v-if="!loading && !cumulativeEntries.length && !timeWindowEntries.length && !showAverageChart && !showTempChart && !showFlowPressureChart"
+      v-if="!loading && !cumulativeEntries.length && !timeWindowEntries.length && !showAverageChart && !showTempChart && !showFlowPressureChart && !showPidTrackingChart && !showDeviceStateChart && !derivedMetricEntries.length"
       description="所选时间范围内暂无数据，或配置中心还没启用相关图表"
     />
   </div>
@@ -114,12 +146,18 @@ const historyChartsConfig = computed(() => ({
   showAverageChart: true,
   showTempChart: true,
   showFlowPressureChart: true,
+  showPidTrackingChart: true,
+  showDeviceStateChart: true,
+  showDerivedMetricCharts: true,
   ...systemStore.config.HISTORY_CHARTS,
 }))
 
 const cumulativeData = ref({})
 const timeWindowData = ref({})
 const averageChartRows = ref([])
+const targetTemp = ref(null)
+const deviceStateRows = ref([])
+const derivedMetricData = ref({})
 
 /** 统一的时间轴格式化，三张图共用。 */
 function formatTimes(rows) {
@@ -149,14 +187,19 @@ async function loadAll() {
   loading.value = true
   try {
     const params = currentRangeParams()
-    const [cumRes, twRes, avgRes] = await Promise.allSettled([
+    const [cumRes, twRes, avgRes, stateRes, derivedRes] = await Promise.allSettled([
       api.get('/api/cumulative', { params }),
       api.get('/api/time-window', { params }),
       api.get('/api/average-chart', { params }),
+      api.get('/api/device-state-trend', { params }),
+      api.get('/api/derived-metrics/history', { params }),
     ])
     cumulativeData.value = cumRes.status === 'fulfilled' ? (cumRes.value.data?.data || {}) : {}
     timeWindowData.value = twRes.status === 'fulfilled' ? (twRes.value.data?.data || {}) : {}
-    averageChartRows.value = avgRes.status === 'fulfilled' ? (avgRes.value.data?.data || []) : []
+    averageChartRows.value = avgRes.status === 'fulfilled' ? (avgRes.value.data?.data?.rows || []) : []
+    targetTemp.value = avgRes.status === 'fulfilled' ? (avgRes.value.data?.data?.targetTemp ?? null) : null
+    deviceStateRows.value = stateRes.status === 'fulfilled' ? (stateRes.value.data?.data || []) : []
+    derivedMetricData.value = derivedRes.status === 'fulfilled' ? (derivedRes.value.data?.data || {}) : {}
   } finally {
     loading.value = false
   }
@@ -476,10 +519,184 @@ watch([averageChartRows, flowPressureChartRef], () => {
   })
 }, { deep: true })
 
+// ==================== PID跟踪对比（目标温度参考线 + 温度2实际值） ====================
+// 目标温度在指令中心只存"当前值"，没有历史，没法画成随时间变化的曲线，
+// 只能取当前生效值画一条水平参考线（markLine），跟温度2的实际曲线对照。
+const showPidTrackingChart = computed(() => {
+  if (historyChartsConfig.value.showPidTrackingChart === false) return false
+  return targetTemp.value != null && averageChartRows.value.some((r) => r.temp2 != null)
+})
+
+const pidTrackingChartRef = ref(null)
+let pidTrackingChartInstance = null
+
+function renderPidTrackingChart() {
+  const rows = averageChartRows.value
+  const el = pidTrackingChartRef.value
+  if (!rows.length || !el || el.offsetWidth === 0) {
+    if (el) setTimeout(renderPidTrackingChart, 50)
+    return
+  }
+  if (pidTrackingChartInstance) pidTrackingChartInstance.dispose()
+  const chart = echarts.init(el)
+  pidTrackingChartInstance = chart
+
+  const times = formatTimes(rows)
+  chart.setOption({
+    tooltip: { trigger: 'axis' },
+    legend: { data: ['温度2（实际）'], top: 0 },
+    toolbox: {
+      feature: { magicType: { type: ['line', 'bar'] }, saveAsImage: { title: '下载图片' } },
+      right: 10,
+      top: 0,
+    },
+    grid: { left: 14, right: 60, top: 50, bottom: 50 },
+    xAxis: { type: 'category', data: times, axisLabel: { rotate: 15, fontSize: 10 } },
+    yAxis: { type: 'value', name: '℃', nameTextStyle: { fontSize: 11 } },
+    series: [
+      {
+        name: '温度2（实际）',
+        type: 'line',
+        smooth: true,
+        data: rows.map((r) => r.temp2),
+        itemStyle: { color: '#3b82f6' },
+        lineStyle: { color: '#3b82f6' },
+        markLine: {
+          symbol: 'none',
+          label: { formatter: '目标温度 {c}℃' },
+          lineStyle: { color: '#ef4444', type: 'dashed' },
+          data: [{ yAxis: targetTemp.value }],
+        },
+      },
+    ],
+  }, true)
+}
+
+watch([averageChartRows, targetTemp, pidTrackingChartRef], () => {
+  nextTick(() => {
+    if (pidTrackingChartRef.value) renderPidTrackingChart()
+  })
+}, { deep: true })
+
+// ==================== 设备状态时间线（水泵/加热开关阶梯图） ====================
+const showDeviceStateChart = computed(() => {
+  if (historyChartsConfig.value.showDeviceStateChart === false) return false
+  return deviceStateRows.value.some((r) => r.pumpOn != null || r.heaterOn != null)
+})
+
+const deviceStateChartRef = ref(null)
+let deviceStateChartInstance = null
+
+function renderDeviceStateChart() {
+  const rows = deviceStateRows.value
+  const el = deviceStateChartRef.value
+  if (!rows.length || !el || el.offsetWidth === 0) {
+    if (el) setTimeout(renderDeviceStateChart, 50)
+    return
+  }
+  if (deviceStateChartInstance) deviceStateChartInstance.dispose()
+  const chart = echarts.init(el)
+  deviceStateChartInstance = chart
+
+  const times = formatTimes(rows)
+  chart.setOption({
+    tooltip: { trigger: 'axis' },
+    legend: { data: ['水泵', '加热'], top: 0 },
+    toolbox: {
+      feature: { saveAsImage: { title: '下载图片' } },
+      right: 10,
+      top: 0,
+    },
+    grid: { left: 50, right: 30, top: 50, bottom: 50 },
+    xAxis: { type: 'category', data: times, axisLabel: { rotate: 15, fontSize: 10 } },
+    yAxis: {
+      type: 'value',
+      min: 0,
+      max: 1,
+      interval: 1,
+      axisLabel: { formatter: (v) => (v === 1 ? '开' : v === 0 ? '关' : '') },
+    },
+    series: [
+      { name: '水泵', type: 'line', step: 'end', data: rows.map((r) => r.pumpOn), itemStyle: { color: '#0ea5e9' }, lineStyle: { color: '#0ea5e9', width: 2 } },
+      { name: '加热', type: 'line', step: 'end', data: rows.map((r) => r.heaterOn), itemStyle: { color: '#f97316' }, lineStyle: { color: '#f97316', width: 2, type: 'dashed' } },
+    ],
+  }, true)
+}
+
+watch([deviceStateRows, deviceStateChartRef], () => {
+  nextTick(() => {
+    if (deviceStateChartRef.value) renderDeviceStateChart()
+  })
+}, { deep: true })
+
+// ==================== 自定义公式指标（"公式与图表"勾选了"历史图表"的指标，每条一张卡片） ====================
+const derivedMetricEntries = computed(() => {
+  if (historyChartsConfig.value.showDerivedMetricCharts === false) return []
+  return Object.entries(derivedMetricData.value)
+    .filter(([, v]) => v.rows && v.rows.length > 0)
+    .map(([key, v]) => ({ key, config: v.config, rows: v.rows }))
+})
+
+/** 存放每个自定义指标图表的 ECharts 实例 */
+const derivedChartInstances = {}
+/** element refs 的 map */
+const derivedChartRefs = {}
+
+function setDerivedChartRef(key, el) {
+  if (el && !derivedChartRefs[key]) {
+    derivedChartRefs[key] = el
+    nextTick(() => renderDerivedEntryChart(key))
+  }
+}
+
+function renderDerivedEntryChart(key) {
+  const entry = derivedMetricEntries.value.find((e) => e.key === key)
+  if (!entry) return
+  const el = derivedChartRefs[key]
+  if (!el || el.offsetWidth === 0) {
+    setTimeout(() => renderDerivedEntryChart(key), 50)
+    return
+  }
+  if (derivedChartInstances[key]) derivedChartInstances[key].dispose()
+  const chart = echarts.init(el)
+  derivedChartInstances[key] = chart
+  const rows = entry.rows
+  const name = entry.config.metric_name
+  const unit = entry.config.unit || ''
+  const color = entry.config.color || '#0ea5e9'
+  const type = entry.config.chart_type || 'line'
+  const data = rows.map((r) => r.value)
+  const times = formatTimes(rows)
+
+  chart.setOption({
+    tooltip: { trigger: 'axis' },
+    toolbox: {
+      feature: { magicType: { type: ['line', 'bar'] }, saveAsImage: { title: '下载图片' } },
+      right: 10,
+      top: 0,
+    },
+    grid: { left: 14, right: 60, top: 40, bottom: 50 },
+    xAxis: { type: 'category', data: times, axisLabel: { rotate: 15, fontSize: 10 } },
+    yAxis: { type: 'value', name: unit, nameTextStyle: { fontSize: 11 } },
+    series: [{ name, type, data, itemStyle: { color }, lineStyle: { color }, smooth: true }],
+  }, true)
+}
+
+watch(derivedMetricEntries, () => {
+  nextTick(() => {
+    derivedMetricEntries.value.forEach((e) => {
+      if (derivedChartRefs[e.key]) renderDerivedEntryChart(e.key)
+    })
+  })
+}, { deep: true })
+
 function disposeAllCharts() {
   Object.values(chartInstances).forEach((c) => c?.dispose())
   for (const key in chartInstances) delete chartInstances[key]
   for (const key in chartRefs) delete chartRefs[key]
+  Object.values(derivedChartInstances).forEach((c) => c?.dispose())
+  for (const key in derivedChartInstances) delete derivedChartInstances[key]
+  for (const key in derivedChartRefs) delete derivedChartRefs[key]
   cumulativeChartInstance?.dispose()
   cumulativeChartInstance = null
   averageChartInstance?.dispose()
@@ -488,6 +705,10 @@ function disposeAllCharts() {
   tempChartInstance = null
   flowPressureChartInstance?.dispose()
   flowPressureChartInstance = null
+  pidTrackingChartInstance?.dispose()
+  pidTrackingChartInstance = null
+  deviceStateChartInstance?.dispose()
+  deviceStateChartInstance = null
 }
 
 onMounted(async () => {

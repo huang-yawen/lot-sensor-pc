@@ -75,6 +75,7 @@ router.get('/api/derived-metrics', derivedMetricController.list)
 router.post('/api/derived-metrics', derivedMetricController.save)
 router.delete('/api/derived-metrics/:id', derivedMetricController.remove)
 router.post('/api/derived-metrics/preview', derivedMetricController.preview)
+router.get('/api/derived-metrics/history', derivedMetricController.history)
 
 // 测试图表数据接口
 router.get('/chart/test-data', testChartData)

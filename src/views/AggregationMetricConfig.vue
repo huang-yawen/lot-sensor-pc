@@ -6,7 +6,7 @@
  * -->
 <template>
   <div class="aggregation-config" v-loading="loading">
-    <el-alert type="info" :closable="false" show-icon title="累计与滑动指标统一在这里维护。保存后，历史图表页面的独立图表和历史页内嵌列会按显示位置立即生效。" />
+    <el-alert type="info" :closable="false" show-icon title="累计与滑动指标统一在这里维护。保存后，历史图表页面的独立图表和汇总数据页面（传感器汇总数据/行为汇总数据，取决于该指标的数据来源）内嵌列会按显示位置立即生效；实时数据页面暂不支持内嵌这两类指标。" />
 
     <!-- ==================== 历史图表页面显示控制 ==================== -->
     <section class="metric-section">
@@ -84,14 +84,15 @@
           </el-form-item>
           <el-form-item label="源字段"><el-input v-model="form.source_field" placeholder="例如：field3" /></el-form-item>
           <el-form-item label="计算方式">
-            <el-select v-if="dialogType === 'cumulative'" v-model="form.aggregation"><el-option label="累计求和" value="sum" /><el-option label="累计平均" value="avg" /></el-select>
+            <el-select v-if="dialogType === 'cumulative'" v-model="form.aggregation"><el-option label="累计求和" value="sum" /><el-option label="累计平均" value="avg" /><el-option label="开关持续时长（分钟）" value="on_duration" /></el-select>
             <el-select v-else v-model="form.aggregation"><el-option label="滑动平均" value="avg" /><el-option label="波动幅度（最大-最小）" value="volatility" /><el-option label="相邻变化量" value="rate" /></el-select>
+            <div v-if="dialogType === 'cumulative' && form.aggregation === 'on_duration'" class="switch-hint">源字段需为开关型字段（值为 1/0），统计其为 1 期间累计经过的时长；仅支持"仅历史图表页面独立图表"这一显示位置。</div>
           </el-form-item>
           <el-form-item v-if="dialogType === 'window'" label="窗口条数"><el-input-number v-model="form.window_size" :min="2" :max="100" /></el-form-item>
           <el-form-item label="单位"><el-input v-model="form.unit" placeholder="例如：L、℃" /></el-form-item>
           <el-form-item label="小数位"><el-input-number v-model="form.precision" :min="0" :max="6" /></el-form-item>
           <el-form-item label="显示位置">
-            <el-select v-model="form.mode"><el-option label="仅历史图表页面独立图表" value="standalone" /><el-option label="仅历史页" value="inline" /><el-option label="历史图表页面和历史页" value="both" /></el-select>
+            <el-select v-model="form.mode"><el-option label="仅历史图表页面独立图表" value="standalone" /><el-option label="仅汇总数据页面内嵌列" value="inline" /><el-option label="历史图表页面 + 汇总数据页面" value="both" /></el-select>
           </el-form-item>
           <el-form-item label="图表类型"><el-select v-model="form.chart_type"><el-option label="折线图" value="line" /><el-option label="柱状图" value="bar" /></el-select></el-form-item>
           <el-form-item label="系列颜色"><el-color-picker v-model="form.color" /></el-form-item>
@@ -122,6 +123,9 @@ const displayConfig = reactive({
   showAverageChart: true,
   showTempChart: true,
   showFlowPressureChart: true,
+  showPidTrackingChart: true,
+  showDeviceStateChart: true,
+  showDerivedMetricCharts: true,
 })
 const chartSwitches = [
   { key: 'showCumulative', label: '累计统计', description: '累计流量等持续累加指标的历史趋势图。' },
@@ -129,6 +133,9 @@ const chartSwitches = [
   { key: 'showAverageChart', label: '平均温度与平均流速', description: '(温度1+温度2)/2、流量÷管道面积算出的平均流速。' },
   { key: 'showTempChart', label: '温度曲线', description: '温度1、温度2 原始读数对比，能直接看出两路温差。' },
   { key: 'showFlowPressureChart', label: '瞬时流量与压力', description: '瞬时流量、压力原始读数，双轴对照。' },
+  { key: 'showPidTrackingChart', label: 'PID跟踪对比', description: '目标温度参考线 + 温度2 实际值，直观看恒温控制精度。' },
+  { key: 'showDeviceStateChart', label: '设备状态时间线', description: '水泵、加热开关状态阶梯图，展示自动控制的实际动作历史。' },
+  { key: 'showDerivedMetricCharts', label: '自定义公式指标', description: '"公式与图表"里勾选了"历史图表"的自定义指标，每条一张图。' },
 ]
 const dialogVisible = ref(false)
 const dialogType = ref('cumulative')
@@ -143,8 +150,8 @@ const sections = computed(() => [
 const rowsFor = type => type === 'cumulative' ? cumulative.value : windows.value
 const tableLabel = table => table === 't_behavior_data' ? '运行状态' : '传感数据'
 const aggregationLabel = value => ({ avg: '滑动平均', volatility: '波动幅度', rate: '相邻变化量' }[value] || value)
-const cumulativeAggregationLabel = value => (value === 'avg' ? '累计平均' : '累计求和')
-const modeLabel = value => ({ standalone: '历史图表页面', inline: '历史页', both: '历史图表页面 + 历史页' }[value] || value)
+const cumulativeAggregationLabel = value => ({ avg: '累计平均', on_duration: '开关持续时长' }[value] || '累计求和')
+const modeLabel = value => ({ standalone: '历史图表页面', inline: '汇总数据页面', both: '历史图表页面 + 汇总数据页面' }[value] || value)
 
 async function load() {
   loading.value = true
@@ -259,5 +266,6 @@ load()
 .display-hint { margin-left: 10px; color: #94a3b8; font-size: 12px; }
 .save-bar { display: flex; gap: 10px; margin-top: 18px; }
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 18px; }
+.switch-hint { margin-top: 4px; color: #94a3b8; font-size: 12px; }
 @media (max-width: 760px) { .form-grid { grid-template-columns: 1fr; } .section-heading { align-items: flex-start; flex-direction: column; } }
 </style>

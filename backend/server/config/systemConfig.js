@@ -669,6 +669,9 @@ const defaultConfig = {
   //   showAverageChart        - 显示"平均温度与平均流速"
   //   showTempChart           - 显示"温度曲线"（温度1/温度2 原始读数对比）
   //   showFlowPressureChart   - 显示"瞬时流量与压力"
+  //   showPidTrackingChart    - 显示"PID跟踪对比"（目标温度参考线 + 温度2 实际值）
+  //   showDeviceStateChart    - 显示"设备状态时间线"（水泵/加热开关阶梯图）
+  //   showDerivedMetricCharts - 显示"公式与图表"里勾选了"历史图表"的自定义指标
   HISTORY_CHARTS: {
     pointLimit: 300,
     showCumulative: true,
@@ -676,6 +679,9 @@ const defaultConfig = {
     showAverageChart: true,
     showTempChart: true,
     showFlowPressureChart: true,
+    showPidTrackingChart: true,
+    showDeviceStateChart: true,
+    showDerivedMetricCharts: true,
   },
 
   // --------------------------------------------------------------------------
@@ -911,7 +917,7 @@ function validate(config) {
   }
   const historyCharts = config.HISTORY_CHARTS
   if (!historyCharts || typeof historyCharts !== 'object' || Array.isArray(historyCharts)) throw new Error('HISTORY_CHARTS 必须是 JSON 对象')
-  for (const key of ['showCumulative', 'showTimeWindow', 'showAverageChart', 'showTempChart', 'showFlowPressureChart']) {
+  for (const key of ['showCumulative', 'showTimeWindow', 'showAverageChart', 'showTempChart', 'showFlowPressureChart', 'showPidTrackingChart', 'showDeviceStateChart', 'showDerivedMetricCharts']) {
     if (typeof historyCharts[key] !== 'boolean') throw new Error(`HISTORY_CHARTS.${key} 必须是布尔值`)
   }
   if (!Number.isInteger(historyCharts.pointLimit) || historyCharts.pointLimit < 10 || historyCharts.pointLimit > 2000) {

@@ -95,15 +95,22 @@ module.exports = async (req, res) => {
         // 累计/时间窗口派生指标图表已搬到"历史图表"页面（/api/cumulative、/api/time-window
         // 自带时间范围参数），首页不再顺带查询和返回 cumulativeData/timeWindowData。
 
-        res.json({
+        // 这个接口同时被"首页概览"和"传感器实时数据"共用："传感器实时数据"页面会真的拿
+        // chartSettings 去画 LineBarCharts，首页概览请求了但没用上。首页调用时传 chart=false
+        // 跳过这份计算和返回，避免占位数据白跑一趟；不传就保持原样（"传感器实时数据"不用改）。
+        const includeChart = req.query.chart !== 'false'
+        const responseBody = {
             success: true,
             message: '成功',
             processedData,
             fieldUnits,
-            chartSettings: chartSettings(derivedMetrics),
             sortedData,
             behaviorOutcome,
-        })
+        }
+        if (includeChart) {
+            responseBody.chartSettings = chartSettings(derivedMetrics)
+        }
+        res.json(responseBody)
     } catch (err) {
         console.error('处理失败:', err)
         res.status(500).send('数据处理失败')

@@ -18,7 +18,7 @@
           <el-descriptions-item label="可用字段">按钮来自当前传感字段映射。按钮上的中文帮助识别含义，公式中真正使用的是括号里的 field1～field10。</el-descriptions-item>
           <el-descriptions-item label="计算公式">只允许下方列出的运算符和函数，不允许输入 SELECT、表名或其他 SQL。除数为 0 时返回 NULL，不会中断整次历史查询。</el-descriptions-item>
           <el-descriptions-item label="测试值 / 试算">给每个基础字段填写一组模拟数据，点击“验证并试算”。保存前必须确认结果、单位和现场手算结果一致。</el-descriptions-item>
-          <el-descriptions-item label="显示位置">“启用指标”是总开关；实时页、历史页控制数值出现位置；图表控制是否生成 ECharts 系列。</el-descriptions-item>
+          <el-descriptions-item label="显示位置">“启用指标”是总开关；实时页、历史页控制数值出现位置；“图表”勾选控制实时/历史页是否生成 ECharts 系列；“历史图表”勾选单独控制是否在“历史图表”页面单独成图（只支持传感器数据表，公式如果引用了行为数据字段，勾了也画不出来）。</el-descriptions-item>
           <el-descriptions-item label="图表类型">连续变化量通常选择折线图；需要对比离散时刻或不同指标时可选择柱状图。</el-descriptions-item>
           <el-descriptions-item label="左右 Y 轴">量纲或数值范围差异较大的指标应分轴，例如温度放左轴、流量放右轴，避免曲线被压平。</el-descriptions-item>
           <el-descriptions-item label="颜色 / 顺序">颜色控制该系列的线或柱；顺序越小越靠前，用于统一图例和系列排列。</el-descriptions-item>
@@ -52,6 +52,7 @@
           <el-tag v-if="scope.row.show_realtime" size="small">实时</el-tag>
           <el-tag v-if="scope.row.show_history" size="small" type="success">历史</el-tag>
           <el-tag v-if="scope.row.show_chart" size="small" type="warning">图表</el-tag>
+          <el-tag v-if="scope.row.show_history_chart" size="small" type="danger">历史图表</el-tag>
         </template>
       </el-table-column>
       <el-table-column label="ECharts" width="160">
@@ -110,7 +111,9 @@
           <el-checkbox v-model="form.show_realtime">实时页</el-checkbox>
           <el-checkbox v-model="form.show_history">历史页</el-checkbox>
           <el-checkbox v-model="form.show_chart">图表</el-checkbox>
+          <el-checkbox v-model="form.show_history_chart">历史图表</el-checkbox>
         </div>
+        <div class="switch-hint">“历史图表”指的是把这条指标单独放到“历史图表”页面成图，按时间范围查询；只支持传感器数据表，公式引用行为数据字段时勾了也画不出来。</div>
         <div class="form-grid chart-grid">
           <el-form-item label="图表类型">
             <el-select v-model="form.chart_type"><el-option label="折线图" value="line" /><el-option label="柱状图" value="bar" /></el-select>
@@ -137,7 +140,7 @@ import { reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import api from '@/api'
 
-const emptyForm = () => ({ id: null, metric_name: '', metric_key: '', formula: '', unit: '', precision_digits: 2, enabled: true, show_realtime: true, show_history: true, show_chart: true, chart_type: 'line', y_axis: 'left', color: '#409EFF', y_min: '', y_max: '', sort_order: 0 })
+const emptyForm = () => ({ id: null, metric_name: '', metric_key: '', formula: '', unit: '', precision_digits: 2, enabled: true, show_realtime: true, show_history: true, show_chart: true, show_history_chart: true, chart_type: 'line', y_axis: 'left', color: '#409EFF', y_min: '', y_max: '', sort_order: 0 })
 const metrics = ref([])
 const fields = ref([])
 const loading = ref(false)
@@ -152,6 +155,7 @@ function assignForm(value) {
   Object.assign(form, emptyForm(), value, {
     enabled: Boolean(value?.enabled ?? true), show_realtime: Boolean(value?.show_realtime ?? true),
     show_history: Boolean(value?.show_history ?? true), show_chart: Boolean(value?.show_chart ?? true),
+    show_history_chart: Boolean(value?.show_history_chart ?? true),
     y_min: value?.y_min ?? '', y_max: value?.y_max ?? '',
   })
   previewResult.value = null
@@ -217,6 +221,7 @@ load()
 .test-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
 .test-grid label { display: grid; gap: 5px; color: #64748b; font-size: 12px; }
 .preview-row, .switch-row { display: flex; align-items: center; gap: 16px; margin: 14px 0; }
+.switch-hint { margin: -8px 0 14px; color: #94a3b8; font-size: 12px; }
 .chart-grid { margin-top: 14px; }
 @media (max-width: 800px) { .form-grid, .test-grid { grid-template-columns: 1fr; } }
 </style>

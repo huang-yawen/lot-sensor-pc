@@ -251,7 +251,8 @@ async function loadDashboard(showLoading = true) {
   if (showLoading) loading.value = true
   try {
     const [dataResult, deviceResult, mqttResult, computedResult] = await Promise.allSettled([
-      api.get('/data', { params: { online: '实时数据' } }),
+      // chart:false —— 首页不渲染 LineBarCharts，用不上 chartSettings，跳过这份数据。
+      api.get('/data', { params: { online: '实时数据', chart: 'false' } }),
       api.get('/deviceData', { params: { currentPage: 1, pageSize: 100 } }),
       api.get('/api/mqtt/status'),
       api.get('/api/computed-metrics'),

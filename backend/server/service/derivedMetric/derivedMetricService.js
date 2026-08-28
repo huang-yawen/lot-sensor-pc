@@ -6,6 +6,16 @@ const { parseExpression, compileSql, evaluate } = require('./expressionEngine')
 const BASE_FIELDS = Array.from({ length: 10 }, (_, index) => `field${index + 1}`)
 let ensurePromise = null
 
+/** 老库升级：给已存在的 t_derived_metric 表补 show_history_chart 列。
+ * 列已存在时 MySQL 报"重复列名"（ER_DUP_FIELDNAME / errno 1060），直接忽略；其余错误照常抛出。 */
+async function ensureHistoryChartColumn() {
+  try {
+    await promisePool.query('ALTER TABLE t_derived_metric ADD COLUMN show_history_chart TINYINT(1) NOT NULL DEFAULT 1 AFTER show_chart')
+  } catch (error) {
+    if (error.code !== 'ER_DUP_FIELDNAME' && error.errno !== 1060) throw error
+  }
+}
+
 function ensureTable() {
   if (ensurePromise) return ensurePromise
   ensurePromise = promisePool.query(`CREATE TABLE IF NOT EXISTS t_derived_metric (
@@ -19,6 +29,7 @@ function ensureTable() {
     show_realtime TINYINT(1) NOT NULL DEFAULT 1,
     show_history TINYINT(1) NOT NULL DEFAULT 1,
     show_chart TINYINT(1) NOT NULL DEFAULT 1,
+    show_history_chart TINYINT(1) NOT NULL DEFAULT 1,
     chart_type VARCHAR(16) NOT NULL DEFAULT 'line',
     y_axis VARCHAR(16) NOT NULL DEFAULT 'left',
     color VARCHAR(16) DEFAULT NULL,
@@ -26,7 +37,9 @@ function ensureTable() {
     y_max DECIMAL(20,6) DEFAULT NULL,
     sort_order INT NOT NULL DEFAULT 0,
     PRIMARY KEY (id), UNIQUE KEY uk_metric_key (metric_key)
-  ) ENGINE=InnoDB DEFAULT CHARSET=utf8`).catch(error => { ensurePromise = null; throw error })
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8`)
+    .then(() => ensureHistoryChartColumn())
+    .catch(error => { ensurePromise = null; throw error })
   return ensurePromise
 }
 
@@ -41,6 +54,9 @@ function validateMetric(input) {
     show_realtime: input.show_realtime === false || Number(input.show_realtime) === 0 ? 0 : 1,
     show_history: input.show_history === false || Number(input.show_history) === 0 ? 0 : 1,
     show_chart: input.show_chart === false || Number(input.show_chart) === 0 ? 0 : 1,
+    // 历史图表页面现在所有图表都是查 t_sensor_data，公式如果引用了行为数据字段，
+    // 放到历史图表里跑不通——这个限制由前端勾选框旁边的提示文案说明，这里不做拦截。
+    show_history_chart: input.show_history_chart === false || Number(input.show_history_chart) === 0 ? 0 : 1,
     chart_type: String(input.chart_type || 'line'),
     y_axis: String(input.y_axis || 'left'),
     color: input.color ? String(input.color) : null,
@@ -71,12 +87,12 @@ async function listMetrics() {
 async function saveMetric(input) {
   await ensureTable()
   const metric = validateMetric(input)
-  const values = [metric.metric_key, metric.metric_name, metric.formula, metric.unit, metric.precision_digits, metric.enabled, metric.show_realtime, metric.show_history, metric.show_chart, metric.chart_type, metric.y_axis, metric.color, metric.y_min, metric.y_max, metric.sort_order]
+  const values = [metric.metric_key, metric.metric_name, metric.formula, metric.unit, metric.precision_digits, metric.enabled, metric.show_realtime, metric.show_history, metric.show_chart, metric.show_history_chart, metric.chart_type, metric.y_axis, metric.color, metric.y_min, metric.y_max, metric.sort_order]
   if (input.id) {
-    await promisePool.execute(`UPDATE t_derived_metric SET metric_key=?, metric_name=?, formula=?, unit=?, precision_digits=?, enabled=?, show_realtime=?, show_history=?, show_chart=?, chart_type=?, y_axis=?, color=?, y_min=?, y_max=?, sort_order=? WHERE id=?`, [...values, Number(input.id)])
+    await promisePool.execute(`UPDATE t_derived_metric SET metric_key=?, metric_name=?, formula=?, unit=?, precision_digits=?, enabled=?, show_realtime=?, show_history=?, show_chart=?, show_history_chart=?, chart_type=?, y_axis=?, color=?, y_min=?, y_max=?, sort_order=? WHERE id=?`, [...values, Number(input.id)])
     return { id: Number(input.id), ...metric, ast: undefined }
   }
-  const [result] = await promisePool.execute(`INSERT INTO t_derived_metric (metric_key, metric_name, formula, unit, precision_digits, enabled, show_realtime, show_history, show_chart, chart_type, y_axis, color, y_min, y_max, sort_order) VALUES (${values.map(() => '?').join(',')})`, values)
+  const [result] = await promisePool.execute(`INSERT INTO t_derived_metric (metric_key, metric_name, formula, unit, precision_digits, enabled, show_realtime, show_history, show_chart, show_history_chart, chart_type, y_axis, color, y_min, y_max, sort_order) VALUES (${values.map(() => '?').join(',')})`, values)
   return { id: result.insertId, ...metric, ast: undefined }
 }
 
@@ -88,7 +104,7 @@ async function deleteMetric(id) {
 
 async function getEnabledMetrics(visibility) {
   await ensureTable()
-  const allowed = { realtime: 'show_realtime', history: 'show_history' }
+  const allowed = { realtime: 'show_realtime', history: 'show_history', historyChart: 'show_history_chart' }
   const column = allowed[visibility]
   const where = column ? `WHERE enabled = 1 AND ${column} = 1` : 'WHERE enabled = 1'
   const [rows] = await promisePool.query(`SELECT * FROM t_derived_metric ${where} ORDER BY sort_order, id`)

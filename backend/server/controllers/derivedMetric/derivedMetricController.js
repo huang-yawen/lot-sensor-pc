@@ -1,6 +1,8 @@
 /** 【文件职责】派生指标 API 控制器，负责请求校验和响应格式。
  * 【配置中心关联】DERIVED_METRICS 由服务层实时读取。 */
 const service = require('../../service/derivedMetric/derivedMetricService')
+const { queryDerivedMetricHistory } = require('../../service/derivedMetric/derivedMetricHistoryQuery')
+const { resolveTimeRange } = require('../../utils/timeRange')
 
 const list = async (req, res) => {
   try {
@@ -38,6 +40,20 @@ const preview = async (req, res) => {
   }
 }
 
-module.exports = { list, save, remove, preview }
+// GET /api/derived-metrics/history —— 已勾选"历史图表"的公式指标，历史图表页面专用。
+// Query: ?d_no=xxx&limit=300&range=1h（或 range=custom&startTime=...&endTime=...）
+const history = async (req, res) => {
+  try {
+    const d_no = req.query.d_no || null
+    const limit = req.query.limit
+    const { startTime, endTime } = resolveTimeRange(req.query)
+    const data = await queryDerivedMetricHistory({ d_no, limit, startTime, endTime })
+    res.json({ success: true, data })
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message })
+  }
+}
+
+module.exports = { list, save, remove, preview, history }
 /** 【文件职责】派生指标 HTTP 控制器，负责把查询参数交给表达式计算服务。
  * 【配置中心关联】DERIVED_METRICS 由下层服务读取，保存配置后下一请求即生效。 */
