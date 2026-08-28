@@ -61,6 +61,9 @@
             <div v-for="field in behaviorFields" :key="field" class="reading-item behavior">
               <span>{{ field }}</span>
               <strong>{{ displayValue(latestBehavior[field], field) }}</strong>
+              <div v-if="switchDurationEnabled && durationInfoFor(field)?.isOn" class="duration-hint">
+                累计运行 {{ formatDuration(durationInfoFor(field).totalMinutes) }} · 本次已运行 {{ formatDuration(durationInfoFor(field).currentSessionMinutes) }}
+              </div>
             </div>
           </div>
         </div>
@@ -128,10 +131,12 @@ const computedMetrics = ref({})
 const deviceTotal = ref(0)
 const mqttConnected = ref(false)
 const deviceStatuses = ref([])
+const switchDuration = ref({ pump: null, heater: null })
 const systemStore = useSystemConfigStore()
 const displayStore = DisplayStore()
 const config = computed(() => systemStore.config)
 const deviceLabel = computed(() => config.value.DEVICE_LABEL || config.value.TERMINOLOGY?.device || '设备')
+const switchDurationEnabled = computed(() => config.value.SWITCH_DURATION_DISPLAY?.enabled !== false)
 let unsubscribeStatus = null
 let unsubscribeSensor = null
 let unsubscribeError = null
@@ -245,18 +250,42 @@ function displayValue(value, field) {
   return unit ? `${value} ${unit}` : value
 }
 
+// 根据"运行状态"字段的中文名（如"水泵"、"加热"）找到对应的运行时长数据，找不到匹配的
+// pump/heater（未开启，或配置中心已删除对应的累计指标）返回 null。
+function durationInfoFor(fieldLabel) {
+  const { pump, heater } = switchDuration.value
+  if (pump?.fieldLabel === fieldLabel) return pump
+  if (heater?.fieldLabel === fieldLabel) return heater
+  return null
+}
+
+function formatDuration(minutes) {
+  if (minutes == null || !Number.isFinite(minutes)) return '--'
+  const totalMin = Math.round(minutes)
+  if (totalMin < 1) return '<1 分钟'
+  const h = Math.floor(totalMin / 60)
+  const m = totalMin % 60
+  if (h === 0) return `${m} 分钟`
+  if (m === 0) return `${h} 小时`
+  return `${h} 小时 ${m} 分钟`
+}
+
 // showLoading=false 用于 WebSocket 推送触发的后台静默刷新，不切换 loading，
 // 避免刷新动画跟着推送频率一直闪烁；手动点“刷新数据”和首次进入页面仍然显示。
 async function loadDashboard(showLoading = true) {
   if (showLoading) loading.value = true
   try {
-    const [dataResult, deviceResult, mqttResult, computedResult] = await Promise.allSettled([
+    // 开关运行时长展示总开关关闭时不请求 /api/switch-duration，避免白跑一趟。
+    const requests = [
       // chart:false —— 首页不渲染 LineBarCharts，用不上 chartSettings，跳过这份数据。
       api.get('/data', { params: { online: '实时数据', chart: 'false' } }),
       api.get('/deviceData', { params: { currentPage: 1, pageSize: 100 } }),
       api.get('/api/mqtt/status'),
       api.get('/api/computed-metrics'),
-    ])
+    ]
+    if (switchDurationEnabled.value) requests.push(api.get('/api/switch-duration'))
+
+    const [dataResult, deviceResult, mqttResult, computedResult, switchDurationResult] = await Promise.allSettled(requests)
     if (dataResult.status === 'fulfilled') dashboard.value = dataResult.value.data || {}
     if (deviceResult.status === 'fulfilled') {
       deviceTotal.value = Number(deviceResult.value.data?.data?.total) || 0
@@ -266,6 +295,9 @@ async function loadDashboard(showLoading = true) {
     }
     if (computedResult.status === 'fulfilled') {
       computedMetrics.value = computedResult.value.data?.data || {}
+    }
+    if (switchDurationEnabled.value && switchDurationResult?.status === 'fulfilled') {
+      switchDuration.value = switchDurationResult.value.data?.data || { pump: null, heater: null }
     }
   } finally {
     if (showLoading) loading.value = false
@@ -317,6 +349,7 @@ onUnmounted(() => {
 .behavior-reading-title { margin-bottom: 10px; color: #64748b; font-size: 14px; }
 .reading-item.behavior { background: #f0fdf4; }
 .reading-item.behavior strong { color: #047857; }
+.duration-hint { margin-top: 6px; color: #64748b; font-size: 12px; line-height: 1.5; }
 .updated-at { margin-top: 18px; color: #64748b; font-size: 13px; }
 
 /* ===== 需要计算的数据 ===== */

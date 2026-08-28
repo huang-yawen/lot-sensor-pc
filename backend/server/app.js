@@ -77,6 +77,10 @@ app.get('/api/average-chart', averageChartController)
 const deviceStateTrendController = require('./controllers/computedMetrics/deviceStateTrendController')
 app.get('/api/device-state-trend', deviceStateTrendController)
 
+// 首页开关运行时长接口（水泵/加热的累计运行时长 + 本次已运行时长）
+const switchDurationController = require('./controllers/switchDuration/switchDurationController')
+app.get('/api/switch-duration', switchDurationController)
+
 // PID 自整定：把自整定算出的建议 Kp/Ki/Kd 写入指令中心
 const { applyAutoTuneResult } = require('./controllers/system/pidAutoTuneController')
 app.post('/api/pid-autotune/apply', applyAutoTuneResult)

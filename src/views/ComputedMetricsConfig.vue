@@ -62,6 +62,16 @@
       </el-form>
     </section>
 
+    <section class="cfg-section">
+      <div class="section-heading">
+        <div>
+          <h3>设备状态运行时长显示</h3>
+          <p>开启后，首页“最新传感数据”运行状态区，水泵/加热开启时额外显示“累计运行时长”和“本次已运行时长”。</p>
+        </div>
+        <el-switch v-model="switchDurationEnabled" active-text="启用运行时长显示" />
+      </div>
+    </section>
+
     <div class="save-bar">
       <el-button :loading="loading" @click="load">刷新</el-button>
       <el-button type="primary" :loading="saving" @click="save">保存并应用</el-button>
@@ -98,6 +108,7 @@ const defaultForm = () => ({
 })
 
 const form = reactive(defaultForm())
+const switchDurationEnabled = ref(true)
 
 const items = [
   { key: 'resistanceK', title: '系统阻力系数 K', description: 'K=ΔP/Q²，管路结垢/堵塞黄金指标，持续上升需提示清洗。' },
@@ -119,6 +130,7 @@ async function load() {
     const response = await api.get('/api/system-config')
     const cfg = response.data.data.COMPUTED_METRICS || defaultForm()
     Object.assign(form, defaultForm(), cfg)
+    switchDurationEnabled.value = response.data.data.SWITCH_DURATION_DISPLAY?.enabled ?? true
   } catch (error) {
     ElMessage.error(error.response?.data?.message || '计算数据配置加载失败')
   } finally {
@@ -129,7 +141,10 @@ async function load() {
 async function save() {
   saving.value = true
   try {
-    await api.post('/api/system-config', { COMPUTED_METRICS: { ...form } })
+    await api.post('/api/system-config', {
+      COMPUTED_METRICS: { ...form },
+      SWITCH_DURATION_DISPLAY: { enabled: switchDurationEnabled.value },
+    })
     ElMessage.success('计算数据配置已保存并立即生效')
   } catch (error) {
     ElMessage.error(error.response?.data?.message || '保存失败')

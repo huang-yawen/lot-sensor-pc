@@ -685,6 +685,16 @@ const defaultConfig = {
   },
 
   // --------------------------------------------------------------------------
+  // 13.2 首页开关运行时长显示
+  // --------------------------------------------------------------------------
+  // 控制首页"最新传感数据"运行状态区，水泵/加热开启时是否额外显示"累计运行时长"
+  // 和"本次已运行时长"。数据来源固定为 CUMULATIVE_METRICS 中 metric_key 为
+  // cumulative_pump_time / cumulative_heat_time 的两条记录（字段改了不用同步改这里）。
+  SWITCH_DURATION_DISPLAY: {
+    enabled: true,
+  },
+
+  // --------------------------------------------------------------------------
   // 14. 本地告警与自动联锁规则
   // --------------------------------------------------------------------------
   // 每条规则字段说明：
@@ -923,6 +933,11 @@ function validate(config) {
   if (!Number.isInteger(historyCharts.pointLimit) || historyCharts.pointLimit < 10 || historyCharts.pointLimit > 2000) {
     throw new Error('HISTORY_CHARTS.pointLimit 必须是 10~2000 之间的整数')
   }
+  const switchDurationDisplay = config.SWITCH_DURATION_DISPLAY
+  if (!switchDurationDisplay || typeof switchDurationDisplay !== 'object' || Array.isArray(switchDurationDisplay)) {
+    throw new Error('SWITCH_DURATION_DISPLAY 必须是 JSON 对象')
+  }
+  if (typeof switchDurationDisplay.enabled !== 'boolean') throw new Error('SWITCH_DURATION_DISPLAY.enabled 必须是布尔值')
   validateAggregationMetrics(config)
   return true
 }
