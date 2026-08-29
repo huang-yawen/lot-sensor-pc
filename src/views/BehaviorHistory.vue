@@ -40,9 +40,7 @@
       width="700px"
       :close-on-click-modal="false"
     >
-      <div v-if="recognizeResult">
-        <pre class="raw-json">{{ JSON.stringify(recognizeResult, null, 2) }}</pre>
-      </div>
+      <JudgmentResultPanel :result="recognizeResult" />
       <template #footer>
         <el-button @click="dialogVisible = false">关闭</el-button>
       </template>
@@ -61,6 +59,7 @@ import { ElMessage } from 'element-plus'
 import { PaginationStore } from '@/stores/PaginationStore.js'
 import TableContainer from '@/components/TableContainer.vue'
 import LineBarCharts from '@/components/LineBarCharts.vue'
+import JudgmentResultPanel from '@/components/JudgmentResultPanel.vue'
 import { transformBehaviorList } from '@/utils/fieldTransform'
 import api from '@/api'
 import { useSystemConfigStore } from '@/stores/SystemConfigStore'
@@ -205,16 +204,5 @@ onUnmounted(() => {
 <style scoped>
 .chartContainer {
   padding-top: 10px;
-}
-
-.raw-json {
-  background: #f5f5f5;
-  padding: 16px;
-  border-radius: 8px;
-  font-size: 13px;
-  max-height: 400px;
-  overflow: auto;
-  white-space: pre-wrap;
-  word-break: break-all;
 }
 </style>

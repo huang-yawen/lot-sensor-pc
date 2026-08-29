@@ -94,6 +94,28 @@ const defaultConfig = {
   HIDE_DEVICE_SELECTOR: false,
 
   // --------------------------------------------------------------------------
+  // 2.1 传感器字段语义槽位（业务语义 → t_sensor_data 物理字段）
+  // --------------------------------------------------------------------------
+  // 自动控制、安全联锁、故障判断、分层联动、需要计算的数据这几个模块，都要从
+  // t_sensor_data 里区分出"哪个字段是温度1/温度2/流量/压力"，但数据库字段名
+  // 只是 field1~field10 这种无语义的槽位，具体谁是谁由 t_sensor_field_mapper
+  // 表的实际配置决定。这里集中配置一份"语义→槽位"映射，避免分散在多个后端
+  // 文件里各自硬编码——以后调整传感器接线/字段布局，只需要改这一处。
+  // key 是业务语义，代码里按这些固定 key 读取，不能改名：
+  //   temp1    - 温度1（进水）
+  //   temp2    - 温度2（出水）
+  //   flow     - 瞬时流量
+  //   pressure - 压力
+  // value 是 t_sensor_data 表对应的物理字段名（field1~field10），要跟
+  // t_sensor_field_mapper 表里实际配置的 db_name 保持一致。
+  SENSOR_FIELD_MAP: {
+    temp1: 'field1',
+    temp2: 'field2',
+    flow: 'field3',
+    pressure: 'field4',
+  },
+
+  // --------------------------------------------------------------------------
   // 3. 页面功能开关
   // --------------------------------------------------------------------------
   // 是否在传感器历史页面显示“智能判定”按钮。
@@ -919,11 +941,25 @@ function validate(config) {
   if (!Array.isArray(config.DEVICE_ID_FIELDS) || config.DEVICE_ID_FIELDS.length === 0) throw new Error('DEVICE_ID_FIELDS 至少需要一个字段')
   if (!Array.isArray(config.TIME_FIELDS) || config.TIME_FIELDS.length === 0) throw new Error('TIME_FIELDS 至少需要一个字段')
   if (!Array.isArray(config.HEARTBEAT_DEVICE_FIELDS) || config.HEARTBEAT_DEVICE_FIELDS.length === 0) throw new Error('HEARTBEAT_DEVICE_FIELDS 至少需要一个字段')
+  for (const key of ['temp1', 'temp2', 'flow', 'pressure']) {
+    if (!/^field\d+$/.test(config.SENSOR_FIELD_MAP?.[key] || '')) throw new Error(`SENSOR_FIELD_MAP.${key} 必须是 field1~field10 这样的字段名`)
+  }
   if (!config.INTELLIGENT_JUDGMENT.url || !/^https?:\/\//i.test(config.INTELLIGENT_JUDGMENT.url)) throw new Error('INTELLIGENT_JUDGMENT.url 必须是 http:// 或 https:// 地址')
   if (!Number.isFinite(config.INTELLIGENT_JUDGMENT.timeoutMs) || config.INTELLIGENT_JUDGMENT.timeoutMs <= 0) throw new Error('INTELLIGENT_JUDGMENT.timeoutMs 必须大于 0')
   if (!['batch', 'single'].includes(config.INTELLIGENT_JUDGMENT.requestMode)) throw new Error('INTELLIGENT_JUDGMENT.requestMode 只能是 batch 或 single')
   if (!['json', 'form-data'].includes(config.INTELLIGENT_JUDGMENT.bodyFormat)) throw new Error('INTELLIGENT_JUDGMENT.bodyFormat 只能是 json 或 form-data')
   if (!['json', 'text'].includes(config.INTELLIGENT_JUDGMENT.responseFormat)) throw new Error('INTELLIGENT_JUDGMENT.responseFormat 只能是 json 或 text')
+  // 正则语法错误只在保存这一刻拦截；不拦的话现场只会在真正发起判定请求时才炸出运行时
+  // 异常，界面上只看得到笼统的"判定失败"，不容易联想到是正则写错了。
+  if (config.INTELLIGENT_JUDGMENT.responseFormat === 'text') {
+    for (const key of ['conclusionRegex', 'confidenceRegex']) {
+      const pattern = config.INTELLIGENT_JUDGMENT[key]
+      if (!pattern) continue
+      try { new RegExp(pattern) } catch (err) {
+        throw new Error(`INTELLIGENT_JUDGMENT.${key} 不是合法的正则表达式：${err.message}`)
+      }
+    }
+  }
   // asyncPollUrl/间隔/等待时长只在开启异步模式时才要求填对，避免没用到异步的场景被强制填一堆用不上的字段。
   if (config.INTELLIGENT_JUDGMENT.asyncMode) {
     if (!config.INTELLIGENT_JUDGMENT.asyncPollUrl || !/^https?:\/\//i.test(config.INTELLIGENT_JUDGMENT.asyncPollUrl)) {

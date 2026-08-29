@@ -64,14 +64,6 @@ const THRESHOLD_SLOTS = {
   tempDiff:      { prefix: 'temp_diff',      name: '温差阈值' },
 }
 
-/** 传感器字段槽位。 */
-const SENSOR_SLOTS = {
-  temp1: 'field1', // 进水温度
-  temp2: 'field2', // 出水温度
-  flow: 'field3', // 瞬时流量
-  pressure: 'field4', // 压力
-}
-
 /* ============================================================
  * 2. 全局状态：每个设备的故障态 + 复位按钮状态
  * ============================================================ */
@@ -134,7 +126,8 @@ async function getThresholdValue(slot, deviceNo) {
 
 async function readSensors(info) {
   const result = {}
-  for (const [key, field] of Object.entries(SENSOR_SLOTS)) {
+  // SENSOR_FIELD_MAP 来自配置中心，不能在模块顶层缓存（要求实时取值，热更新才能生效）。
+  for (const [key, field] of Object.entries(systemConfig.getConfig().SENSOR_FIELD_MAP)) {
     const aliases = await resolveFieldAliases('t_sensor_data', field)
     result[key] = toNumber(firstValue(info, aliases))
   }

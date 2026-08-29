@@ -44,14 +44,6 @@ const THRESHOLD_SLOTS = {
   pressureHigh: { prefix: 'pressure_high', name: '压力上限阈值' },
 }
 
-/** 传感器字段槽位（跟字段映射表 field1~field4 对齐）。 */
-const SENSOR_SLOTS = {
-  temp1: 'field1', // 温度1（进水）
-  temp2: 'field2', // 温度2（出水）
-  flow: 'field3', // 瞬时流量
-  pressure: 'field4', // 压力
-}
-
 /** 对每个设备记录上一次的控制模式，用于识别“自动 -> 手动”切换。 */
 const lastMode = new Map()
 /** 告警/联锁冷却时间戳，避免同一故障高频重复触发。 */
@@ -118,7 +110,8 @@ async function getCurrentMode(deviceNo) {
 /** 从一条上报消息中读取传感器数值（按字段映射表解析物理名）。 */
 async function readSensors(info) {
   const result = {}
-  for (const [key, field] of Object.entries(SENSOR_SLOTS)) {
+  // SENSOR_FIELD_MAP 来自配置中心，不能在模块顶层缓存（要求实时取值，热更新才能生效）。
+  for (const [key, field] of Object.entries(systemConfig.getConfig().SENSOR_FIELD_MAP)) {
     const aliases = await resolveFieldAliases('t_sensor_data', field)
     result[key] = await toNumber(firstValue(info, aliases))
   }

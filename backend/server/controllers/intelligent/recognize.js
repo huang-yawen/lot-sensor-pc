@@ -134,21 +134,38 @@ async function sendHttpRequest({ url, method, headers, bodyObj, bodyFormat, time
  * asyncMaxWaitMs（抛超时错误，跟单次请求的 timeoutMs 是两回事：timeoutMs 只管每一次
  * HTTP 请求本身，asyncMaxWaitMs 管的是从提交任务到拿到完成状态的整个轮询过程）。
  */
+// 轮询请求连续失败(网络抖动、服务瞬时不可用等)达到这个次数才真正放弃，避免偶发
+// 一次网络抖动就把整个判定流程判死——真实网络环境里这种偶发失败很常见。
+const MAX_CONSECUTIVE_POLL_ERRORS = 3
+
 async function pollAsyncResult(jobId, config) {
   const pollUrl = renderTemplate(config.asyncPollUrl, { jobId })
   const doneSet = new Set((config.asyncDoneStatusValues || []).map(s => String(s).toLowerCase()))
   const failedSet = new Set((config.asyncFailedStatusValues || []).map(s => String(s).toLowerCase()))
   const deadline = Date.now() + (config.asyncMaxWaitMs || 30000)
+  let consecutiveErrors = 0
 
   for (;;) {
-    const resp = await sendHttpRequest({
-      url: pollUrl,
-      method: config.asyncPollMethod || 'GET',
-      headers: config.headers,
-      bodyObj: null,
-      timeoutMs: config.timeoutMs,
-    })
-    if (!resp.ok) throw new Error(`异步判定轮询返回 HTTP ${resp.status}: ${resp.rawText.slice(0, 300)}`)
+    let resp
+    try {
+      resp = await sendHttpRequest({
+        url: pollUrl,
+        method: config.asyncPollMethod || 'GET',
+        headers: config.headers,
+        bodyObj: null,
+        timeoutMs: config.timeoutMs,
+      })
+      if (!resp.ok) throw new Error(`异步判定轮询返回 HTTP ${resp.status}: ${resp.rawText.slice(0, 300)}`)
+      consecutiveErrors = 0 // 这一轮成功了，重新开始计数
+    } catch (err) {
+      consecutiveErrors++
+      if (consecutiveErrors >= MAX_CONSECUTIVE_POLL_ERRORS) {
+        throw new Error(`异步判定轮询连续失败 ${MAX_CONSECUTIVE_POLL_ERRORS} 次，放弃：${err.message}`)
+      }
+      if (Date.now() >= deadline) throw new Error(`异步判定任务轮询超时（超过 ${config.asyncMaxWaitMs}ms 仍未完成）`)
+      await sleep(config.asyncPollIntervalMs || 1000)
+      continue
+    }
     const status = String(readPath(resp.data, config.asyncStatusPath) ?? '').toLowerCase()
     if (doneSet.has(status)) return resp
     if (failedSet.has(status)) throw new Error(`异步判定任务失败（状态=${status || '未知'}）`)

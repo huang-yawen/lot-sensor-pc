@@ -37,14 +37,6 @@ const THRESHOLD_SLOTS = {
   pressureHigh: { prefix: 'pressure_high', name: '压力上限阈值' },
 }
 
-/** 传感器字段槽位。 */
-const SENSOR_SLOTS = {
-  temp1: 'field1',
-  temp2: 'field2',
-  flow: 'field3',
-  pressure: 'field4',
-}
-
 /** 上次该条件动作，用于日志与最小化重复下发。 */
 const lastActions = new Map()
 /** 防抖：不允许同一设备在极短时间内反复切换同一开关。 */
@@ -87,7 +79,8 @@ async function getThresholdValue(slot, deviceNo) {
 
 async function readSensors(info) {
   const out = {}
-  for (const [key, field] of Object.entries(SENSOR_SLOTS)) {
+  // SENSOR_FIELD_MAP 来自配置中心，不能在模块顶层缓存（要求实时取值，热更新才能生效）。
+  for (const [key, field] of Object.entries(systemConfig.getConfig().SENSOR_FIELD_MAP)) {
     const aliases = await resolveFieldAliases('t_sensor_data', field)
     out[key] = await toNumber(firstValue(info, aliases))
   }
