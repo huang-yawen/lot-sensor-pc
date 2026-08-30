@@ -56,25 +56,6 @@ async function resolveFieldAliases(sourceTable, sourceField) {
 }
 
 /**
- * 跟 resolveFieldAliases 类似，但按业务语义角色（字段映射表 semantic_role 列，如
- * temp1/temp2/flow/pressure）查询，而不是按物理字段名（field1~10）查询。返回
- * { dbName, aliases }：dbName 是当前语义角色对应的物理字段名（field1~10），
- * aliases 是该字段配置的物理上报属性名候选。自动控制/安全联锁/故障判断/分层联动/
- * 需要计算的数据这几个模块，靠这个函数知道"温度1现在具体是哪个物理字段、上报时
- * 用什么属性名"——以后调整传感器布局，去字段映射表改 semantic_role 这一处即可，
- * 不用碰这些模块的代码。
- */
-async function resolveFieldByRole(sourceTable, semanticRole) {
-  const mapperTable = MAPPER_TABLE_BY_DATA_TABLE[sourceTable]
-  if (!mapperTable) return { dbName: null, aliases: [] }
-  const [[row]] = await promisePool.query(
-    `SELECT db_name, p_name FROM ${mapperTable} WHERE semantic_role = ? LIMIT 1`,
-    [semanticRole]
-  )
-  return row ? { dbName: row.db_name, aliases: aliases(row.p_name) } : { dbName: null, aliases: [] }
-}
-
-/**
  * 根据字段映射表保存设备上报数据。
  * 修改 t_*_field_mapper.p_name 即可适配现场传感器/执行器 JSON，
  * 不再需要为每道赛题改 Node.js 中的硬编码字段。
@@ -121,7 +102,7 @@ async function saveMappedData({ table, mapperTable, info, dateTime }) {
   return { deviceNo: values[0], mappedFieldCount: columns.length - 3 }
 }
 
-module.exports = { saveMappedData, resolveDeviceNo, resolveFieldAliases, resolveFieldByRole }
+module.exports = { saveMappedData, resolveDeviceNo, resolveFieldAliases }
 /**
  * 【文件职责】数据字段映射工具，将数据库或设备的原始字段转换为前端可用结构。
  * 【配置中心关联】如涉及显示字段，会按调用方传入的场景映射处理；本模块不持久化配置。

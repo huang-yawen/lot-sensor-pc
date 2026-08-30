@@ -291,7 +291,6 @@ import {
   CONNECTION_MODES,
   getApiBaseUrl,
   getConnectionMode,
-  getMqttBrokerUrl,
   getWebSocketBaseUrl,
   setConnectionMode,
 } from '@/utils/runtimeEndpoint'
@@ -312,7 +311,8 @@ const connectionMode = ref(getConnectionMode())
 const switchingMode = ref(false)
 const connectionEndpoint = computed(() => getApiBaseUrl(connectionMode.value))
 const webSocketEndpoint = computed(() => getWebSocketBaseUrl(connectionMode.value))
-const mqttEndpoint = computed(() => getMqttBrokerUrl(connectionMode.value))
+// MQTT 地址不受本地/远程开关影响，直接展示配置中心里真正生效的 MQTT_URL。
+const mqttEndpoint = computed(() => systemStore.config.MQTT_URL || '（未加载）')
 const currentControlTopic = computed(() => parseSafe()?.config?.MQTT_TOPICS?.control || 'control')
 const controlTypes = [
   { value: '1', label: '开关' },
@@ -330,11 +330,12 @@ async function changeConnectionMode(nextMode) {
   try {
     switchingMode.value = true
     await ElMessageBox.confirm(
-      `将切换到“${targetName}”：API 使用 ${getApiBaseUrl(nextMode)}，MQTT 使用 ${getMqttBrokerUrl(nextMode)}。`,
+      `将切换到“${targetName}”：API 使用 ${getApiBaseUrl(nextMode)}。MQTT 地址不受此开关影响，如需修改请到下方“MQTT 与设备字段”里改 MQTT_URL。`,
       '切换运行模式',
       { type: 'warning', confirmButtonText: '确认切换', cancelButtonText: '取消' }
     )
-    await api.post('/api/system-config', { MQTT_URL: getMqttBrokerUrl(nextMode) })
+    // 纯本地操作，不依赖网络，不会失败——本地/远程开关只管前端去哪里请求 API 和
+    // WebSocket，不再顺带联动 MQTT_URL，避免两处都能设置地址、却只有一处真正生效。
     setConnectionMode(nextMode)
     ElMessage.success(`已切换到${targetName}，正在重新连接`)
     window.setTimeout(() => window.location.reload(), 350)
@@ -422,7 +423,8 @@ const configHelp = [
   { group: '告警联锁', key: 'ALARM_RULES 流量过低', description: '水泵开启时流量 < 0.5 L/min 告警。', example: 'require: t_behavior_data.field2 values: [open]', notice: '水泵未开时不触发。' },
   { group: '告警联锁', key: 'ALARM_RULES 压力过高', description: '管路压力 > 500 kPa 告警，可选联锁关闭水泵。', example: 't_sensor_data.field4, >, 500', notice: '防止管路破裂。' },
   { group: '安全联锁', key: 'SAFETY_INTERLOCK', description: '流量过低/压力过高/温度过高/温差过大/手动模式/传感器掉线/未开泵先加热，触发任一启用条件立即强制关闭水泵和加热；自动、手动模式全程生效。', example: 'flowLow: true, tempDiffThreshold: 3', notice: '与"故障状态"相互独立，两者可同时命中；建议在"安全联锁"页可视化修改。' },
-  { group: '自动控制', key: 'AUTO_CONTROL', description: '仅"自动模式"下按目标温度自动启停水泵和加热的简化版联动，与 LAYERED_CONTROL 互斥，由 CONTROL_MODE 决定用哪一套。', example: 'targetTemp: 22, tempDiffOpenThreshold: 3', notice: '建议在"自动控制"页可视化修改。' },
+  { group: '自动控制', key: 'DEFAULT_TARGET_TEMP', description: '默认目标温度：指令中心 target_temperature 优先，未配置时兜底用这个值。AUTO_CONTROL、LAYERED_CONTROL、PID_HEATING 共用同一个值，不再各自维护一份。', example: '22', notice: '在"自动控制"或"PID恒温"任一页面改都会同步，不用两边分别改。' },
+  { group: '自动控制', key: 'AUTO_CONTROL', description: '仅"自动模式"下按目标温度自动启停水泵和加热的简化版联动，与 LAYERED_CONTROL 互斥，由 CONTROL_MODE 决定用哪一套。', example: 'tempDiffCloseThreshold: 2, tempDiffOpenThreshold: 3', notice: '建议在"自动控制"页可视化修改。' },
   { group: '自动控制', key: 'CONTROL_MODE', description: '选择自动模式下用哪一套联动逻辑：simple=AUTO_CONTROL；layered=LAYERED_CONTROL。', example: 'simple', notice: '只能是 simple 或 layered，两套逻辑互斥。' },
   { group: '分层联动', key: 'LAYERED_CONTROL', description: '单一传感器独立控制层 + 多传感器融合联动层，仅 CONTROL_MODE=layered 时生效；融合层结论优先于单一传感器层，同一执行器矛盾时"关"优先于"开"。', example: 'tempSingle: true, dualTempDiffThreshold: 2', notice: '建议在"分层联动"页可视化修改。' },
   { group: '定量停机', key: 'QUANTITY_SHUTDOWN', description: '本次计量周期累计流量达到 totalFlowTarget 后自动关闭水泵和加热；进入自动模式开始新周期，切回手动模式重置。', example: 'totalFlowTarget: 500', notice: '总流量仅做停机判定，不参与实时调节。' },

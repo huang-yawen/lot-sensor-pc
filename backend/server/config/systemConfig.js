@@ -533,21 +533,30 @@ const defaultConfig = {
   },
 
   // --------------------------------------------------------------------------
+  // 10.5 默认目标温度
+  // --------------------------------------------------------------------------
+  // 指令中心 t_direct 的 target_temperature 优先生效；只有指令中心没配置时，
+  // 自动控制（AUTO_CONTROL/LAYERED_CONTROL）和 PID 恒温控制（PID_HEATING）才会用
+  // 这里的值兜底。以前这几套控制逻辑各自维护一份 targetTemp，容易出现"切换控制
+  // 模式后默认温度不一致"的情况（LAYERED_CONTROL 甚至一直没读到任何配置，实际
+  // 是硬编码 22），现在统一成这一处。
+  DEFAULT_TARGET_TEMP: 22,
+
+  // --------------------------------------------------------------------------
   // 11. 正常状况联动（自动控制）规则
   // --------------------------------------------------------------------------
   // 仅在“自动模式”下运行，按目标温度自动启停水泵和加热。可逐项开关：
   //   enabled              - 自动控制总开关
   //   pump                 - 允许自动控制水泵
   //   heater               - 允许自动控制加热
-  //   targetTemp           - 默认目标温度（指令中心 target_temperature 优先）
   //   tempDiffCloseThreshold - 温差小于该值才允许“两侧达标后关泵”
   //   tempDiffOpenThreshold  - 温差超过该值判定“温差过大”，关闭加热
   //   totalFlowTarget      - 累计流量目标；达到后关闭水泵（0=不启用）
+  // 目标温度不在这里配置，统一用上面的 DEFAULT_TARGET_TEMP。
   AUTO_CONTROL: {
     enabled: false,
     pump: true,
     heater: true,
-    targetTemp: 22,
     tempDiffCloseThreshold: 2,
     tempDiffOpenThreshold: 3,
   },
@@ -665,14 +674,13 @@ const defaultConfig = {
   //   enabled       - PID 恒温控制总开关
   //   kp/ki/kd      - PID 三个系数
   //   windowMs      - 时间比例控制周期（毫秒），默认 10000（10 秒）
-  //   targetTemp    - 默认目标温度（指令中心 target_temperature 优先）
+  // 目标温度不在这里配置，统一用前面的 DEFAULT_TARGET_TEMP。
   PID_HEATING: {
     enabled: false,
     kp: 20,
     ki: 0.5,
     kd: 5,
     windowMs: 10000,
-    targetTemp: 22,
     // 精准控制增强参数（未配置时使用这些默认值）
     deadband: 0.2,            // 死区(℃)：误差小于此值保持上一次 duty
     derivativeFilter: 0.3,    // 微分滤波系数 0~1：越小滤波越强
@@ -867,7 +875,15 @@ function mergeKnown(base, incoming) {
     if (!(key in incoming)) continue
     if (base[key] && typeof base[key] === 'object' && !Array.isArray(base[key])) {
       if (incoming[key] && typeof incoming[key] === 'object' && !Array.isArray(incoming[key])) {
-        result[key] = { ...result[key], ...clone(incoming[key]) }
+        // 只按 base（当前代码里的默认结构）已有的子键逐个取值覆盖，不整体展开
+        // incoming[key]——否则磁盘上历史保存的、代码里已经删掉的旧字段会被原样
+        // 带回来，永远清不掉（这次 targetTemp 从 AUTO_CONTROL/PID_HEATING 挪到
+        // DEFAULT_TARGET_TEMP 之后就复现过一次）。
+        const merged = { ...result[key] }
+        for (const subKey of Object.keys(result[key])) {
+          if (subKey in incoming[key]) merged[subKey] = clone(incoming[key][subKey])
+        }
+        result[key] = merged
       }
     } else if (typeof incoming[key] === typeof base[key]) {
       result[key] = clone(incoming[key])
@@ -982,12 +998,13 @@ function validate(config) {
   }
   if (!Number.isFinite(safety.tempDiffThreshold)) throw new Error('SAFETY_INTERLOCK.tempDiffThreshold 必须是数字')
   if (!Number.isFinite(safety.alarmCooldownMs) || safety.alarmCooldownMs < 0) throw new Error('SAFETY_INTERLOCK.alarmCooldownMs 必须是大于等于 0 的数字')
+  if (!Number.isFinite(config.DEFAULT_TARGET_TEMP)) throw new Error('DEFAULT_TARGET_TEMP 必须是数字')
   const auto = config.AUTO_CONTROL
   if (!auto || typeof auto !== 'object' || Array.isArray(auto)) throw new Error('AUTO_CONTROL 必须是 JSON 对象')
   for (const key of ['enabled', 'pump', 'heater']) {
     if (typeof auto[key] !== 'boolean') throw new Error(`AUTO_CONTROL.${key} 必须是布尔值`)
   }
-  for (const key of ['targetTemp', 'tempDiffCloseThreshold', 'tempDiffOpenThreshold']) {
+  for (const key of ['tempDiffCloseThreshold', 'tempDiffOpenThreshold']) {
     if (!Number.isFinite(auto[key])) throw new Error(`AUTO_CONTROL.${key} 必须是数字`)
   }
   if (!['simple', 'layered'].includes(config.CONTROL_MODE)) throw new Error('CONTROL_MODE 只能是 simple 或 layered')
@@ -1015,7 +1032,7 @@ function validate(config) {
   const pid = config.PID_HEATING
   if (!pid || typeof pid !== 'object' || Array.isArray(pid)) throw new Error('PID_HEATING 必须是 JSON 对象')
   if (typeof pid.enabled !== 'boolean') throw new Error('PID_HEATING.enabled 必须是布尔值')
-  for (const key of ['kp', 'ki', 'kd', 'targetTemp']) {
+  for (const key of ['kp', 'ki', 'kd']) {
     if (!Number.isFinite(pid[key])) throw new Error(`PID_HEATING.${key} 必须是数字`)
   }
   if (!Number.isFinite(pid.windowMs) || pid.windowMs <= 0) throw new Error('PID_HEATING.windowMs 必须是大于 0 的数字')

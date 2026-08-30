@@ -81,7 +81,7 @@ async function evaluateAutoTune(info) {
   const tempOut = await readTempOut(info)
   if (tempOut == null) return []
 
-  const targetTemp = await getTargetTemp(deviceNo, cfg.PID_HEATING?.targetTemp ?? 22)
+  const targetTemp = await getTargetTemp(deviceNo, cfg.DEFAULT_TARGET_TEMP)
   const hysteresis = Number(at.hysteresis) > 0 ? Number(at.hysteresis) : 0.3
   const highDuty = Number.isFinite(at.relayHighDuty) ? at.relayHighDuty : 100
   const lowDuty = Number.isFinite(at.relayLowDuty) ? at.relayLowDuty : 0

@@ -9,7 +9,7 @@
       type="info"
       :closable="false"
       show-icon
-      title="自动控制仅在“自动模式”下运行。目标温度优先取指令中心的“目标温度”，否则使用下方默认值；阈值取指令中心的上下限阈值。"
+      title="自动控制仅在“自动模式”下运行。目标温度优先取指令中心的“目标温度”，否则使用下方默认值（与 PID 恒温控制共用同一个默认值，改这里 PID 恒温页面也会同步变化）；阈值取指令中心的上下限阈值。"
     />
 
     <section class="auto-section">
@@ -47,7 +47,7 @@
       </div>
       <el-form label-width="160px" class="auto-form">
         <el-form-item label="默认目标温度（℃）">
-          <el-input-number v-model="form.targetTemp" :min="0" :step="0.5" :disabled="!form.enabled" />
+          <el-input-number v-model="targetTemp" :min="0" :step="0.5" :disabled="!form.enabled" />
         </el-form-item>
         <el-form-item label="温差关泵阈值（℃）">
           <el-input-number v-model="form.tempDiffCloseThreshold" :min="0" :step="0.5" :disabled="!form.enabled" />
@@ -77,12 +77,14 @@ const defaultForm = () => ({
   enabled: false,
   pump: true,
   heater: true,
-  targetTemp: 22,
   tempDiffCloseThreshold: 2,
   tempDiffOpenThreshold: 3,
 })
 
 const form = reactive(defaultForm())
+// 默认目标温度是跟 PID 恒温控制共用的顶层配置（DEFAULT_TARGET_TEMP），不属于
+// AUTO_CONTROL，单独用一个 ref 管理，不跟着 form 一起整体打包保存。
+const targetTemp = ref(22)
 
 const switches = [
   { key: 'pump', name: '水泵', description: '开：任一温度低于目标且其他传感器正常；关：两侧达到目标且温差小于阈值 / 保护故障 / 累计流量达目标。' },
@@ -95,6 +97,7 @@ async function load() {
     const response = await api.get('/api/system-config')
     const auto = response.data.data.AUTO_CONTROL || defaultForm()
     Object.assign(form, defaultForm(), auto)
+    targetTemp.value = response.data.data.DEFAULT_TARGET_TEMP ?? 22
   } catch (error) {
     ElMessage.error(error.response?.data?.message || '自动控制配置加载失败')
   } finally {
@@ -105,7 +108,7 @@ async function load() {
 async function save() {
   saving.value = true
   try {
-    await api.post('/api/system-config', { AUTO_CONTROL: { ...form } })
+    await api.post('/api/system-config', { AUTO_CONTROL: { ...form }, DEFAULT_TARGET_TEMP: targetTemp.value })
     ElMessage.success('自动控制配置已保存并立即生效')
   } catch (error) {
     ElMessage.error(error.response?.data?.message || '保存失败')

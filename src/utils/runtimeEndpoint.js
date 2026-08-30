@@ -1,8 +1,10 @@
 /**
  * 【文件职责】运行模式与端点地址解析器。
- * 统一提供 HTTP、WebSocket、MQTT Broker 地址，避免页面分别硬编码 localhost 或公网 IP。
+ * 统一提供 HTTP、WebSocket 地址，避免页面分别硬编码 localhost 或公网 IP。
  * 【配置中心关联】不保存后端场景配置；连接模式仅存浏览器 localStorage。环境变量
- * VITE_LOCAL_*、VITE_REMOTE_* 可覆盖默认地址，切换后由 API/WebSocket/MQTT 调用方即时读取。
+ * VITE_LOCAL_*、VITE_REMOTE_* 可覆盖默认地址，切换后由 API/WebSocket 调用方即时读取。
+ * MQTT Broker 地址不在这里维护——它只有配置中心的 MQTT_URL 一个生效来源，本模块的
+ * 本地/远程切换不会、也不应该去改动它，避免出现"两处都能设置地址但只有一处真正生效"。
  * */
 const STORAGE_KEY = 'lot-connection-mode'
 const LOCAL_MODE = 'local'
@@ -54,14 +56,6 @@ export function getWebSocketBaseUrl(mode = getConnectionMode()) {
 
   if (configured) return trimTrailingSlash(configured)
   return getApiBaseUrl(mode).replace(/^http:/i, 'ws:').replace(/^https:/i, 'wss:')
-}
-
-export function getMqttBrokerUrl(mode = getConnectionMode()) {
-  return trimTrailingSlash(
-    mode === LOCAL_MODE
-      ? (import.meta.env.VITE_LOCAL_MQTT_URL || 'mqtt://localhost:1883')
-      : (import.meta.env.VITE_REMOTE_MQTT_URL || 'mqtt://101.133.232.20:1883')
-  )
 }
 
 export const CONNECTION_MODES = Object.freeze({

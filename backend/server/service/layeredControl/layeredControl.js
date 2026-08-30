@@ -273,7 +273,7 @@ async function evaluateLayeredControl(info) {
 
   const sensors = await readSensors(info)
   const states = await readSwitchStates(info)
-  const targetTemp = await getTargetTemp(deviceNo, config.targetTemp ?? 22)
+  const targetTemp = await getTargetTemp(deviceNo, rootConfig.DEFAULT_TARGET_TEMP)
   const [tempLow, tempHigh, flowLow, flowHigh, pressureLow, pressureHigh] = await Promise.all([
     getThresholdValue('tempLow', deviceNo),
     getThresholdValue('tempHigh', deviceNo),

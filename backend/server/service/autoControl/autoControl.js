@@ -233,7 +233,7 @@ async function evaluateAutoControl(info) {
 
   const sensors = await readSensors(info)
   const states = await readSwitchStates(info)
-  const targetTemp = await getTargetTemp(deviceNo, config.targetTemp)
+  const targetTemp = await getTargetTemp(deviceNo, rootConfig.DEFAULT_TARGET_TEMP)
   const diffCloseThreshold = Number(config.tempDiffCloseThreshold ?? 2)
   const diffOpenThreshold = Number(config.tempDiffOpenThreshold ?? 3)
 

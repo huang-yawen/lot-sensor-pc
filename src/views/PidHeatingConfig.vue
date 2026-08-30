@@ -46,8 +46,8 @@
           <el-input-number v-model="form.kd" :min="0" :step="1" :disabled="!form.enabled" />
         </el-form-item>
         <el-form-item label="默认目标温度（℃）">
-          <el-input-number v-model="form.targetTemp" :min="0" :step="0.5" :disabled="!form.enabled" />
-          <div class="hint">优先取指令中心的“目标温度”，未配置时用这个默认值。</div>
+          <el-input-number v-model="targetTemp" :min="0" :step="0.5" :disabled="!form.enabled" />
+          <div class="hint">优先取指令中心的“目标温度”，未配置时用这个默认值（与“自动控制”页面共用同一个默认值，改这里那边也会同步变化）。</div>
         </el-form-item>
         <el-form-item label="控制周期（毫秒）">
           <el-input-number v-model="form.windowMs" :min="1000" :step="1000" :disabled="!form.enabled" />
@@ -167,7 +167,6 @@ const defaultForm = () => ({
   ki: 0.5,
   kd: 5,
   windowMs: 10000,
-  targetTemp: 22,
   deadband: 0.2,
   derivativeFilter: 0.3,
   dutyRampLimit: 15,
@@ -175,6 +174,9 @@ const defaultForm = () => ({
 })
 
 const form = reactive(defaultForm())
+// 默认目标温度是跟自动控制共用的顶层配置（DEFAULT_TARGET_TEMP），不属于
+// PID_HEATING，单独用一个 ref 管理，不跟着 form 一起整体打包保存。
+const targetTemp = ref(22)
 
 const autoTuneForm = reactive({
   relayHighDuty: 100,
@@ -234,6 +236,7 @@ async function load() {
     const response = await api.get('/api/system-config')
     const pid = response.data.data.PID_HEATING || defaultForm()
     Object.assign(form, defaultForm(), pid)
+    targetTemp.value = response.data.data.DEFAULT_TARGET_TEMP ?? 22
     applyAutoTuneState(response.data.data.PID_AUTOTUNE)
   } catch (error) {
     ElMessage.error(error.response?.data?.message || 'PID 恒温控制配置加载失败')
@@ -245,7 +248,7 @@ async function load() {
 async function save() {
   saving.value = true
   try {
-    await api.post('/api/system-config', { PID_HEATING: { ...form } })
+    await api.post('/api/system-config', { PID_HEATING: { ...form }, DEFAULT_TARGET_TEMP: targetTemp.value })
     ElMessage.success('PID 恒温控制配置已保存并立即生效')
   } catch (error) {
     ElMessage.error(error.response?.data?.message || '保存失败')

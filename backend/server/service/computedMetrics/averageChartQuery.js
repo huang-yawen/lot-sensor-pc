@@ -85,7 +85,7 @@ async function queryAverageChart(options = {}) {
  * @returns {Promise<number>}
  */
 async function getCurrentTargetTemp(d_no) {
-  const fallback = systemConfig.getConfig().PID_HEATING?.targetTemp ?? 22
+  const fallback = systemConfig.getConfig().DEFAULT_TARGET_TEMP
   return getTargetTemp(d_no, fallback)
 }
 

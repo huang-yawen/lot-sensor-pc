@@ -246,7 +246,7 @@ async function evaluatePidHeating(info) {
   // 当前加热开关状态（行为上报）。允许为 null（未知），null 时做保守同步。
   const heatOn = await readHeatOn(info)
 
-  const targetTemp = await getTargetTemp(deviceNo, fallback.targetTemp ?? 22)
+  const targetTemp = await getTargetTemp(deviceNo, rootConfig.DEFAULT_TARGET_TEMP)
 
   // PID 参数读取
   const windowMsRaw = await getPidNumber('PID控制周期(ms)', deviceNo, fallback.windowMs ?? 10000)
