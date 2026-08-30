@@ -96,6 +96,31 @@ async function isResetButtonConfig(configId) {
   return prefix === 'reset_button' || prefix === 'reset' || prefix === 'reset_btn' || prefix === 'reset_all' || name === '复位'
 }
 
+/** 判断给定 config_id 是否对应"加热"开关（preffix = heater）。 */
+async function isHeaterConfig(configId) {
+  const [rows] = await promisePool.query(
+    "SELECT preffix FROM t_direct_config WHERE id = ? AND f_type = '1' LIMIT 1",
+    [configId]
+  )
+  if (!rows.length) return false
+  return String(rows[0].preffix || '').trim().toLowerCase() === 'heater'
+}
+
+/** 按 preffix 查 t_direct_config.id，跟 autoControl.js/safetyInterlock.js 里的同名函数逻辑一致。 */
+async function resolveConfigIdByPrefix(prefix) {
+  if (!prefix) return null
+  const [rows] = await promisePool.query(
+    "SELECT id FROM t_direct_config WHERE preffix IS NOT NULL AND preffix != '' AND LOWER(preffix) = LOWER(?) ORDER BY id ASC LIMIT 1",
+    [prefix]
+  )
+  return rows[0]?.id ?? null
+}
+
+/** 把指令值统一判断成"开"，跟 faultSnapshot.js 的 getSwitchValueByPrefix 用同一套取值约定。 */
+function isOnValue(value) {
+  return ['on', 'open', '1', 'true'].includes(String(value).trim().toLowerCase())
+}
+
 /**
  * 处理指令更新请求
  * POST /directData/update
@@ -187,6 +212,26 @@ module.exports = async (req, res) => {
           success: false,
           message: '系统处于故障态，指令页面已锁定，请先把复位按钮拨到"关"以恢复',
           data: { status: 'locked' }
+        })
+      }
+    }
+
+    // ========== 加热必须在水泵已开启时才能打开 ==========
+    // 从源头拦截"没开水泵就开加热"的误操作，不必等安全联锁事后检测到再强制全部关闭。
+    // 只拦"要把加热打开"这一种操作；关闭加热、以及水泵本身的开关都不受影响。
+    // 独立受 SAFETY_INTERLOCK.requirePumpBeforeHeater 开关控制，不受 enabled 总开关约束
+    // （这条在指令入口拦截，不在安全联锁评估循环里）。
+    const requirePumpBeforeHeater = systemConfig.getConfig().SAFETY_INTERLOCK?.requirePumpBeforeHeater !== false
+    if (requirePumpBeforeHeater && isOnValue(value) && await isHeaterConfig(config_id)) {
+      const pumpConfigId = await resolveConfigIdByPrefix('pump')
+      const pumpQueryDNo = singleDeviceMode ? null : d_no
+      const pumpValue = pumpConfigId != null ? await getDirectValue({ config_id: pumpConfigId, d_no: pumpQueryDNo }) : null
+      if (!isOnValue(pumpValue)) {
+        console.warn(`[DirectUpdate] 指令 ${config_id} 被拒绝：水泵未开启时不允许打开加热`)
+        return res.status(403).json({
+          success: false,
+          message: '水泵未开启，不能打开加热，请先打开水泵',
+          data: { status: 'rejected' }
         })
       }
     }

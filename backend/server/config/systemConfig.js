@@ -512,7 +512,13 @@ const defaultConfig = {
   //   tempDiffThreshold   - 温差阈值（℃），tempDiff=true 时生效
   //   manualMode          - 进入手动模式时安全关闭一次（人工修复）
   //   sensorOffline       - 任一传感器掉线（长期无数据上报 / 长期为 0 / 异常最大值）
-  //   heaterWithoutPump   - 没打开水泵却打开了加热（水泵、加热开关状态均明确上报时才判断）
+  //   heaterWithoutPump   - 没打开水泵却打开了加热（水泵、加热开关状态均明确上报时才判断），
+  //     事后检测：加热已经开了才发现没水泵，检测到就强制把水泵和加热一起关掉。
+  //   requirePumpBeforeHeater - 打开加热前必须先打开水泵，否则直接拒绝这次开加热的请求，
+  //     从源头拦住"没开水泵就开加热"，不用等 heaterWithoutPump 事后关闭。跟 heaterWithoutPump
+  //     互补而非替代：这条管的是"通过页面下发指令"这个入口，heaterWithoutPump 管的是运行时
+  //     任何原因导致的"加热开着但水泵不知怎么就没开了"这种状态异常，两条都建议保持开启。
+  //     生效不受下面 enabled 总开关约束（这条在指令下发入口拦截，不在安全联锁评估循环里）。
   //   alarmCooldownMs     - 同一告警的冷却时间（毫秒），避免高频重复触发
   //   showOnErrorPage     - 故障记录页面是否显示“安全联锁记录”表格（只控制前端展示，不影响联锁本身是否生效）
   // 模式语义：安全联锁在自动和手动模式下全程生效——触发任一启用条件都强制关闭水泵
@@ -528,6 +534,7 @@ const defaultConfig = {
     manualMode: true,
     sensorOffline: true,
     heaterWithoutPump: true,
+    requirePumpBeforeHeater: true,
     alarmCooldownMs: 30000,
     showOnErrorPage: true,
   },
@@ -627,10 +634,13 @@ const defaultConfig = {
   //
   // 五种故障（编号对应需求文档）：
   //   ① pipe_blockage      进水口/管道堵塞：压力 < 压力下限 OR 压力 > 压力上限
-  //   ② outlet_blockage    出水口堵塞：流量 < 流量下限
+  //   ② outlet_blockage    出水口堵塞：水泵预热完成后流量 < 流量下限
   //   ③ dry_burn           干烧：加热开启后连续 dryBurnDurationMs 出水温度变化 < dryBurnMinRiseC
-  //   ④ pump_idle          水泵空转：水泵开启但流量 = 0
-  //   ⑤ pump_fault         水泵故障：水泵开启，进出水温差 > tempDiffThreshold（从指令中心读取）
+  //   ④ pump_idle          水泵空转：水泵预热完成，流量 = 0
+  //   ⑤ pump_fault         水泵故障：水泵预热完成，进出水温差 > tempDiffThreshold（从指令中心读取）
+  // ②④⑤ 共用同一个前置条件：水泵必须已经连续开启满 pumpWarmupMs 才开始判断（见下方
+  // pumpWarmupMs），水泵刚启动的瞬间流量/温差还没稳定，直接拿"水泵开着"当条件容易在
+  // 启动瞬间误判。
   //
   // 优先级（同时触发时取最高优先级处理和显示）：
   //   干烧(③) > 管道堵塞(①) > 水泵故障(⑤) > 水泵空转(④) > 出水口堵塞(②)
@@ -649,6 +659,7 @@ const defaultConfig = {
   //   tempDiffThreshold    - 故障⑤水泵故障的温差阈值兜底默认值（℃）。指令中心配置了
   //     "温差阈值"指令项（preffix=temp_diff）就优先用指令中心的，未配置时才用这里的值；
   //     跟 Kp/Ki/Kd 那套"指令中心优先、配置中心兜底"是同一套模式。
+  //   pumpWarmupMs         - 水泵预热宽限期（毫秒），故障②④⑤共用，默认 5000（5秒）。
   // 注：压力上下限、流量下限、目标温度等其余阈值类参数仍然只从指令中心 t_direct 实时
   //     读取，不在配置中心维护，本次改动不影响它们。
   FAULT_STATUS: {
@@ -662,6 +673,7 @@ const defaultConfig = {
     dryBurnMinRiseC: 0.1,
     alarmCooldownMs: 30000,
     tempDiffThreshold: 3,
+    pumpWarmupMs: 5000,
   },
 
   // --------------------------------------------------------------------------
@@ -993,7 +1005,7 @@ function validate(config) {
   }
   const safety = config.SAFETY_INTERLOCK
   if (!safety || typeof safety !== 'object' || Array.isArray(safety)) throw new Error('SAFETY_INTERLOCK 必须是 JSON 对象')
-  for (const key of ['enabled', 'flowLow', 'pressureHigh', 'tempHigh', 'tempDiff', 'manualMode', 'sensorOffline', 'heaterWithoutPump', 'showOnErrorPage']) {
+  for (const key of ['enabled', 'flowLow', 'pressureHigh', 'tempHigh', 'tempDiff', 'manualMode', 'sensorOffline', 'heaterWithoutPump', 'requirePumpBeforeHeater', 'showOnErrorPage']) {
     if (typeof safety[key] !== 'boolean') throw new Error(`SAFETY_INTERLOCK.${key} 必须是布尔值`)
   }
   if (!Number.isFinite(safety.tempDiffThreshold)) throw new Error('SAFETY_INTERLOCK.tempDiffThreshold 必须是数字')
@@ -1029,6 +1041,7 @@ function validate(config) {
   if (!Number.isFinite(fault.dryBurnMinRiseC) || fault.dryBurnMinRiseC < 0) throw new Error('FAULT_STATUS.dryBurnMinRiseC 必须是大于等于 0 的数字')
   if (!Number.isFinite(fault.alarmCooldownMs) || fault.alarmCooldownMs < 0) throw new Error('FAULT_STATUS.alarmCooldownMs 必须是大于等于 0 的数字')
   if (!Number.isFinite(fault.tempDiffThreshold) || fault.tempDiffThreshold < 0) throw new Error('FAULT_STATUS.tempDiffThreshold 必须是大于等于 0 的数字')
+  if (!Number.isFinite(fault.pumpWarmupMs) || fault.pumpWarmupMs < 0) throw new Error('FAULT_STATUS.pumpWarmupMs 必须是大于等于 0 的数字')
   const pid = config.PID_HEATING
   if (!pid || typeof pid !== 'object' || Array.isArray(pid)) throw new Error('PID_HEATING 必须是 JSON 对象')
   if (typeof pid.enabled !== 'boolean') throw new Error('PID_HEATING.enabled 必须是布尔值')

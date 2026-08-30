@@ -39,6 +39,16 @@
     <section class="safety-section">
       <div class="section-heading">
         <div>
+          <h3>加热开启前置条件</h3>
+          <p>跟上方"安全联锁开关"是两套独立机制：这条在你点击"打开加热"那一刻就直接拦截，不受上面总开关是否启用影响，始终按这里的设置生效。跟表格里的"加热开启但水泵未开"互补——那条是加热已经开了才发现没水泵、事后强制关闭；这条是从源头不让你把加热打开。</p>
+        </div>
+        <el-switch v-model="form.requirePumpBeforeHeater" active-text="打开加热前必须先打开水泵" />
+      </div>
+    </section>
+
+    <section class="safety-section">
+      <div class="section-heading">
+        <div>
           <h3>温差阈值</h3>
           <p>两路温度差的绝对值超过该值时，触发“温差过大”安全联锁。</p>
         </div>
@@ -88,6 +98,7 @@ const defaultForm = () => ({
   manualMode: true,
   sensorOffline: true,
   heaterWithoutPump: true,
+  requirePumpBeforeHeater: true,
   alarmCooldownMs: 30000,
   showOnErrorPage: true,
 })
@@ -101,7 +112,7 @@ const conditions = [
   { key: 'tempDiff', title: '温差过大', description: '两路温度差的绝对值超过温差阈值。' },
   { key: 'manualMode', title: '进入手动模式（人工修复）', description: '控制模式从自动切换到手动时，安全关闭一次水泵和加热。' },
   { key: 'sensorOffline', title: '任一传感器数值掉线', description: '设备长时间无数据上报（心跳超时）时判定离线。' },
-  { key: 'heaterWithoutPump', title: '加热开启但水泵未开', description: '加热器已开启但水泵未开启时触发，防止无水流干烧。仅当水泵、加热开关状态均明确上报时才判断，避免消息里缺行为字段时误触发。' },
+  { key: 'heaterWithoutPump', title: '加热开启但水泵未开', description: '加热器已开启但水泵未开启时触发，防止无水流干烧。仅当水泵、加热开关状态均明确上报时才判断，避免消息里缺行为字段时误触发。（事后检测；配套的事前拦截见下方"加热开启前置条件"）' },
 ]
 
 async function load() {

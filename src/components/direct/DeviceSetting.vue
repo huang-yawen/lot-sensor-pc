@@ -152,6 +152,7 @@ const handleUpdate = async (id, value) => {
     console.warn(`[Frontend] 表单初始化期间收到意外的保存请求，已忽略: id=${id}, value=${JSON.stringify(value)}`);
     return;
   }
+  const previousValue = formData[id];
   formData[id] = value;
   const updateKey = String(id) + ":" + JSON.stringify(value);
   if (pendingUpdates.has(updateKey)) {
@@ -176,9 +177,13 @@ const handleUpdate = async (id, value) => {
       ElMessage.success("指令已发送");
       console.log("[Frontend] 显示成功消息");
     } else {
+      // 后端拒绝（如故障锁定、水泵未开不允许开加热等）：开关已经乐观改成了新值，
+      // 这里要回退，避免界面显示"已打开"但实际操作被拒绝、设备根本没变化。
+      formData[id] = previousValue;
       ElMessage.error(result.message || "更新失败");
     }
   } catch (err) {
+    formData[id] = previousValue;
     console.error("[Frontend] 保存失败:", err);
     ElMessage.error(err.message || "更新失败");
   } finally {

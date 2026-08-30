@@ -6,11 +6,14 @@
  *
  * === 五种故障检测逻辑（编号对应需求文档）===
  *   ① pipe_blockage      进水口/管道堵塞：压力 < 压力下限 OR 压力 > 压力上限
- *   ② outlet_blockage    出水口堵塞：流量 < 流量下限
+ *   ② outlet_blockage    出水口堵塞：水泵预热完成后流量 < 流量下限
  *   ③ dry_burn           干烧：加热器开启后连续 dryBurnDurationMs (默认 5000ms)
  *                          出水温度变化 < dryBurnMinRiseC (默认 0.1℃)
- *   ④ pump_idle          水泵空转：水泵开启，流量传感器读数 == 0
- *   ⑤ pump_fault         水泵故障：水泵开启，进出水温差 > tempDiffThreshold
+ *   ④ pump_idle          水泵空转：水泵预热完成，流量传感器读数 == 0
+ *   ⑤ pump_fault         水泵故障：水泵预热完成，进出水温差 > tempDiffThreshold
+ * ②④⑤ 共用同一个"预热"前置条件：水泵必须已经连续开启满 pumpWarmupMs（默认
+ * 5000ms，配置中心设置）才开始判断，水泵刚启动的瞬间流量/温差还没稳定，直接拿
+ * "水泵开着"当条件容易在启动瞬间误判。
  *
  * === 故障优先级（同时触发时按此排序取最高优先级处理和显示）===
  *   干烧(③) > 管道堵塞(①) > 水泵故障(⑤) > 水泵空转(④) > 出水口堵塞(②)
@@ -39,6 +42,11 @@ const { resolveDeviceNo, resolveFieldAliases } = require('../../utils/mappedData
 const { saveDirectData, getDirectValue } = require('../directData/saveDirectConfig')
 const { saveOperationHistory } = require('../operationHistory/saveOperationHistory')
 const { nowLocalDateTime } = require('../../utils/helper')
+const EventEmitter = require('events')
+
+// 新故障触发时对外广播（app.js 监听后通过 WebSocket 推给前端弹窗提示），
+// 跟 systemConfig.js 的 onChange 是同一套"内部 emit + 对外订阅函数"模式。
+const events = new EventEmitter()
 const {
   saveSnapshot,
   restoreFromSnapshot,
@@ -84,8 +92,31 @@ function getDeviceState(deviceNo) {
 
 /** 干烧检测：记录"加热开启后温度基线 + 起始时间"，加热关闭则清空。 */
 const dryBurnStateMap = new Map()
+/** 水泵启动预热计时：记录水泵"从关到开"的起始时间，水泵关闭则清空。 */
+const pumpStartStateMap = new Map()
 /** 故障告警冷却时间戳，避免同一故障高频重复入库（30s）。 */
 const lastFired = new Map()
+
+/**
+ * 返回水泵已连续开启的时长（毫秒）；水泵未开启时返回 null。
+ * 水泵刚启动的瞬间，流量/进出水温差往往还没稳定下来，直接拿"水泵开着"当前置
+ * 条件容易在启动瞬间误判出水口堵塞/水泵空转/水泵故障；这里改成"水泵开启满
+ * pumpWarmupMs 才开始判断"，宽限期长度在配置中心 FAULT_STATUS.pumpWarmupMs 设置。
+ */
+function trackPumpOnDuration(deviceNo, pumpOn) {
+  const key = deviceNo || 'global'
+  if (!pumpOn) {
+    pumpStartStateMap.delete(key)
+    return null
+  }
+  const now = Date.now()
+  let since = pumpStartStateMap.get(key)
+  if (since == null) {
+    since = now
+    pumpStartStateMap.set(key, since)
+  }
+  return now - since
+}
 
 /* ============================================================
  * 3. 工具函数
@@ -252,6 +283,12 @@ async function detectFault(info, deviceNo, faultConfig) {
   const sensors = await readSensors(info)
   const states = await readSwitchStates(info)
 
+  // 水泵开启满 pumpWarmupMs 才算"预热完成"，②④⑤三条故障都要求预热完成才判断，
+  // 避免水泵刚启动、流量/温差还没稳定的瞬间被误判。
+  const pumpOnDurationMs = trackPumpOnDuration(deviceNo, states.pumpOn === true)
+  const warmupMs = Number(faultConfig.pumpWarmupMs) >= 0 ? Number(faultConfig.pumpWarmupMs) : 5000
+  const pumpWarmedUp = pumpOnDurationMs != null && pumpOnDurationMs >= warmupMs
+
   const [flowLow, pressureLow, pressureHigh, tempDiffFromDirect] = await Promise.all([
     getThresholdValue('flowLow', deviceNo),
     getThresholdValue('pressureLow', deviceNo),
@@ -279,8 +316,8 @@ async function detectFault(info, deviceNo, faultConfig) {
     }
   }
 
-  // ② 出水口堵塞：流量 < 下限
-  if (faultConfig.outletBlockage !== false && sensors.flow != null && flowLow != null && sensors.flow < flowLow) {
+  // ② 出水口堵塞：水泵预热完成后流量 < 下限（水泵刚启动、没开，流量本来就该是 0，不算故障）
+  if (faultConfig.outletBlockage !== false && pumpWarmedUp && sensors.flow != null && flowLow != null && sensors.flow < flowLow) {
     triggers.push({
       id: 'outlet_blockage', code: '②', priority: 5,
       name: '出水口堵塞',
@@ -298,8 +335,8 @@ async function detectFault(info, deviceNo, faultConfig) {
     })
   }
 
-  // ④ 水泵空转：水泵开启，流量 = 0
-  if (faultConfig.pumpIdle !== false && states.pumpOn === true && sensors.flow === 0) {
+  // ④ 水泵空转：水泵预热完成，流量 = 0
+  if (faultConfig.pumpIdle !== false && pumpWarmedUp && sensors.flow === 0) {
     triggers.push({
       id: 'pump_idle', code: '④', priority: 4,
       name: '水泵空转',
@@ -307,9 +344,9 @@ async function detectFault(info, deviceNo, faultConfig) {
     })
   }
 
-  // ⑤ 水泵故障：水泵开启，进出水温差 > 阈值
+  // ⑤ 水泵故障：水泵预热完成，进出水温差 > 阈值
   if (faultConfig.pumpFault !== false
-    && states.pumpOn === true
+    && pumpWarmedUp
     && sensors.temp1 != null && sensors.temp2 != null
     && tempDiffThreshold != null) {
     const diff = Math.abs(sensors.temp1 - sensors.temp2)
@@ -393,6 +430,9 @@ async function triggerFault(deviceNo, trigger, faultConfig) {
   // 步骤 5：告警入库
   await recordAlarm(deviceNo, trigger)
 
+  // 广播新故障，供 app.js 转成 WebSocket 消息推给前端弹窗提示。
+  events.emit('fault', { ...trigger, deviceNo })
+
   return trigger
 }
 
@@ -474,6 +514,8 @@ async function handleResetButtonOff(deviceNo) {
   clearCooldownForDevice(deviceNo)
   // 同时清空干烧检测状态，避免基线温度被沿用导致误判
   dryBurnStateMap.delete(deviceNo || 'global')
+  // 水泵按快照重启是一次新的开启，预热计时也要重新开始，避免沿用故障前的累计时长
+  pumpStartStateMap.delete(deviceNo || 'global')
 
   console.log(`[FaultStatus] 系统已恢复 NORMAL | 设备=${deviceNo || '全局'} | 恢复项数=${restoreResult.restored}`)
 
@@ -637,6 +679,7 @@ module.exports = {
   getDeviceFaultState,
   isLockedByFault,
   isAnyLocked,
+  onFault: (listener) => events.on('fault', listener),
   getAnyLockedDeviceNo,
   initFaultStateFromDb,
   FAULT_TYPES,        // 暴露故障类型表，供前端展示和文档使用

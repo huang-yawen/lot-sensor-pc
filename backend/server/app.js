@@ -17,7 +17,7 @@ const sensorRoutes = require('./routes/sensorRoutes');
 const systemConfig = require('./config/systemConfig');
 const configController = require('./controllers/system/configController');
 const { startMonitor: startSafetyMonitor } = require('./service/safety/safetyInterlock');
-const { initFaultStateFromDb } = require('./service/faultStatus/faultStatus');
+const { initFaultStateFromDb, onFault } = require('./service/faultStatus/faultStatus');
 const { getLatest: getLatestComputed, refreshFromDB: refreshComputedFromDB } = require('./service/computedMetrics/computedMetrics');
 const mqttClient = require('./mqtt/index')
 const app = express();
@@ -250,6 +250,11 @@ mqttClient.on('processedMessage', (topic, data) => {
 
 // 导出 broadcast 函数，供其他模块使用（如控制器需要主动推送时）
 app.set('wsBroadcast', broadcast);
+
+// 新故障触发时立即广播（不走节流），前端收到后弹窗提示当前故障情况。
+onFault((trigger) => {
+    broadcast('fault_triggered', trigger);
+});
 
 // ==================== 设备在线状态定时广播 ====================
 // 每 2 秒广播一次所有设备的在线状态，接近实时

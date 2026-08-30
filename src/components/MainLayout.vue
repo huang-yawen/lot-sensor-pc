@@ -26,11 +26,26 @@
 import SideBar from '@/components/SideBar.vue'
 import TopNav from '@/components/TopNav.vue'
 import { DisplayStore } from '@/stores/DisplayStore'
+import { connect, on as wsOn } from '@/utils/websocket'
+import { ElMessageBox } from 'element-plus'
 
 import { ref, onMounted } from 'vue'
 const activeIndex = ref('2')
 const displayStore = DisplayStore()
-onMounted(() => displayStore.loadDisplayConfig().catch(error => console.error('[DisplayConfig] 加载失败:', error)))
+onMounted(() => {
+  displayStore.loadDisplayConfig().catch(error => console.error('[DisplayConfig] 加载失败:', error))
+
+  // 全局挂载点：不管用户停在哪个页面，只要后端触发新故障就弹窗提示，不需要
+  // 每个业务页面各自监听。connect() 内部已判断"已连接则跳过"，可以放心重复调用。
+  connect()
+  wsOn('fault_triggered', (trigger) => {
+    ElMessageBox.alert(
+      trigger.detail || '',
+      `⚠️ 检测到新故障：${trigger.name}（${trigger.code}）`,
+      { type: 'error', confirmButtonText: '知道了' }
+    )
+  })
+})
 </script>
 
 <style scoped>
