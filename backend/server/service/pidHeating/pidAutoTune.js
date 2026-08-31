@@ -93,6 +93,9 @@ async function evaluateAutoTune(info) {
 
   if (state.startedAt === 0) {
     state.startedAt = now
+    // 初始输出状态跟着当前温度走：已经低于目标就先开（升温），已经高于/等于目标
+    // 就先关（降温）——保证测试一开始就是"往目标温度方向调节"，不会白白等一整个
+    // 无意义的反向周期才进入正常振荡。
     state.relayOn = tempOut < targetTemp
     state.curMin = tempOut
     state.curMax = tempOut
@@ -110,6 +113,12 @@ async function evaluateAutoTune(info) {
   state.curMin = Math.min(state.curMin, tempOut)
   state.curMax = Math.max(state.curMax, tempOut)
 
+  // 【为什么要用滞环（hysteresis）而不是直接比较 tempOut 和 targetTemp】
+  // 如果当前正开着（relayOn=true），并不是温度一超过 targetTemp 就立刻切断，而是
+  // 要继续等到低于 targetTemp - hysteresis 才切断；反之亦然。这个"多等一段误差
+  // 空间才切换"就是继电反馈整定法的核心：温度必须先明显冲过头再往回走，才能形成
+  // 稳定、可测量的振荡，而不是在 targetTemp 这一条线上因为传感器噪声来回抖动式
+  // 切换（那样测不出真实的振荡周期和振幅，算出来的 Ku/Pu 也不准）。
   const error = targetTemp - tempOut
   let switchedToOn = false
   if (state.relayOn && error <= -hysteresis) {
@@ -136,7 +145,12 @@ async function evaluateAutoTune(info) {
     if (state.cycles.length >= minCycles + 1) {
       const collected = state.cycles.slice(1)
       const avgPeriodMs = collected.reduce((sum, c) => sum + c.period, 0) / collected.length
+      // 振幅定义为"峰谷差的一半"（波动幅度以中线为基准的偏移量），是继电反馈法
+      // 公式里 a 的标准定义，不是振荡区间本身的宽度，所以要除以 2。
       const avgAmp = collected.reduce((sum, c) => sum + (c.peak - c.trough), 0) / collected.length / 2
+      // h 是继电测试高低占空比之差的一半——公式 Ku = 4h/(π·a) 里的 h 对应的是
+      // "继电器输出在中线两侧各摆动多少"，跟上面振幅 a 的定义方式保持一致，
+      // 两者都是"半幅"，这样算出来的 Ku 才符合 Åström–Hägglund 公式的原始定义。
       const h = Math.abs(highDuty - lowDuty) / 2
 
       resetState(deviceNo)

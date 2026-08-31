@@ -63,6 +63,11 @@ class DeviceManager {
     /** @type {Set<string>} 正在发送暂存指令的设备，避免心跳并发触发重复发送 */
     this._flushingDevices = new Set()
 
+    // 为什么暂存指令要落盘成文件，不能只存在内存 Map 里：设备离线期间用户在页面
+    // 点了几个开关，这些指令还没真正发给设备、只是存在 _pendingCommands 这个内存
+    // 结构里——如果这时候后端服务重启（比如更新代码、意外崩溃），内存会被清空，
+    // 这几条指令就永久丢失了，设备重新上线后也不会收到。落盘之后，服务重启时
+    // _loadPendingCommands 会把上次没发完的指令重新读回内存，不会丢。
     this._pendingFile = process.env.PENDING_COMMANDS_FILE
       ? path.resolve(process.env.PENDING_COMMANDS_FILE)
       : path.join(__dirname, '../data/pending-commands.json')
@@ -193,6 +198,10 @@ class DeviceManager {
     this._flushPendingCommands(deviceId)
   }
 
+  // 为什么用"每次心跳都重置一个定时器"这种方式判断离线，而不是"每隔几秒轮询一遍
+  // 所有设备、检查最后心跳时间是不是太久以前"：定时器方式不需要额外的轮询开销，
+  // 而且离线判定几乎是实时的——心跳一停，定时器到点自动触发，不用等下一次轮询周期。
+  // 代价是设备一多，同时存在的定时器也会变多，但这个项目设备数量级完全不构成问题。
   /** 重置设备的离线检测定时器 */
   _resetOfflineTimer(deviceId) {
     if (this._offlineTimers.has(deviceId)) {
@@ -207,7 +216,10 @@ class DeviceManager {
 
   /**
    * 检查设备是否在线
-   * 基于最后心跳时间判断，不依赖定时器状态
+   * 基于最后心跳时间判断，不依赖定时器状态。为什么不能只依赖 _onlineStatus 这个
+   * 定时器维护的标记：定时器本身可能因为极端情况（比如事件循环被某个耗时操作
+   * 长时间阻塞）延迟触发，这时候 _onlineStatus 可能还没来得及更新成 false，
+   * 但用"当前时间 - 最后心跳时间"直接算，永远是最新、最准的判断依据，不会滞后。
    * @param {string} deviceId
    * @returns {boolean}
    */
@@ -302,7 +314,10 @@ class DeviceManager {
     if (!this._pendingCommands.has(deviceId)) {
       this._pendingCommands.set(deviceId, [])
     }
-    // 同一配置只保留用户最后一次设置，避免设备上线后执行过期指令。
+    // 同一配置只保留用户最后一次设置，避免设备上线后执行过期指令：比如设备离线期间
+    // 用户先点了"开水泵"又改主意点了"关水泵"，暂存队列里不应该把这两条都存下来
+    // 排队执行（那样上线后会先开再关，用户实际想要的只是最终状态"关"），
+    // 所以新指令进来时把同一个 config_id 的旧指令直接顶替掉。
     const commands = this._pendingCommands.get(deviceId)
       .filter((item) => String(item.config_id) !== String(configId))
     commands.push({ config_id: configId, value })
@@ -341,6 +356,10 @@ class DeviceManager {
   /** 设备上线时发送所有暂存指令，发送成功后保存到数据库 */
   async _flushPendingCommands(deviceId) {
     const commands = this._pendingCommands.get(deviceId)
+    // 为什么要有 _flushingDevices 这个"正在发送中"标记：设备心跳可能一秒内连续
+    // 上报好几次（onHeartbeat 每次都会调 _flushPendingCommands），如果不加这层
+    // 保护，同一批暂存指令可能被并发触发好几次发送流程，指令被重复下发到设备。
+    // 有这个标记后，上一轮发送还没跑完时，新触发的调用会直接跳过。
     if (!commands || commands.length === 0 || this._flushingDevices.has(deviceId)) return
 
     this._flushingDevices.add(deviceId)

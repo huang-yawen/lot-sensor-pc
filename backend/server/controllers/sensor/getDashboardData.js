@@ -43,7 +43,7 @@ module.exports = async (req, res) => {
             fieldMapping[metric.metric_key] = metric.metric_name
         }
         searchMapper.push('c_time AS 创立时间')
-        // 实时数据 = 该表当前最新一条记录，历史数据 = 除最新记录外的其余记录，
+        // 实时数据 = 该表当前最新一条记录，汇总数据 = 数据库里面的所有的数据
         // 不再依赖设备上报时是否自带 online 字段。
         const sensorRecency = buildRecencyFilter('t_sensor_data', onlineFilter)
         searchMapper.push(`${sensorRecency.dataTypeExpr} AS 数据类型`)

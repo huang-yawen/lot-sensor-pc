@@ -1,7 +1,11 @@
 /**
  * 【文件职责】MQTT 业务总线入口。
- * 根据配置中心创建客户端、订阅传感器/行为/告警/心跳主题，将消息路由到处理器；当 MQTT
+ * 根据配置中心创建客户端、订阅传感器/行为/心跳主题，将消息路由到处理器；当 MQTT
  * 参数或主题变化时重新注册路由和连接。
+ * 【说明】原本还订阅设备主动上报的 alarm 告警主题（由 mqtt/errorHistory/ 处理），
+ * 现赛题场景不再有设备侧上报告警，该子模块已被删除，本文件不再订阅/处理该主题；
+ * 所有故障判断改为后端自己拿传感器数值实时评估，见 evaluateRules/safetyInterlock/
+ * faultStatus 三套本地判断逻辑。
  * 心跳判定模式由 HEARTBEAT_MODE 二选一，两种互斥：
  *   'receive' - 自动上报：设备发一条传感器/行为数据（receive 主题）就代表在线，
  *               不要求单独发心跳包（默认）。
@@ -19,7 +23,6 @@ const { firstValue } = require('../utils/protocol')
 const { resolveDeviceNo } = require('../utils/mappedData')
 const { handleMessage: handleSensorData } = require('./sensorRealtime/sensorRealtimeHandler')
 const { handleMessage: handleBehaviorData } = require('./behaviorRealtime/behaviorRealtimeHandler')
-const { handleMessage: handleAbnormalStateData } = require('./errorHistory/errorHistoryHandler')
 const { handleMessage: handleCombinedData } = require('./combinedRealtime/combinedRealtimeHandler')
 
 function buildMqttConfig(scene) {
@@ -36,7 +39,6 @@ function buildMqttConfig(scene) {
     subscribeTopics: [
       { topic: scene.MQTT_TOPICS.sensor, qos },
       { topic: scene.MQTT_TOPICS.behavior, qos },
-      { topic: scene.MQTT_TOPICS.alarm, qos },
       { topic: scene.MQTT_TOPICS.heartbeat, qos },
     ],
     maxReconnectAttempts: 5,
@@ -51,12 +53,17 @@ function registerRoutes(scene) {
   router.clear()
   if (scene.MQTT_TOPICS.sensor === scene.MQTT_TOPICS.behavior) {
     // 设备把传感器字段和行为字段放在同一条消息里上报，不再区分传感器/行为两个主题。
+    // 为什么这种情况必须显式切到合并处理器，不能还是分别 register 两次：
+    // messageRouter 内部用一个 Map<主题, 处理函数> 存路由表，同一个主题只能对应
+    // 一个处理函数，如果两个主题相同还是分别 register(sensor, ...) 和
+    // register(behavior, ...)，后一次注册会直接覆盖前一次，实际只有 behavior 的
+    // 处理器生效，sensor 那部分字段就永远解析不到、存不进库。所以主题一样时改用
+    // handleCombinedData 这一个处理器，一次性把传感器字段和行为字段都解析并入库。
     router.register(scene.MQTT_TOPICS.sensor, handleCombinedData)
   } else {
     router.register(scene.MQTT_TOPICS.sensor, handleSensorData)
     router.register(scene.MQTT_TOPICS.behavior, handleBehaviorData)
   }
-  router.register(scene.MQTT_TOPICS.alarm, handleAbnormalStateData)
 }
 
 registerRoutes(systemConfig.getConfig())
@@ -92,6 +99,11 @@ mqttClient.on('message', async (topic, payload) => {
   }
 })
 
+// 配置中心任何一项保存都会触发这个回调，但不是所有配置项变化都跟 MQTT 连接相关
+// （比如只是改了页面标题、分页大小）。用 JSON.stringify 序列化前后两份 MQTT 相关
+// 配置（地址、账号密码、QoS、主题）比较是否真的变了，只有真变了才断线重连——
+// 避免用户随便改个不相关的配置就让 MQTT 连接抖一下，正在处理中的消息、设备心跳
+// 计时都被无谓打断。
 systemConfig.onChange((scene) => {
   registerRoutes(scene)
   const nextConfig = buildMqttConfig(scene)

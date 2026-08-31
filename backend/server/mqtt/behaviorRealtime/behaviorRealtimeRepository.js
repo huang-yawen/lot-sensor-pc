@@ -49,7 +49,11 @@ async function detectAndRecordChanges(info, d_no) {
         }
 
         // 构建 config_id -> value 的映射（预期值）
-        // 先放入全局配置（d_no IS NULL），再被设备专属配置（d_no = ?）覆盖
+        // 先放入全局配置（d_no IS NULL），再被设备专属配置（d_no = ?）覆盖：为什么要
+        // 这个覆盖顺序——全局配置是"没有为这台设备单独设置时的默认预期值"，设备专属
+        // 配置是"专门给这台设备定制的预期值"，更具体的配置理应比更笼统的默认值优先。
+        // SQL 查询本身不保证返回顺序，靠下面"已有设备专属配置就不覆盖"这条判断规则来
+        // 保证结果正确，不依赖行的先后顺序。
         const expectedValues = {}
         for (const row of directRows) {
             const configId = row.config_id
@@ -97,7 +101,10 @@ async function detectAndRecordChanges(info, d_no) {
                     c_time: getReportedTime(info) || null
                 })
                 if (historyResult.success) {
-                    // 接受设备实际状态为新的比较基准，防止每个上报包重复记录同一次变化。
+                    // 接受设备实际状态为新的比较基准，防止每个上报包重复记录同一次变化：
+                    // 记录完这次变化后，马上把 t_direct 的预期值也更新成设备刚上报的
+                    // 这个新值——下一条 MQTT 消息再上报同样的值时，跟"预期值"已经一致
+                    // 了，不会被判定成又发生了一次变化，只有值再次不一样才会重新触发。
                     const storedValue = isSwitch
                         ? fromWireValue(newVal)
                         : newVal
@@ -129,6 +136,9 @@ async function saveBehaviorData(info) {
         const mappedInfo = { ...info, d_no }
         // 控制模式是 PC 端逻辑状态，设备不会上报；从 t_direct 读真实值落库，
         // 存成 0(手动/off)/1(自动/on)，让行为数据页"控制模式"列显示真实数据。
+        // 为什么设备不会上报这个字段：自动/手动只是软件层面"由谁决定要不要开关水泵、
+        // 加热"的逻辑状态，硬件本身并不知道、也不需要知道自己现在处于哪种模式，
+        // 所以只能由后端自己去指令中心查这个模式当前是什么，拼进这条数据里再存库。
         if (!Object.prototype.hasOwnProperty.call(mappedInfo, 'mode')) {
             const rawMode = await getDirectValue({ config_id: 0, d_no })
             const modeStr = String(rawMode ?? '').trim().toLowerCase()

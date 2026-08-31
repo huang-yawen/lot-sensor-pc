@@ -29,8 +29,11 @@ const { firstValue, getTopic, buildSwitchPayload } = require('../../utils/protoc
 const { resolveDeviceNo, resolveFieldAliases } = require('../../utils/mappedData')
 const { saveDirectData, getDirectValue } = require('../directData/saveDirectConfig')
 const { saveOperationHistory } = require('../operationHistory/saveOperationHistory')
-const { nowLocalDateTime, formatLocalDateTime } = require('../../utils/helper')
+const { nowLocalDateTime } = require('../../utils/helper')
 
+// 为什么要设一个"异常最大值"：传感器掉线或短路时，很多硬件驱动不会直接不上报数据，
+// 而是把读数钳位成一个固定的极端大值（比如 9999）。如果只判断"读数超过阈值"，这种
+// 硬件层面的异常会被误判成"正常但数值很大"，所以额外拿这个哨兵值单独识别掉线/短路。
 /** 异常最大值哨兵：超过此值视为传感器异常（掉线/短路）。 */
 const ABNORMAL_MAX = 9999
 
@@ -64,6 +67,10 @@ async function resolveConfigIdByPrefix(prefix) {
   return rows[0]?.id ?? null
 }
 
+// 为什么要先查 preffix 再查中文名：preffix 是赛场比较正式的字段标识，但有些场景配置
+// 可能懒得填 preffix、只填了中文名（比如"温度上限阈值"），所以这里做了两层兜底查找：
+// 只要能靠 preffix 或中文名任一种方式在指令中心里对上号，就能拿到这个阈值的 id，
+// 不强制要求现场一定要把 preffix 配置齐全。
 async function resolveThresholdConfigId(slot) {
   const def = THRESHOLD_SLOTS[slot]
   if (!def) return null
@@ -199,6 +206,11 @@ function markFired(key) {
 
 /**
  * 对单个触发条件执行：冷却判断 -> 告警记录 -> 可选联锁。
+ *
+ * 为什么需要冷却时间：MQTT 消息上报很频繁（可能几秒一条），如果流量一直低于阈值，
+ * 不加冷却的话每条消息都会触发一次"关水泵、写告警"，短时间内刷出成百上千条重复
+ * 告警记录，也会不停地重复下发同一条 MQTT 关闭指令。cooldownMs 时间内同一个
+ * "设备+故障类型"只处理一次，之后即使条件仍然满足也先跳过，等冷却期过了再重新判断。
  * @returns {object|null} 执行结果，冷却期内返回 null。
  */
 async function fire(trigger, deviceNo, safetyConfig, { interlock }) {
@@ -279,7 +291,8 @@ async function evaluateValueConditions(info, deviceNo, safetyConfig) {
 }
 
 /**
- * 消息驱动评估：在每条 MQTT 数据入库后调用（条件 1~5）。
+ * 消息驱动评估：在每条 MQTT 数据入库后调用（条件 1~5）。这是整个安全联锁模块唯一的
+ * 外部入口，调用方（mqtt 消息处理流程）每收到一条设备上报就调一次本函数。
  * @param {Object} info - 已解析的设备上报数据
  * @returns {Array} 本次触发的安全联锁结果
  */
@@ -288,6 +301,10 @@ async function evaluateSafety(info) {
   if (safetyConfig.enabled !== true) return []
 
   const deviceNo = String((await resolveDeviceNo(info)) || '').trim() || null
+  // "自动->手动切换"这个条件为什么要用 lastMode 记录上一次的模式：因为控制模式本身
+  // 不是靠某条 MQTT 消息触发的事件，而是指令中心里的一个持续状态值——必须自己保存
+  // 上一次读到的模式，跟这一次的模式对比，才能判断出"这一刻恰好发生了切换"，不然
+  // 每次都只能看到"当前是手动"，分不清是刚切过去的还是已经手动了很久。
   const mode = await getCurrentMode(deviceNo)
   const prevMode = lastMode.get(deviceNo)
   lastMode.set(deviceNo, mode)
@@ -318,6 +335,10 @@ async function evaluateSafety(info) {
 
 /* ============================ 掉线监测（条件 6） ============================ */
 
+// 为什么"传感器掉线"这条不能放进 evaluateSafety 一起判断：前面 1~5 条都是靠"收到一条
+// MQTT 消息"这个事件触发的，但设备掉线恰恰是"完全没有消息进来了"，没有消息就不会调用
+// evaluateSafety，永远不可能靠被动等消息发现掉线。所以掉线监测必须反过来，用一个独立的
+// 定时器主动去查"每个设备上次收到心跳是多久之前"，而不是等消息来了才检查。
 async function monitorOffline() {
   const safetyConfig = systemConfig.getConfig().SAFETY_INTERLOCK || {}
   if (safetyConfig.enabled !== true || safetyConfig.sensorOffline === false) return

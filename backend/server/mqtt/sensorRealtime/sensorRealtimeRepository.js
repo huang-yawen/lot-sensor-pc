@@ -1,8 +1,12 @@
-/** 【文件职责】传感器实时与历史数据仓储层。
+/** 【文件职责】传感器实时/保存数据仓储层（项目里没有独立的"历史数据"概念）。
  * 【配置中心关联】无直接读取。 */
 const promisePool = require('../../config/dbPool')
 const { saveMappedData } = require('../../utils/mappedData')
 
+// 为什么这里 catch 住了异常又要 throw 出去，不是白 catch 了：这一层只负责在日志里
+// 留下"是保存传感器数据这一步失败的"这条线索，方便排查问题，但"这个失败到底要不要
+// 影响后续流程、要不要中断整条消息处理"不是这一层该决定的事，所以记录完日志后照样
+// 把异常继续往上抛，交给调用方（combinedRealtimeHandler.js 的大 try/catch）统一处理。
 async function saveSensorData(info) {
     try {
         const result = await saveMappedData({

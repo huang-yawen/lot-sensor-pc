@@ -17,7 +17,7 @@
  * 【配置中心关联】无直接读取，所有指令项从 t_direct 实时查询。
  */
 const promisePool = require('../../config/dbPool')
-const { saveDirectData, getDirectValue } = require('../directData/saveDirectConfig')
+const { saveDirectData } = require('../directData/saveDirectConfig')
 
 /** 设备 -> 最新快照 */
 const snapshotMap = new Map()

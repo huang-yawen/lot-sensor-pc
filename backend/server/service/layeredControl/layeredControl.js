@@ -144,6 +144,9 @@ function isFlowNormal(flow, flowLow, flowHigh) {
   return true
 }
 
+// 为什么"关闭"优先于"打开"：本轮如果有的规则说要开、有的规则说要关，说明至少有一条
+// 安全相关的规则认为现在不该开，宁可信其有——选"关"永远比选"开"更安全，这就是
+// fail-safe（故障时朝安全的方向失效）的含义。
 /** 多个候选结论合并：“关闭”优先于“打开”（fail-safe）。 */
 function mergeDecision(...values) {
   const list = values.filter(v => v === 'on' || v === 'off')

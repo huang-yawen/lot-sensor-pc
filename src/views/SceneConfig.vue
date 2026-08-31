@@ -85,7 +85,7 @@
           <el-descriptions-item label="SINGLE_DEVICE_MODE">true 为单设备并自动选第一台；false 为多设备，可按设备编号控制。</el-descriptions-item>
           <el-descriptions-item label="MQTT_URL">格式如 mqtt://192.168.1.10:1883；需要 TLS 时使用 mqtts://。</el-descriptions-item>
           <el-descriptions-item label="MQTT_QOS">只能填 0、1、2；比赛现场通常使用 1。</el-descriptions-item>
-          <el-descriptions-item label="MQTT_TOPICS">sensor=传感量，behavior=运行状态，alarm=主动告警，heartbeat=心跳，control=控制下发。</el-descriptions-item>
+          <el-descriptions-item label="MQTT_TOPICS">sensor=传感量，behavior=运行状态，heartbeat=心跳，control=控制下发。</el-descriptions-item>
           <el-descriptions-item label="DEVICE_ID_FIELDS / TIME_FIELDS">上报 JSON 中设备编号和时间的候选属性名，系统按从左到右的顺序查找。</el-descriptions-item>
           <el-descriptions-item label="CONTROL_VALUE_MAP">页面值到设备值的转换，例如 on→open、off→close；设备使用 on/off 时可映射为自身。</el-descriptions-item>
           <el-descriptions-item label="OPERATION_HISTORY_MODE">both=软件和底层都记录；software_only=只记录软件；device_only=只记录底层；off=关闭记录。</el-descriptions-item>
@@ -392,12 +392,11 @@ const configHelp = [
   { group: 'MQTT', key: 'MQTT_URL', description: 'MQTT Broker 完整地址，包含协议、IP 和端口。', example: 'mqtt://192.168.1.10:1883', notice: '改变后后端自动重连；TLS 使用 mqtts://。' },
   { group: 'MQTT', key: 'MQTT_USERNAME / MQTT_PASSWORD', description: 'Broker 登录账号和密码，无认证时填写空字符串。', example: '""', notice: '导出场景包会包含密码，注意保管。' },
   { group: 'MQTT', key: 'MQTT_QOS', description: '消息服务质量：0 最多一次、1 至少一次、2 仅一次。', example: '1', notice: '必须与现场要求匹配，通常使用 1。' },
-  { group: 'MQTT', key: 'MQTT_TOPICS', description: 'sensor、behavior、alarm、heartbeat、control 五类主题。', example: 'sensor_data / control', notice: '键名不能改，值必须与底层程序完全一致。' },
+  { group: 'MQTT', key: 'MQTT_TOPICS', description: 'sensor、behavior、heartbeat、control 四类主题。', example: 'sensor_data / control', notice: '键名不能改，值必须与底层程序完全一致。' },
   { group: '上报协议', key: 'DEVICE_ID_FIELDS', description: '数据包中设备编号的候选属性名，按从左到右匹配。', example: '["VID","deviceId","d_no"]', notice: '大小写不敏感；至少保留一个。' },
   { group: '上报协议', key: 'TIME_FIELDS', description: '采集时间的候选属性名；均不存在时使用服务器时间。', example: '["Time","timestamp"]', notice: '建议底层上报 YYYY-MM-DD HH:mm:ss。' },
   { group: '上报协议', key: 'HEARTBEAT_DEVICE_FIELDS', description: 'JSON 心跳包中的设备编号候选名。', example: '["VID","deviceId"]', notice: '纯文本心跳同样支持。' },
   { group: '控制协议', key: 'CONTROL_VALUE_MAP', description: '软件标准状态到设备真实控制值的映射。', example: '{"on":"open","off":"close"}', notice: '水泵无响应时优先检查此项和控制主题。' },
-  { group: '告警', key: 'ALARM_FIELD_MAP', description: '设备主动告警字段到页面中文名称的映射。', example: 'pressure_warn: 压力', notice: '左侧必须是现场 JSON 真实属性名。' },
   { group: '页面术语', key: 'TERMINOLOGY', description: '修改传感器、运行状态、设备、告警和智能判定的页面称呼。', example: 'sensor: 水循环数据', notice: '不改变数据库和 MQTT 字段。' },
   { group: '智能判定', key: 'INTELLIGENT_JUDGMENT.enabled', description: '是否调用现场 HTTP 智能判定服务。', example: 'true', notice: '正式比赛调用接口时开启。' },
   { group: '智能判定', key: 'INTELLIGENT_JUDGMENT.url / method / timeoutMs', description: '服务地址、HTTP 方法和超时时间。', example: 'POST / 10000', notice: '服务在其他电脑时不能使用 127.0.0.1。' },

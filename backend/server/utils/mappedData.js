@@ -79,6 +79,19 @@ async function resolveFieldAliases(sourceTable, sourceField) {
  * 根据字段映射表保存设备上报数据。
  * 修改 t_*_field_mapper.p_name 即可适配现场传感器/执行器 JSON，
  * 不再需要为每道赛题改 Node.js 中的硬编码字段。
+ *
+ * 【这个函数具体是怎么把 MQTT 报文里的字段"对号入座"存进数据库的】
+ * 举例：现场设备上报 { "Tin": 25.3, "Flow": 4.2 }，数据库表 t_sensor_data 里只有
+ * field1/field2/... 这种没有语义的槽位列，t_sensor_field_mapper 表里配了一行
+ * db_name='field1'，p_name='Tin|inlet_temperature|temp_in'（用 | 分隔多个候选别名，
+ * 兼容不同设备厂商叫法不一样的情况）。这个函数会：
+ *   1. 查出 mapper 表里 visible=1（页面上勾选了"可见"）的每一行；
+ *   2. 把 p_name 按 | 拆开，得到这一行的全部候选属性名（比如 ['Tin','inlet_temperature','temp_in']）；
+ *   3. 逐个候选名去 MQTT 报文（incoming）里找，只要命中任意一个候选名，就把这个值存进
+ *      对应的 db_name 列（这里是 field1）；
+ *   4. 全部没配置 visible=1、或者报文里根本没有任何候选名匹配上的字段，直接跳过不存。
+ * 大小写不敏感是因为 incoming 的 key 统一转成了小写再比较，避免设备上报 "Flow" 但
+ * 配置里写成 "flow" 导致匹配不上这种低级失误。
  */
 async function saveMappedData({ table, mapperTable, info, dateTime }) {
   const deviceNo = await resolveDeviceNo(info)
@@ -103,6 +116,9 @@ async function saveMappedData({ table, mapperTable, info, dateTime }) {
     const dbName = String(mapper.db_name || '').trim()
     const physicalNames = aliases(mapper.p_name).map(name => name.toLowerCase())
     const matchedName = physicalNames.find(name => incoming.has(name))
+    // ALLOWED_DATA_FIELDS 限制只能写 field1~field10 这 10 个预留列：mapper 表理论上
+    // 可以配出任意 db_name，但数据库表实际只建了这 10 列，配错了直接跳过而不是报错
+    // 崩掉整条消息处理，避免一条脏配置拖垮整个入库流程。
     if (!ALLOWED_DATA_FIELDS.has(dbName) || !matchedName) {
       continue
     }

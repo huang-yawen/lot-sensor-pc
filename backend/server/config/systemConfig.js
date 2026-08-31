@@ -344,8 +344,6 @@ const defaultConfig = {
     sensor: 'sensor_data',
     // 执行器/运行状态上报：水泵、加热、阀门状态等。
     behavior: 'sensor_data',
-    // 设备主动告警上报。
-    alarm: 'abnormal_state',
     // 设备心跳上报，用于在线/离线判断。
     heartbeat: 'heart_beat',
     // PC 端向设备下发控制指令。
@@ -372,16 +370,6 @@ const defaultConfig = {
   // 示例：页面存 on，设备协议要求 open，则下发 open；设备回报 open 时反向存为 on。
   // 若设备直接接受 on/off，请改为 { on: 'on', off: 'off' }。
   CONTROL_VALUE_MAP: { on: 'open', off: 'close' },
-
-  // 设备主动告警 JSON 字段 -> 中文名称。值为 1 时记为异常，0 时记为正常。
-  // 现场字段不同，只改左侧属性名即可；也可继续增加键值对。
-  ALARM_FIELD_MAP: {
-    temperature_warn: '温度',
-    flow_warn: '流量',
-    pressure_warn: '压力',
-    pump_warn: '水泵',
-    heater_warn: '加热模块',
-  },
 
   // --------------------------------------------------------------------------
   // 8. 页面术语
@@ -869,7 +857,7 @@ function assertCompatibleShape(reference, incoming, pathPrefix = '') {
     if (Array.isArray(expected)) {
       if (!Array.isArray(value)) throw new Error(`${pathName} 必须是数组`)
     } else if (expected && typeof expected === 'object') {
-      if (['CONTROL_VALUE_MAP', 'ALARM_FIELD_MAP', 'INTELLIGENT_JUDGMENT.headers', 'INTELLIGENT_JUDGMENT.requestTemplate'].includes(pathName)) {
+      if (['CONTROL_VALUE_MAP', 'INTELLIGENT_JUDGMENT.headers', 'INTELLIGENT_JUDGMENT.requestTemplate'].includes(pathName)) {
         if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`${pathName} 必须是 JSON 对象`)
         continue
       }
@@ -963,7 +951,7 @@ function validate(config) {
   if (!Number.isInteger(config.MQTT_QOS) || config.MQTT_QOS < 0 || config.MQTT_QOS > 2) throw new Error('MQTT_QOS 只能是 0、1、2')
   if (!['both', 'software_only', 'device_only', 'off'].includes(config.OPERATION_HISTORY_MODE)) throw new Error('OPERATION_HISTORY_MODE 只能是 both、software_only、device_only 或 off')
   if (!/^mqtts?:\/\//i.test(config.MQTT_URL)) throw new Error('MQTT_URL 必须以 mqtt:// 或 mqtts:// 开头')
-  for (const key of ['sensor', 'behavior', 'alarm', 'heartbeat', 'control']) {
+  for (const key of ['sensor', 'behavior', 'heartbeat', 'control']) {
     if (!String(config.MQTT_TOPICS[key] || '').trim()) throw new Error(`MQTT_TOPICS.${key} 不能为空`)
   }
   if (!Array.isArray(config.DEVICE_ID_FIELDS) || config.DEVICE_ID_FIELDS.length === 0) throw new Error('DEVICE_ID_FIELDS 至少需要一个字段')

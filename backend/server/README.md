@@ -122,7 +122,7 @@ server/
 ├── controllers/                    # 控制器层（处理 HTTP 请求）
 │   ├── sensor/
 │   │   ├── getDashboardData.js     # 获取传感器仪表盘数据
-│   │   └── historyData.js          # 获取历史数据（按类型）
+│   │   └── historyData.js          # 获取汇总数据（按类型，文件名沿用旧称）
 │   ├── device/
 │   │   ├── deviceManageList.js     # 获取设备管理列表
 │   │   ├── addDevice.js            # 添加设备
@@ -150,7 +150,7 @@ server/
 │   │   ├── getErrorHistory.js      # 查询故障历史
 │   │   └── getErrorTypeStats.js    # 查询故障类型统计
 │   └── historyData/
-│       └── getHistoryDataByType.js # 按类型查询历史数据
+│       └── getHistoryDataByType.js # 按类型查询汇总数据（函数名沿用旧称）
 │
 ├── routes/                         # 路由配置
 │   └── sensorRoutes.js             # 所有 API 路由
@@ -168,13 +168,8 @@ server/
 │   ├── behaviorRealtime/           # 行为实时数据处理
 │   │   ├── behaviorRealtimeHandler.js # 处理器
 │   │   └── behaviorRealtimeRepository.js # 数据库操作
-│   ├── errorHistory/               # 异常状态数据处理
-│   │   ├── errorHistoryHandler.js    # 处理器
-│   │   └── errorHistoryRepository.js # 数据库操作
-│   └── handlers/                   # 备用处理器（未启用）
-│       ├── sensorHandler.js
-│       ├── behaviorHandler.js
-│       └── abnormalStateHandler.js
+│   └── combinedRealtime/           # 传感器+行为合并处理（两主题相同时启用）
+│       └── combinedRealtimeHandler.js
 │
 ├── utils/                          # 工具函数
 │   └── helper.js                   # 辅助函数
@@ -427,7 +422,7 @@ CREATE TABLE t_behavior_field_mapper (
 }
 ```
 
-#### GET /dataByType - 获取历史数据（按类型）
+#### GET /dataByType - 获取汇总数据（按类型；项目里没有独立的"历史数据"概念，只有"实时数据/保存数据"这一对标签）
 
 **查询参数：**
 
@@ -963,7 +958,7 @@ mqtt/index.js（入口）
     │
     ├── sensorRealtime/（传感器数据处理）
     ├── behaviorRealtime/（行为数据处理）
-    └── errorHistory/（异常状态数据处理）
+    └── combinedRealtime/（传感器+行为合并处理，两主题相同时启用）
 ```
 
 ### 10.2 mqttClient.js - MQTT 客户端
@@ -1047,12 +1042,15 @@ MQTT 消息 → Handler（解析/验证） → Repository（数据库操作）
 3. 调用 `behaviorRealtimeRepository.saveBehaviorData()` 存入数据库
 4. 返回处理后的数据
 
-**errorHistoryHandler.js 处理流程：**
+**combinedRealtimeHandler.js 处理流程（当传感器主题与行为主题配置为同一个主题时启用）：**
 1. 解析 JSON 消息
-2. 提取告警字段（humi_warn, smog_warn 等）
-3. 自动生成 `type`（故障类型）和 `e_msg`（故障描述）
-4. 调用 `errorHistoryRepository.saveErrorMsg()` 存入数据库
-5. 返回处理后的数据
+2. 同时调用 `sensorRealtimeRepository.saveSensorData()` 和 `behaviorRealtimeRepository.saveBehaviorData()` 存入数据库
+3. 依次执行本地告警、安全联锁、故障状态机、自动控制/分层联动、PID 恒温、定量停机、派生指标计算（详见 mqtt/combinedRealtime/combinedRealtimeHandler.js 内注释）
+4. 返回处理后的数据
+
+> 说明：设备不再通过独立的 alarm 主题主动上报故障（原 mqtt/errorHistory/ 模块已删除），
+> 所有故障判断均由后端基于传感器数值自行评估，见 service/alarm、service/safety、
+> service/faultStatus 三套本地判断逻辑。
 
 ### 10.6 指令下发流程
 

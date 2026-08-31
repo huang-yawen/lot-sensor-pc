@@ -131,6 +131,9 @@ async function resolveConfigIdByPrefix(prefix) {
   return rows[0]?.id ?? null
 }
 
+// 先按 preffix 查，查不到再按中文名兜底：preffix 是比较正式的字段标识，但现场
+// 配置有时会漏填 preffix、只填了中文名（比如"流量下限阈值"），两种方式任一种能
+// 在指令中心对上号就行，不强制要求 preffix 一定配置齐全。
 async function resolveThresholdConfigId(slot) {
   const def = THRESHOLD_SLOTS[slot]
   if (!def) return null
@@ -388,7 +391,10 @@ async function triggerFault(deviceNo, trigger, faultConfig) {
   const cooldownKey = `${deviceNo || 'global'}:${trigger.id}`
   const cooldownMs = Number(faultConfig.alarmCooldownMs) >= 0 ? Number(faultConfig.alarmCooldownMs) : 30000
 
-  // 已经处于 FAULT 状态时不重复触发（除非故障类型变了）
+  // 已经处于 FAULT 状态时不重复触发（除非故障类型变了）：为什么要允许"类型变了"
+  // 这种情况继续往下走——比如现在显示的是②出水口堵塞，这时候又满足了优先级更高的
+  // ③干烧，需要把 activeFaultId 更新成③，让页面显示优先级最高的那个，而不是卡在
+  // 最早触发的那个不变。
   if (state.systemState === 'FAULT' && state.activeFaultId === trigger.id) {
     return null
   }

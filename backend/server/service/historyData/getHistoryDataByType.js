@@ -1,4 +1,6 @@
-/** 【文件职责】按类型查询传感器历史数据的服务。
+/** 【文件职责】按类型查询传感器/行为汇总数据的服务（前端"汇总数据"页面的数据来源，
+ * 函数名和文件名沿用旧称，项目里已没有独立的"历史数据"概念，只有"实时数据/保存
+ * 数据"这一对标签，可选按 online 参数筛选）。
  * 【配置中心关联】无直接读取。 */
 const promisePool = require('../../config/dbPool')
 const { formatDataWithUnit, buildDisplayFieldUnits, applyValueLabels, parseValueMap } = require('../../utils/helper')
@@ -29,7 +31,7 @@ const validateDateRange = (startTime, endTime) => {
     return start <= end
 }
 
-// 查询传感器或行为历史数据，并返回格式化后的列表和字段信息。
+// 查询传感器或行为汇总数据，并返回格式化后的列表和字段信息。
 module.exports = async function getHistoryDataByType(query) {
     const type = query.type || 'sensor'
     const onlineFilter = query.online || null
@@ -109,7 +111,7 @@ module.exports = async function getHistoryDataByType(query) {
     //     searchMapper.push('field5 AS 采集时间')
     // }如果要有采集时间
     searchMapper.push('c_time AS 创立时间')
-    // 实时数据 = 该表当前最新一条记录，历史数据 = 除最新记录外的其余记录，
+    // 实时数据 = 该表当前最新一条记录，保存数据 = 除最新记录外的其余记录，
     // 不再依赖设备上报时是否自带 online 字段。
     const recency = buildRecencyFilter(dataTable, onlineFilter)
     searchMapper.push(`${recency.dataTypeExpr} AS 数据类型`)
@@ -181,5 +183,5 @@ module.exports = async function getHistoryDataByType(query) {
         },
     }
 }
-/** 【文件职责】按传感器类型和时间范围查询历史数据的服务。
+/** 【文件职责】按传感器类型和时间范围查询汇总数据的服务。
  * 【配置中心关联】无直接读取；时间字段已在 MQTT 入库时按 TIME_FIELDS 规范化。 */
