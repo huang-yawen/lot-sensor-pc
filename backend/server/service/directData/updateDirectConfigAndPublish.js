@@ -12,10 +12,8 @@
  * 2. 发送成功后再保存到数据库
  * 3. 如果设备离线，暂存指令等待上线后发送，发送成功后再保存到数据库
  *
- * 为什么要"先发 MQTT，成功了再存数据库"而不是反过来：如果先存数据库、MQTT 发送
- * 却失败了，页面上会显示"已保存"，但设备实际根本没收到这条指令——用户看到的状态
- * 和硬件真实状态就对不上了。反过来，MQTT 没发成功就不存库，宁可让用户看到失败提示
- * 重试，也不让页面撒谎说"成功了"。
+ * 执行顺序是"先发 MQTT，成功了再存数据库"：MQTT 发送成功之后才会把值写入数据库、
+ * 返回成功；MQTT 发送失败则直接返回失败，不写数据库。
  *
  * 使用方式：
  *   POST /api/directData/update
@@ -156,9 +154,8 @@ module.exports = async (req, res) => {
       const v = String(value).trim().toLowerCase()
       if (['off', 'close', 'closed', '0', 'false'].includes(v)) {
         // 用户把复位按钮拨到 off -> 触发快照恢复
-        // 单设备模式下用 getAnyLockedDeviceNo 找到正确的设备上下文，
-        // 避免设备号映射不一致导致找不到故障态
-        // 多设备模式下用前端传的 d_no
+        // 单设备模式下用 getAnyLockedDeviceNo 取当前锁定状态对应的设备号，
+        // 多设备模式下直接用前端传的 d_no
         let resetDNo = null
         if (singleDeviceMode) {
           resetDNo = getAnyLockedDeviceNo() ?? await getDefaultDeviceId()
@@ -205,10 +202,9 @@ module.exports = async (req, res) => {
     }
 
     // ========== 加热必须在水泵已开启时才能打开 ==========
-    // 从源头拦截"没开水泵就开加热"的误操作，不必等安全联锁事后检测到再强制全部关闭。
-    // 只拦"要把加热打开"这一种操作；关闭加热、以及水泵本身的开关都不受影响。
-    // 独立受 SAFETY_INTERLOCK.requirePumpBeforeHeater 开关控制，不受 enabled 总开关约束
-    // （这条在指令入口拦截，不在安全联锁评估循环里）。
+    // 只拦截"要把加热打开"这一种操作；关闭加热、以及水泵本身的开关都不受影响。
+    // 是否启用这条拦截由 SAFETY_INTERLOCK.requirePumpBeforeHeater 单独控制，
+    // 跟安全联锁评估循环是两处独立的代码，这里只在指令入口做这一次检查。
     const requirePumpBeforeHeater = systemConfig.getConfig().SAFETY_INTERLOCK?.requirePumpBeforeHeater !== false
     if (requirePumpBeforeHeater && isOnValue(value) && await isHeaterConfig(config_id)) {
       const pumpConfigId = await resolveConfigIdByPrefix('pump')
@@ -290,10 +286,7 @@ module.exports = async (req, res) => {
       console.log('[DirectUpdate] 全局配置，直接发送')
     }
 
-    // 4. 设备在线 -> 先发送指令（发送两次以确保设备可靠接收）
-    // 为什么要发两次：MQTT 消息本身可能因为网络抖动丢掉一次，重复发一次是最简单的
-    // 容错手段。开关类指令（下发 on/off）天然是幂等的——设备收到两次同样的"开"指令
-    // 效果跟收到一次一样，不会因为重复下发出问题，所以敢直接发两次而不用担心副作用。
+    // 4. 设备在线 -> 先发送指令（间隔 200ms 连续发送两次）
     try {
       // 第一次发送
       const firstPublish = await mqttClient.publish(getTopic('control'), payload)

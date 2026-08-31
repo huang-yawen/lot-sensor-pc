@@ -3,10 +3,8 @@
 const promisePool = require('../../config/dbPool')
 const { saveMappedData } = require('../../utils/mappedData')
 
-// 为什么这里 catch 住了异常又要 throw 出去，不是白 catch 了：这一层只负责在日志里
-// 留下"是保存传感器数据这一步失败的"这条线索，方便排查问题，但"这个失败到底要不要
-// 影响后续流程、要不要中断整条消息处理"不是这一层该决定的事，所以记录完日志后照样
-// 把异常继续往上抛，交给调用方（combinedRealtimeHandler.js 的大 try/catch）统一处理。
+// 出错时先打印一条"保存传感器数据失败"的日志，方便定位是哪一步出的问题，
+// 然后把异常继续往上抛，交给调用方（combinedRealtimeHandler.js 的大 try/catch）统一处理。
 async function saveSensorData(info) {
     try {
         const result = await saveMappedData({

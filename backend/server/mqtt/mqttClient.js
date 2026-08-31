@@ -49,11 +49,9 @@ class MqttClient extends EventEmitter {
 
     this.client = mqtt.connect(this.config.url, {
       ...this.config.options,
-      // 为什么要自己接管重连、把 mqtt.js 内置的重连关掉（reconnectPeriod: 0）：
-      // 内置重连是固定间隔无限重试，如果 Broker 一直没起来，会永远每隔几秒打一次
-      // 连接请求，日志刷屏也没有意义。改成下面 _scheduleReconnect 这套"指数退避 +
-      // 有限次数"的自定义策略，重连间隔越来越长、次数用完就停，更像是"先自己
-      // 快速试几次，试不通就先歇着，等人工介入"。
+      // reconnectPeriod: 0 关掉 mqtt.js 自带的固定间隔无限重连，改由下面的
+      // _scheduleReconnect 接管：按指数退避安排重连时间，尝试次数超过上限后
+      // 停止重连，等人工介入。
       reconnectPeriod: 0
     })
 
@@ -106,10 +104,8 @@ class MqttClient extends EventEmitter {
       return
     }
 
-    // 指数退避：1s, 2s, 4s, 8s, 16s ... 最大 30 秒。为什么间隔要越拉越长：如果
-    // Broker 真的挂了，短间隔疯狂重试既没用又会不停打印日志、占用连接资源；
-    // 间隔越来越长，既保留了"Broker 一旦恢复就能较快重新连上"的能力，
-    // 又不会在它持续挂掉期间造成无意义的高频重试。
+    // 指数退避：重连间隔依次是 1s, 2s, 4s, 8s, 16s...，封顶 30 秒，每次失败后
+    // 下次等待时间翻倍。
     const delay = Math.min(1000 * Math.pow(2, this._reconnectCount - 1), 30000)
     setTimeout(() => {
       if (this._reconnectStopped) return

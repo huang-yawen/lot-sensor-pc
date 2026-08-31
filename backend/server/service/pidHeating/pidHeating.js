@@ -22,13 +22,13 @@
  * 都在"指令配置"页面按两层开关组织："自动控制开关"（t_direct_config，
  * preffix=auto_control_enabled）下面是目标温度和"PID恒温控制"（preffix=pid_enabled）
  * 子开关，PID恒温控制下面才是 Kp/Ki/Kd/控制周期/占空比上下限——两个开关都是开，PID
- * 才真正启用（见 isPidEnabled）。这些都跟流量/压力/温度阈值一样，属于可现场调整的
- * 指令项，不是写死在配置中心；systemConfig.js 的 PID_HEATING 仅在两个开关都还没配置
- * （指令项不存在）时作为兜底默认值。
+ * 才真正启用（见 isPidEnabled）。这些跟流量/压力/温度阈值一样，都是可以在前端现场
+ * 调整的指令项；systemConfig.js 的 PID_HEATING 只在两个开关都还没配置
+ * （指令项不存在）时用作兜底默认值。
  *
- * 与 CONTROL_MODE（simple/layered）正交——只接管加热这一个执行器，水泵仍由
- * CONTROL_MODE 对应的模块决定；PID 启用时，autoControl.js / layeredControl.js 会跳过
- * 各自的加热下发，避免两边同时抢着控制加热。
+ * 与 CONTROL_MODE（simple/layered）是两条独立的线——PID 只接管加热这一个执行器，
+ * 水泵仍由 CONTROL_MODE 对应的模块决定；PID 启用时，autoControl.js / layeredControl.js
+ * 会跳过各自的加热下发逻辑，只由这里下发加热指令。
  *
  * 【控制对象说明】
  *   T1 (field1) = 进水温度（temp_in），用于参考
@@ -99,8 +99,9 @@ async function readSwitchOn(prefix, deviceNo) {
  * PID 专属开关的两级结构）。两个指令项都还没配置时才退回 PID_HEATING.enabled 兜底。
  */
 async function isPidEnabled(deviceNo) {
-  // 自整定运行期间也要接管加热，autoControl.js/layeredControl.js 都是靠这个函数
-  // 判断是否让位给 PID，顺带让它们在自整定时也让位，不需要额外改这两个文件。
+  // 自整定运行期间这里也返回 true，相当于把加热的控制权一起交给自整定。
+  // autoControl.js/layeredControl.js 都是调这个函数判断要不要让位给 PID，
+  // 所以自整定期间它们看到的也是"PID 已启用"，同样会让位。
   if (systemConfig.getConfig().PID_AUTOTUNE?.enabled === true) return true
   const master = await readSwitchOn('auto_control_enabled', deviceNo)
   const pid = await readSwitchOn('pid_enabled', deviceNo)
@@ -149,7 +150,7 @@ async function readTempOut(info) {
 /**
  * 读取当前加热开关状态，返回 true/false/null。
  * 兼容多种上报格式：on/open/1/true -> on，其余 -> off，没数据 -> null
- * 注意：返回 null 代表"未知"，调用方应保守处理（视为需要同步下发，避免永远不开/永远不关）。
+ * 返回 null 表示"未知"（没有行为上报数据），调用方会把这种情况当成需要同步下发处理。
  */
 async function readHeatOn(info) {
   const aliases = await resolveFieldAliases('t_behavior_data', 'field2')
@@ -212,15 +213,14 @@ function getState(deviceNo) {
 /* ============================ 主评估 ============================ */
 
 /**
- * 防抖阈值（ms）：两次 setHeater 下发之间的最小时长。
- * 固定功率 PWM 控制中，继电器开关寿命关键：一个 PWM 周期最多开/关各一次。
- * 这里设为 500ms：即使传感器 1s 上报一次，也不会反复抖动下发。
+ * 防抖阈值（ms）：两次 setHeater 下发之间至少要间隔这么久。
+ * 传感器数据 1s 上报一次时，同一个开/关状态也只会下发一次，不会反复发指令。
  */
 const MIN_COMMAND_INTERVAL_MS = 500
 
 /**
- * 最小 PWM 周期（ms）：防止配置误填导致继电器疯狂切换。
- * 200W 固定功率加热器建议 10000ms 起步，低于 2000ms 强制抬升。
+ * 最小 PWM 周期（ms）：不管配置里 windowMs 填了多少，实际使用的周期都不会低于这个值。
+ * 200W 固定功率加热器一般配置 10000ms 起步，这里把下限设在 2000ms。
  */
 const MIN_PID_WINDOW_MS = 2000
 
@@ -228,8 +228,8 @@ async function evaluatePidHeating(info) {
   const deviceNo = String((await resolveDeviceNo(info)) || '').trim() || null
 
   // ====== 故障锁短路 ======
-  // 故障态下 faultStatus 已强制关闭水泵和加热、并锁定指令页面，
-  // PID 必须立即返回，避免下一条 MQTT 消息到达时把加热又重新打开。
+  // 故障态下 faultStatus 已经强制关闭水泵和加热、并锁定了指令页面，
+  // 这里直接返回空数组，不再往下走 PID 计算和指令下发。
   const rootConfig = systemConfig.getConfig()
   if (rootConfig.SINGLE_DEVICE_MODE === true) {
     if (isAnyLocked()) return []
@@ -238,7 +238,7 @@ async function evaluatePidHeating(info) {
   }
 
   // ====== 自整定接管 ======
-  // 自整定开启时，这条消息交给继电反馈测试处理，不跑正常 PID，避免两边抢控加热。
+  // 自整定开启时，这条消息转给 pidAutoTune 的继电反馈测试处理，这里就不再跑正常 PID 了。
   if (rootConfig.PID_AUTOTUNE?.enabled === true) {
     const { evaluateAutoTune } = require('./pidAutoTune')
     return evaluateAutoTune(info)

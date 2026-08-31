@@ -53,12 +53,9 @@ function registerRoutes(scene) {
   router.clear()
   if (scene.MQTT_TOPICS.sensor === scene.MQTT_TOPICS.behavior) {
     // 设备把传感器字段和行为字段放在同一条消息里上报，不再区分传感器/行为两个主题。
-    // 为什么这种情况必须显式切到合并处理器，不能还是分别 register 两次：
-    // messageRouter 内部用一个 Map<主题, 处理函数> 存路由表，同一个主题只能对应
-    // 一个处理函数，如果两个主题相同还是分别 register(sensor, ...) 和
-    // register(behavior, ...)，后一次注册会直接覆盖前一次，实际只有 behavior 的
-    // 处理器生效，sensor 那部分字段就永远解析不到、存不进库。所以主题一样时改用
-    // handleCombinedData 这一个处理器，一次性把传感器字段和行为字段都解析并入库。
+    // 这种情况下改用 handleCombinedData 这一个处理器，一次性把传感器字段和行为
+    // 字段都解析并入库（messageRouter 内部按主题存路由表，同一主题分别 register
+    // 两次的话，后一次会直接覆盖前一次，只有 behavior 处理器会生效）。
     router.register(scene.MQTT_TOPICS.sensor, handleCombinedData)
   } else {
     router.register(scene.MQTT_TOPICS.sensor, handleSensorData)

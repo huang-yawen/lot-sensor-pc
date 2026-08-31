@@ -71,26 +71,17 @@ async function handleMessage(topic, payload) {
 
     console.log('[CombinedRealtime] Received message:', { topic, data: info })
 
-    // 【为什么下面这一长串评估要按这个固定顺序执行】这个顺序本身就是整个系统的安全
-    // 优先级设计，从"先把数据存下来"到"保护类判断"再到"控制类判断"最后到"纯展示指标"：
-    //   1. 先存库（saveSensorData/saveBehaviorData）：不管后面哪个评估环节出没出问题、
-    //      有没有触发故障，这条原始数据本身都应该先被记录下来，供历史查询/图表展示，
-    //      不能因为评估逻辑出错就连这条数据都丢了。
-    //   2. 本地告警规则（evaluateRules）：最轻量的阈值判断，只记录不动手。
-    //   3. 安全联锁（evaluateSafety）→ 故障状态机（evaluateFaultStatus）：两套独立的
-    //      保护机制，都是"异常时强制关闭"，必须排在前面——如果先跑了自动控制把水泵
-    //      加热打开，回头才发现该保护关闭，等于先开错了再关，不如提前判断好。
+    // 下面这一串按固定顺序依次执行：
+    //   1. 先存库（saveSensorData/saveBehaviorData）：把这条原始数据落库，供历史查询/图表展示。
+    //   2. 本地告警规则（evaluateRules）：按阈值判断，只记录不动手。
+    //   3. 安全联锁（evaluateSafety）→ 故障状态机（evaluateFaultStatus）：异常时强制关闭水泵和加热。
     //   4. 正常状况联动（evaluateAutoControl/evaluateLayeredControl）→ PID 恒温
-    //      （evaluatePidHeating）→ 定量停机（evaluateQuantityShutdown）：这几个是
-    //      "正常情况下按目标调节"的控制逻辑，建立在前面已经确认没有需要保护性关闭
-    //      的故障基础上（它们内部也会各自检查故障锁定状态，双重保险）。
-    //   5. 派生指标计算（computeMetrics）放最后：这一步纯粹是为了首页展示，不涉及
-    //      任何硬件控制，所以排在所有真正影响执行器开关的判断之后也没关系。
-    // 注意：这几步共享同一个 try/catch，如果中间某一步抛异常，后面的步骤这一轮就不会
-    // 再执行了（比如 evaluateSafety 出错，后面的自动控制、PID 都会被跳过）——考虑到
-    // 这些模块之间本来就有优先级依赖，这种"一步出错、宁可全跳过"某种程度上也是偏
-    // 保守安全的，但排查问题时要留意：如果发现"控制逻辑好像没生效"，先看日志里前面
-    // 有没有某一步先报错了。
+    //      （evaluatePidHeating）→ 定量停机（evaluateQuantityShutdown）：按目标温度/流量
+    //      调节水泵和加热。
+    //   5. 派生指标计算（computeMetrics）：计算首页展示用的派生指标，不涉及硬件控制。
+    // 这几步共享同一个 try/catch：中间某一步抛异常，后面的步骤这一轮就不会再执行了
+    // （比如 evaluateSafety 出错，后面的自动控制、PID 都会被跳过）。排查问题时如果发现
+    // "控制逻辑好像没生效"，先看日志里前面有没有某一步先报错了。
     try {
         // 同一条消息里既有传感器字段又有行为字段，两张表各自按字段映射表挑选自己需要的字段。
         await saveSensorData(info)

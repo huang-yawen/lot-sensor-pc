@@ -144,9 +144,8 @@ function isFlowNormal(flow, flowLow, flowHigh) {
   return true
 }
 
-// 为什么"关闭"优先于"打开"：本轮如果有的规则说要开、有的规则说要关，说明至少有一条
-// 安全相关的规则认为现在不该开，宁可信其有——选"关"永远比选"开"更安全，这就是
-// fail-safe（故障时朝安全的方向失效）的含义。
+// 把传进来的多个候选结论（'on'/'off'/null）过滤后合并成一个：只要其中有一个是
+// 'off' 就返回 'off'，否则只要有一个 'on' 就返回 'on'，都没有就返回 null。
 /** 多个候选结论合并：“关闭”优先于“打开”（fail-safe）。 */
 function mergeDecision(...values) {
   const list = values.filter(v => v === 'on' || v === 'off')
@@ -171,8 +170,8 @@ function decideTempSingle(sensors, targetTemp, tempLow, tempHigh, hysteresis) {
 }
 
 /**
- * 流量：(1)区间内->打开水泵 (2)低于下限->打开水泵（水泵关闭正是流量低的原因，关泵会
- * 导致流量永远起不来，所以低于下限也要开泵，让流量恢复） (3)高于上限->关闭水泵（保护）。
+ * 流量：(1)区间内->打开水泵 (2)低于下限->打开水泵
+ * (3)高于上限->关闭水泵（保护）。
  */
 function decideFlowSingle(flow, flowLow, flowHigh) {
   if (flow == null) return null

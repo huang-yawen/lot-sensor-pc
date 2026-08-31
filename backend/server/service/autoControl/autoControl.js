@@ -53,8 +53,8 @@ async function resolveConfigIdByPrefix(prefix) {
   return rows[0]?.id ?? null
 }
 
-// 先按 preffix 查，查不到再按中文名兜底，两种方式任一种能对上号就行，
-// 不强制要求现场一定把 preffix 配置齐全。
+// 先按 preffix 查一次，查不到再按中文名（t_name）查一次，两种方式任一种查到
+// 就返回对应的 config_id。
 async function resolveThresholdConfigId(slot) {
   const def = THRESHOLD_SLOTS[slot]
   if (!def) return null
@@ -160,10 +160,8 @@ async function setSwitch(prefix, name, value, deviceNo, source) {
   return true
 }
 
-// 为什么需要防抖：传感器数值会在阈值附近小幅波动（比如温度在目标值上下 0.1℃ 抖动），
-// 如果不限制频率，每条 MQTT 消息都可能得出不同的开关结论，导致水泵/加热来回猛烈切换
-// （继电器频繁通断也会加速硬件老化）。这里强制同一个开关至少间隔 minIntervalMs 才能
-// 再次动作，把频繁的小幅判断波动过滤掉。
+// 防抖：记录每个设备+开关上次动作的时间戳，同一个开关必须间隔满 minIntervalMs
+// 才允许再次动作，间隔不够就返回 false 拦住这次切换。
 /** 防抖：同一设备同一开关切换至少间隔 minIntervalMs。 */
 function canAct(deviceNo, key, minIntervalMs = 3000) {
   const k = `${deviceNo || 'global'}:${key}`
@@ -177,9 +175,8 @@ function canAct(deviceNo, key, minIntervalMs = 3000) {
 
 function decidePump(sensors, targetTemp, faults, diffCloseThreshold) {
   const temps = [sensors.temp1, sensors.temp2].filter(v => v != null)
-  // allNormal：流量/压力都拿到了有效读数、不是 0、也没有触到 ABNORMAL_MAX 这个异常
-  // 哨兵值——只有这三个条件都满足才认为传感器读数可信，才允许自动开水泵。这是为了
-  // 避免传感器掉线/短路（读数变成 0 或钳位到极端大值）时系统还傻乎乎地把水泵打开。
+  // allNormal：没有故障、且流量/压力都有有效读数、不为 0、也没有到 ABNORMAL_MAX
+  // 这个异常哨兵值，三个条件同时满足才是 true，只有这样才允许下面自动开水泵。
   const allNormal = faults.length === 0
     && sensors.flow != null && sensors.flow !== 0 && sensors.flow < ABNORMAL_MAX
     && sensors.pressure != null && sensors.pressure !== 0 && sensors.pressure < ABNORMAL_MAX
@@ -187,9 +184,8 @@ function decidePump(sensors, targetTemp, faults, diffCloseThreshold) {
   // 【关】任一保护故障。
   if (faults.length > 0) return 'off'
 
-  // 【关】两侧温度均达到目标且温差小于阈值。为什么还要求温差小于阈值才关泵：如果
-  // 两侧都到了目标温度但温差很大（比如水没循环均匀），说明水路还没真正混合均匀，
-  // 这时候关泵会让温度分布进一步失衡，所以要等温差也收敛了才真正停泵。
+  // 【关】两侧温度均达到目标，且温差小于 diffCloseThreshold 才关泵；
+  // 温差还很大就先不关，继续循环等温差也收敛。
   if (temps.length === 2 && temps.every(t => t >= targetTemp)
     && Math.abs(sensors.temp1 - sensors.temp2) < diffCloseThreshold) {
     return 'off'
@@ -207,9 +203,8 @@ function decideHeater(sensors, targetTemp, faults, states, diffOpenThreshold) {
 
   // 【关】保护故障。
   if (faults.length > 0) return 'off'
-  // 【关】水泵关闭或瞬时流量=0：这是防干烧的关键一条——没有水流动的情况下加热器
-  // 还在通电，热量出不去会导致局部温度飙升甚至烧坏加热管，所以水泵没开/没水流就
-  // 绝对不能开加热，跟水泵是否达到目标温度完全无关，优先级最高。
+  // 【关】水泵关闭或瞬时流量=0：水泵没开/没水流时直接关加热，优先级比后面的
+  // 温度判断都高，跟当前温度是否达标无关。
   if (states.pumpOn === false || (sensors.flow != null && sensors.flow === 0)) return 'off'
   // 【关】温差过大。
   if (diff != null && diff > diffOpenThreshold) return 'off'

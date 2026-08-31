@@ -12,10 +12,10 @@ function getOnlineLabel(value) {
 }
 
 /**
- * 上报数据里的设备号候选字段（DEVICE_ID_FIELDS，包含 id）必须能在 t_device.number
- * 里找到完全一致的注册记录，才认为是这个设备的数据；找不到候选字段、或候选字段的值
- * 没有匹配的注册设备，都返回 null——调用方据此跳过保存/上线判断，不再兜底成
- * “数据库里第一个设备”，避免把未注册/编号对不上的数据错记到别的设备上。
+ * 从上报数据（DEVICE_ID_FIELDS，包含 id）里取出设备号，去 t_device.number 里查
+ * 有没有完全一致的注册记录。查到了返回这个设备号（trim 后的字符串），取不到候选
+ * 字段、或候选字段的值查不到匹配记录，都返回 null。调用方拿到 null 就跳过保存/
+ * 上线判断，不会去用"数据库里第一个设备"顶替。
  */
 async function resolveDeviceNo(info) {
   const reported = getDeviceNo(info)
@@ -35,12 +35,11 @@ async function resolveDeviceNo(info) {
 }
 
 /**
- * 单设备模式（SINGLE_DEVICE_MODE=true）下的默认设备号：t_device 表里注册的第一个设备。
- * 只在“确定要用单设备模式的默认设备”这个场景下调用（跟 resolveDeviceNo 不同——那个
- * 是校验 MQTT 上报数据里的设备号是否已注册，找不到就返回 null、不做任何兜底）。
- * 指令中心 t_direct 在单设备模式下也是按这个真实设备号存取的，不是存 d_no=NULL；
- * 调用方如果自己再各写一份"传 null 代表单设备模式"的逻辑，会跟 t_direct 里实际存的
- * 设备号对不上，读写各用各的 key，互相看不到对方写入的值。
+ * 单设备模式（SINGLE_DEVICE_MODE=true）下的默认设备号：查 t_device 表里注册的第一个
+ * 设备，返回它的 number（trim 后的字符串）。跟 resolveDeviceNo 不同：那个是校验 MQTT
+ * 上报数据里的设备号是否已注册，找不到就返回 null；这个是直接取表里第一条注册记录。
+ * 单设备模式下指令中心 t_direct 也是按这个真实设备号存取的（不是 d_no=NULL），调用方
+ * 应该用这个函数取到的设备号去读写 t_direct，而不是自己传 null。
  */
 async function getDefaultDeviceId() {
   try {
@@ -60,10 +59,9 @@ const MAPPER_TABLE_BY_DATA_TABLE = {
 }
 
 /**
- * 根据"哪张表的哪个字段槽位"（source_table + source_field，跟 CUMULATIVE_METRICS/
- * TIME_WINDOW_METRICS 用法一致）查字段映射表，返回当前配置的物理名候选列表
- * （p_name 按 | 拆分后的别名数组），用来从设备原始上报数据里取值。
- * 这样告警规则等只需要认字段槽位，物理名改了只用改字段映射表这一处，不用同步改多处配置。
+ * 传入"哪张表的哪个字段槽位"（source_table + source_field，跟 CUMULATIVE_METRICS/
+ * TIME_WINDOW_METRICS 用法一致），查字段映射表拿到这个槽位当前配置的 p_name，按 |
+ * 拆分成候选物理名数组返回，供调用方从设备原始上报数据里按这些候选名取值。
  */
 async function resolveFieldAliases(sourceTable, sourceField) {
   const mapperTable = MAPPER_TABLE_BY_DATA_TABLE[sourceTable]
@@ -90,8 +88,7 @@ async function resolveFieldAliases(sourceTable, sourceField) {
  *   3. 逐个候选名去 MQTT 报文（incoming）里找，只要命中任意一个候选名，就把这个值存进
  *      对应的 db_name 列（这里是 field1）；
  *   4. 全部没配置 visible=1、或者报文里根本没有任何候选名匹配上的字段，直接跳过不存。
- * 大小写不敏感是因为 incoming 的 key 统一转成了小写再比较，避免设备上报 "Flow" 但
- * 配置里写成 "flow" 导致匹配不上这种低级失误。
+ * 匹配时不区分大小写：incoming 的 key 和候选名都先转成小写再比较。
  */
 async function saveMappedData({ table, mapperTable, info, dateTime }) {
   const deviceNo = await resolveDeviceNo(info)
@@ -116,9 +113,8 @@ async function saveMappedData({ table, mapperTable, info, dateTime }) {
     const dbName = String(mapper.db_name || '').trim()
     const physicalNames = aliases(mapper.p_name).map(name => name.toLowerCase())
     const matchedName = physicalNames.find(name => incoming.has(name))
-    // ALLOWED_DATA_FIELDS 限制只能写 field1~field10 这 10 个预留列：mapper 表理论上
-    // 可以配出任意 db_name，但数据库表实际只建了这 10 列，配错了直接跳过而不是报错
-    // 崩掉整条消息处理，避免一条脏配置拖垮整个入库流程。
+    // dbName 不在 ALLOWED_DATA_FIELDS（field1~field10）里，或者报文里没有任何候选名
+    // 能匹配上，这一条 mapper 直接跳过，不写入 columns/values。
     if (!ALLOWED_DATA_FIELDS.has(dbName) || !matchedName) {
       continue
     }

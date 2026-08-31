@@ -44,10 +44,9 @@ class MessageRouter {
       console.warn('[MessageRouter] 无处理器匹配主题:', topic)
       return null
     }
-    // 为什么要把 handler 包一层 try/catch：MQTT 消息是持续不断进来的，如果某一条消息
-    // 格式有问题（比如某个字段缺失、JSON 解析失败）导致 handler 内部抛异常，绝不能让
-    // 这一次异常直接把整个消息监听流程炸掉——那样后面所有正常的消息也都收不到了。
-    // 这里吞掉异常只打印日志、返回 null，保证坏消息只丢这一条，不影响后续消息处理。
+    // 把 handler 的调用包在 try/catch 里执行：如果某条消息格式有问题（比如缺字段、
+    // JSON 解析失败）导致 handler 内部抛出异常，这里会捕获住，只打印一条错误日志、
+    // 返回 null，不会让这次异常中断后续消息的处理。
     try {
       const data = await handler(topic, payload)
       return { topic, data }

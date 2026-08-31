@@ -44,9 +44,8 @@ function resetState(deviceNo) {
   stateMap.delete(deviceNo || 'global')
 }
 
-// 停止后再重新开始自整定时，必须清空上一轮遗留的振荡周期数据，否则新一轮会掺进
-// 旧数据导致算出的 Ku/Pu（进而 Kp/Ki/Kd）不准。监听 enabled 从 false 变为 true 的
-// 那一刻清空全部设备状态，覆盖“页面点停止再点开始”“直接调 API 重启”等所有路径。
+// 监听配置中心的 enabled 字段：只要它从 false 变成 true（不管是页面点停止再点开始，
+// 还是直接调 API 重启），就清空全部设备的 stateMap，让新一轮从空白状态重新采集。
 let previousEnabled = systemConfig.getConfig().PID_AUTOTUNE?.enabled === true
 systemConfig.onChange((cfg) => {
   const nowEnabled = cfg.PID_AUTOTUNE?.enabled === true
@@ -93,9 +92,7 @@ async function evaluateAutoTune(info) {
 
   if (state.startedAt === 0) {
     state.startedAt = now
-    // 初始输出状态跟着当前温度走：已经低于目标就先开（升温），已经高于/等于目标
-    // 就先关（降温）——保证测试一开始就是"往目标温度方向调节"，不会白白等一整个
-    // 无意义的反向周期才进入正常振荡。
+    // 初始输出状态跟着当前温度走：温度低于目标就先开（升温），高于/等于目标就先关（降温）。
     state.relayOn = tempOut < targetTemp
     state.curMin = tempOut
     state.curMax = tempOut
@@ -113,12 +110,10 @@ async function evaluateAutoTune(info) {
   state.curMin = Math.min(state.curMin, tempOut)
   state.curMax = Math.max(state.curMax, tempOut)
 
-  // 【为什么要用滞环（hysteresis）而不是直接比较 tempOut 和 targetTemp】
-  // 如果当前正开着（relayOn=true），并不是温度一超过 targetTemp 就立刻切断，而是
-  // 要继续等到低于 targetTemp - hysteresis 才切断；反之亦然。这个"多等一段误差
-  // 空间才切换"就是继电反馈整定法的核心：温度必须先明显冲过头再往回走，才能形成
-  // 稳定、可测量的振荡，而不是在 targetTemp 这一条线上因为传感器噪声来回抖动式
-  // 切换（那样测不出真实的振荡周期和振幅，算出来的 Ku/Pu 也不准）。
+  // 用滞环（hysteresis）判断切换：当前开着（relayOn=true）时，要等温度降到
+  // targetTemp - hysteresis 以下才切断；当前关着时，要等温度升到
+  // targetTemp + hysteresis 以上才打开。也就是围绕 targetTemp 留出一段
+  // ±hysteresis 的缓冲区，进出这个区间才触发切换。
   const error = targetTemp - tempOut
   let switchedToOn = false
   if (state.relayOn && error <= -hysteresis) {
@@ -145,12 +140,9 @@ async function evaluateAutoTune(info) {
     if (state.cycles.length >= minCycles + 1) {
       const collected = state.cycles.slice(1)
       const avgPeriodMs = collected.reduce((sum, c) => sum + c.period, 0) / collected.length
-      // 振幅定义为"峰谷差的一半"（波动幅度以中线为基准的偏移量），是继电反馈法
-      // 公式里 a 的标准定义，不是振荡区间本身的宽度，所以要除以 2。
+      // 振幅 a = 每个周期(peak - trough)的平均值再除以 2，也就是"峰谷差的一半"。
       const avgAmp = collected.reduce((sum, c) => sum + (c.peak - c.trough), 0) / collected.length / 2
-      // h 是继电测试高低占空比之差的一半——公式 Ku = 4h/(π·a) 里的 h 对应的是
-      // "继电器输出在中线两侧各摆动多少"，跟上面振幅 a 的定义方式保持一致，
-      // 两者都是"半幅"，这样算出来的 Ku 才符合 Åström–Hägglund 公式的原始定义。
+      // h = 继电测试高低占空比之差的一半，对应公式 Ku = 4h/(π·a) 里的 h。
       const h = Math.abs(highDuty - lowDuty) / 2
 
       resetState(deviceNo)

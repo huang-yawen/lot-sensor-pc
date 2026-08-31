@@ -99,9 +99,9 @@ const lastFired = new Map()
 
 /**
  * 返回水泵已连续开启的时长（毫秒）；水泵未开启时返回 null。
- * 水泵刚启动的瞬间，流量/进出水温差往往还没稳定下来，直接拿"水泵开着"当前置
- * 条件容易在启动瞬间误判出水口堵塞/水泵空转/水泵故障；这里改成"水泵开启满
- * pumpWarmupMs 才开始判断"，宽限期长度在配置中心 FAULT_STATUS.pumpWarmupMs 设置。
+ * 水泵每次从关变开时记一个起始时间戳，之后每次调用返回"现在 - 起始时间"；
+ * 水泵一关就把起始时间清掉，下次再开会重新计时。宽限期长度（pumpWarmupMs）
+ * 在配置中心 FAULT_STATUS.pumpWarmupMs 设置。
  */
 function trackPumpOnDuration(deviceNo, pumpOn) {
   const key = deviceNo || 'global'
@@ -131,9 +131,8 @@ async function resolveConfigIdByPrefix(prefix) {
   return rows[0]?.id ?? null
 }
 
-// 先按 preffix 查，查不到再按中文名兜底：preffix 是比较正式的字段标识，但现场
-// 配置有时会漏填 preffix、只填了中文名（比如"流量下限阈值"），两种方式任一种能
-// 在指令中心对上号就行，不强制要求 preffix 一定配置齐全。
+// 先按 preffix 查一次，查不到再按中文名（t_name）查一次，两种方式任一种查到
+// 就返回对应的 config_id。
 async function resolveThresholdConfigId(slot) {
   const def = THRESHOLD_SLOTS[slot]
   if (!def) return null
@@ -391,10 +390,10 @@ async function triggerFault(deviceNo, trigger, faultConfig) {
   const cooldownKey = `${deviceNo || 'global'}:${trigger.id}`
   const cooldownMs = Number(faultConfig.alarmCooldownMs) >= 0 ? Number(faultConfig.alarmCooldownMs) : 30000
 
-  // 已经处于 FAULT 状态时不重复触发（除非故障类型变了）：为什么要允许"类型变了"
-  // 这种情况继续往下走——比如现在显示的是②出水口堵塞，这时候又满足了优先级更高的
-  // ③干烧，需要把 activeFaultId 更新成③，让页面显示优先级最高的那个，而不是卡在
-  // 最早触发的那个不变。
+  // 已经处于 FAULT 状态、且这次检测到的故障类型和当前记录的一样，就直接跳过，
+  // 不重复触发。故障类型不一样时（比如当前显示②出水口堵塞，这时又满足了优先级
+  // 更高的③干烧）会继续往下走，把 activeFaultId 更新成新的这个，让页面始终显示
+  // 优先级最高的故障。
   if (state.systemState === 'FAULT' && state.activeFaultId === trigger.id) {
     return null
   }
@@ -459,12 +458,11 @@ async function triggerFault(deviceNo, trigger, faultConfig) {
  * @returns {Object} 恢复结果
  */
 async function handleResetButtonOff(deviceNo) {
-  // 'global' 是 deviceStateMap/snapshotMap 的内部 key（代表"设备上报 d_no 为空"的全局
-  // 故障上下文），不是有效设备号。如果把它直接传给 setSwitch / saveDirectData，
-  // MQTT payload 会带上 d_no='global'（设备不识别），t_direct 会写入 d_no='global'
-  // 的无效记录。所以入口处统一转回 null。
-  // getDeviceState / restoreFromSnapshot / getSwitchValueByPrefix / clearCooldownForDevice
-  // 等内部函数都用 `deviceNo || 'global'` 做 key，传 null 也能正确命中 'global' 桶。
+  // 'global' 只是 deviceStateMap/snapshotMap 内部用来代表"d_no 为空"的 key 名，
+  // 不是真实设备号，这里把它转成 null，后面统一传 null 给 setSwitch / saveDirectData
+  // 等函数。getDeviceState / restoreFromSnapshot / getSwitchValueByPrefix /
+  // clearCooldownForDevice 内部都会把传入的 null 再转成 `deviceNo || 'global'` 去
+  // 查同一个 key，所以传 null 依然能命中正确的状态。
   if (deviceNo === 'global') deviceNo = null
 
   const state = getDeviceState(deviceNo)
@@ -635,20 +633,15 @@ function getAnyLockedDeviceNo() {
 }
 
 /**
- * 服务启动时调用一次：从数据库 t_direct 里读取复位按钮当前的持久化值，同步恢复内存
- * deviceStateMap 的故障态。
+ * 服务启动时调用一次：从数据库 t_direct 读取复位按钮的持久化值，把内存里
+ * deviceStateMap 的故障态同步过来。
  *
- * 背景：deviceStateMap 是纯内存 Map，没有持久化；服务重启会把它清空、重新初始化成
- * 默认的 NORMAL/off。但 t_direct 里的 reset_button 值不会因为重启而改变，仍停留在
- * 重启前最后一次真实故障触发时写入的值。如果那时候还没走完"人工复位"流程（写回
- * off），重启后就会出现"数据库里 reset_button 还是 on，但内存以为是 NORMAL"的不一致：
- * 状态灯显示正常，复位开关却卡在"开"，且用户无法通过页面把它拨回去——因为
- * handleResetButtonOff 会先检查 systemState !== 'FAULT' 而直接拒绝，压根不会走到
- * "写回 t_direct 为 off"那一步。
- *
- * 这里只负责让内存状态跟数据库保持一致（重启后 systemState 会正确变回 FAULT，而不是
- * 错误地显示 NORMAL），具体的故障原因（activeFaultId）在重启前没有持久化，恢复不出来，
- * 只能留空——但至少指令页面会被正确锁定、复位开关也能正常操作触发快照恢复了。
+ * deviceStateMap 只存在内存里，服务一重启就会清空、重新变回默认的 NORMAL/off；
+ * 但数据库里的 reset_button 值不会跟着重启变化，还停留在重启前最后一次写入的值。
+ * 这里逐个设备查数据库里 reset_button 是不是 on，是的话就把该设备内存状态改成
+ * systemState='FAULT'、resetButton='on'，让指令页面锁定、复位按钮也能正常操作、
+ * 触发快照恢复。具体的故障原因（activeFaultId）在重启前没有持久化，这里恢复不出来，
+ * 留空。
  */
 async function initFaultStateFromDb() {
   try {
