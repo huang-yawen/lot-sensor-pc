@@ -11,6 +11,7 @@ const systemConfig = require('../../config/systemConfig')
 const { getDirectValue, saveDirectData } = require('../../service/directData/saveDirectConfig')
 const { saveOperationHistory } = require('../../service/operationHistory/saveOperationHistory')
 const { resolveConfigIdByName } = require('../../service/pidHeating/pidHeating')
+const { getDefaultDeviceId } = require('../../utils/mappedData')
 
 const PARAM_NAMES = {
   kp: 'Kp（比例系数）',
@@ -26,7 +27,9 @@ const applyAutoTuneResult = async (req, res) => {
       return res.status(400).json({ success: false, message: '没有可应用的自整定结果，请先完成一次自整定' })
     }
 
-    const dNo = config.SINGLE_DEVICE_MODE === true ? null : (req.body?.d_no ?? null)
+    // 单设备模式下 t_direct 里 Kp/Ki/Kd 是按真实设备号存取的，不是 d_no=NULL；这里必须用
+    // 同一个真实设备号写入，否则 PID 主循环（用真实设备号读）永远看不到这次写入的新值。
+    const dNo = config.SINGLE_DEVICE_MODE === true ? await getDefaultDeviceId() : (req.body?.d_no ?? null)
 
     const applied = {}
     for (const [key, name] of Object.entries(PARAM_NAMES)) {

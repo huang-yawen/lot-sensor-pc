@@ -34,6 +34,26 @@ async function resolveDeviceNo(info) {
   }
 }
 
+/**
+ * 单设备模式（SINGLE_DEVICE_MODE=true）下的默认设备号：t_device 表里注册的第一个设备。
+ * 只在“确定要用单设备模式的默认设备”这个场景下调用（跟 resolveDeviceNo 不同——那个
+ * 是校验 MQTT 上报数据里的设备号是否已注册，找不到就返回 null、不做任何兜底）。
+ * 指令中心 t_direct 在单设备模式下也是按这个真实设备号存取的，不是存 d_no=NULL；
+ * 调用方如果自己再各写一份"传 null 代表单设备模式"的逻辑，会跟 t_direct 里实际存的
+ * 设备号对不上，读写各用各的 key，互相看不到对方写入的值。
+ */
+async function getDefaultDeviceId() {
+  try {
+    const [rows] = await promisePool.query(
+      'SELECT `number` FROM `t_device` ORDER BY `id` ASC LIMIT 1'
+    )
+    return rows[0] ? String(rows[0].number).trim() : null
+  } catch (err) {
+    console.error('[MappedData] 查询默认设备编号失败:', err.message)
+    return null
+  }
+}
+
 const MAPPER_TABLE_BY_DATA_TABLE = {
   t_sensor_data: 't_sensor_field_mapper',
   t_behavior_data: 't_behavior_field_mapper',
@@ -102,7 +122,7 @@ async function saveMappedData({ table, mapperTable, info, dateTime }) {
   return { deviceNo: values[0], mappedFieldCount: columns.length - 3 }
 }
 
-module.exports = { saveMappedData, resolveDeviceNo, resolveFieldAliases }
+module.exports = { saveMappedData, resolveDeviceNo, resolveFieldAliases, getDefaultDeviceId }
 /**
  * 【文件职责】数据字段映射工具，将数据库或设备的原始字段转换为前端可用结构。
  * 【配置中心关联】如涉及显示字段，会按调用方传入的场景映射处理；本模块不持久化配置。

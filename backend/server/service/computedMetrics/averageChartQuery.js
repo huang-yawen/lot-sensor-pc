@@ -13,6 +13,7 @@ const promisePool = require('../../config/dbPool')
 const systemConfig = require('../../config/systemConfig')
 const { getTargetTemp } = require('../pidHeating/pidHeating')
 const { calcBucketSeconds } = require('../../utils/timeRange')
+const { getDefaultDeviceId } = require('../../utils/mappedData')
 
 /**
  * @param {Object} [options]
@@ -81,12 +82,17 @@ async function queryAverageChart(options = {}) {
 /**
  * 当前生效的目标温度（PID 跟踪对比图用作水平参考线）。指令中心只存"当前值"，
  * 没有历史记录，所以没法画成随时间变化的曲线，只能取当前值画一条参考线。
- * @param {string} [d_no]
+ * @param {string} [d_no] 多设备模式下由调用方指定；单设备模式下会被忽略，改用真实
+ *   默认设备号查询——前端在单设备模式下通常不传 d_no（传 null/undefined），但指令
+ *   中心里保存目标温度时用的是真实设备号，拿 null 去查会一直查空，误以为没配置。
  * @returns {Promise<number>}
  */
 async function getCurrentTargetTemp(d_no) {
+  const resolvedDNo = systemConfig.getConfig().SINGLE_DEVICE_MODE === true
+    ? await getDefaultDeviceId()
+    : d_no
   const fallback = systemConfig.getConfig().DEFAULT_TARGET_TEMP
-  return getTargetTemp(d_no, fallback)
+  return getTargetTemp(resolvedDNo, fallback)
 }
 
 module.exports = { queryAverageChart, getCurrentTargetTemp }

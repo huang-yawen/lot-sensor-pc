@@ -37,6 +37,7 @@ const { saveOperationHistory } = require('../operationHistory/saveOperationHisto
 const systemConfig = require('../../config/systemConfig')
 const { getTopic, buildSwitchPayload } = require('../../utils/protocol')
 const { isLockedByFault, isAnyLocked, getAnyLockedDeviceNo, handleResetButtonOff } = require('../faultStatus/faultStatus')
+const { getDefaultDeviceId } = require('../../utils/mappedData')
 
 // ============================================================
 // 【模式切换变量】SINGLE_DEVICE_MODE
@@ -127,24 +128,6 @@ function isOnValue(value) {
  * 
  * 流程：先发消息（或暂存），成功后再保存到数据库
  */
-/**
- * 获取单设备模式下的默认设备编号
- * 从 t_device 表查询第一个设备的 number
- */
-async function getDefaultDeviceId() {
-  try {
-    const [rows] = await promisePool.query(
-      'SELECT `number` FROM `t_device` ORDER BY `id` ASC LIMIT 1'
-    )
-    if (rows && rows.length > 0) {
-      return String(rows[0].number).trim()
-    }
-  } catch (err) {
-    console.error('[DirectUpdate] 查询默认设备编号失败:', err.message)
-  }
-  return null
-}
-
 module.exports = async (req, res) => {
   try {
     const { config_id, value, d_no } = req.body
