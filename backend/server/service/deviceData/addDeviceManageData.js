@@ -9,11 +9,13 @@ const promisePool = require('../../config/dbPool')
  * @param {string} data['备注'] - 备注
  * @param {string} data['创立时间'] - 创建时间
  * @param {string} data['设备编号'] - 设备编号
+ * @param {string} [data['内部编号']] - 系统内部统一使用的编号（d_no），不填则跟设备编号一致
  * @returns {Promise<{success: boolean, message: string}>}
  */
 module.exports = async (data) => {
     const deviceName = String(data['设备名称'] ?? '').trim()
     const deviceNumber = String(data['设备编号'] ?? data['电车编号id'] ?? '').trim()
+    const dNo = String(data['内部编号'] ?? '').trim() || deviceNumber
     const remarks = String(data['备注'] ?? '').trim() || null
     if (!deviceName || !deviceNumber) {
         return { success: false, message: '设备名称和设备编号不能为空' }
@@ -27,8 +29,8 @@ module.exports = async (data) => {
 
     // id 使用 AUTO_INCREMENT，创建时间以数据库服务器为准，避免浏览器本地格式无法写入。
     const [result] = await promisePool.execute(
-        'INSERT INTO `t_device` (device_name, remarks, ctime, number) VALUES (?, ?, NOW(), ?)',
-        [deviceName, remarks, deviceNumber]
+        'INSERT INTO `t_device` (device_name, remarks, ctime, number, d_no) VALUES (?, ?, NOW(), ?, ?)',
+        [deviceName, remarks, deviceNumber, dNo]
     )
     return {
         success: true,
@@ -36,6 +38,7 @@ module.exports = async (data) => {
         id: result.insertId,
         deviceName,
         deviceNumber,
+        dNo,
     }
 }
 /** 【文件职责】新增设备的数据访问服务。

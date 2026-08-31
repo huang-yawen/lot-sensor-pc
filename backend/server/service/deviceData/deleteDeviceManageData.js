@@ -14,13 +14,14 @@ module.exports = async (data) => {
         return { success: false, message: 'id 无效' }
     }
     const [[device]] = await promisePool.execute(
-        'SELECT `number` FROM `t_device` WHERE `id` = ? LIMIT 1',
+        'SELECT `number`, `d_no` FROM `t_device` WHERE `id` = ? LIMIT 1',
         [deleteId]
     )
     if (!device) return { success: false, message: '未找到该设备' }
 
     const [result] = await promisePool.execute('DELETE FROM `t_device` WHERE `id` = ?', [deleteId])
-    return { success: result.affectedRows > 0, deviceNumber: device.number }
+    const dNo = String(device.d_no ?? '').trim() || device.number
+    return { success: result.affectedRows > 0, deviceNumber: device.number, dNo }
 }
 /** 【文件职责】删除设备的数据访问服务。
  * 【配置中心关联】无直接读取；调用方需同步清理设备运行时状态。 */

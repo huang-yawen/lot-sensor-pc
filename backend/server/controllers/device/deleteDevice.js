@@ -6,7 +6,7 @@ const mqttClient = require('../../mqtt')
 module.exports = async (req, res) => {
     try {
         const result = await deleteDeviceManageData(req.body)
-        if (result.success) mqttClient.removeDevice(result.deviceNumber)
+        if (result.success) mqttClient.removeDevice(result.dNo)
         res.json(result)
     } catch (err) {
         console.error('删除设备失败:', err)

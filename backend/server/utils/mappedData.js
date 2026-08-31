@@ -12,41 +12,56 @@ function getOnlineLabel(value) {
 }
 
 /**
- * 从上报数据（DEVICE_ID_FIELDS，包含 id）里取出设备号，去 t_device.number 里查
- * 有没有完全一致的注册记录。查到了返回这个设备号（trim 后的字符串），取不到候选
- * 字段、或候选字段的值查不到匹配记录，都返回 null。调用方拿到 null 就跳过保存/
- * 上线判断，不会去用"数据库里第一个设备"顶替。
+ * 拿 MQTT 上报的原始设备号（对应 t_device.number）去查这台设备的 d_no（系统内部
+ * 统一使用的设备编号，t_sensor_data/t_behavior_data/t_direct 等表都用它做外键，
+ * 前端也展示它）。number 在 t_device 里查不到时返回 null；查到了但 d_no 没填时，
+ * 用 number 本身顶替，保证没配置 d_no 的设备照常工作。
  */
-async function resolveDeviceNo(info) {
-  const reported = getDeviceNo(info)
-  if (reported == null) return null
-  const normalized = String(reported).trim()
+async function resolveDNoByNumber(rawNumber) {
+  const normalized = String(rawNumber ?? '').trim()
   if (!normalized) return null
   try {
     const [rows] = await promisePool.query(
-      'SELECT 1 FROM `t_device` WHERE TRIM(`number`) = ? LIMIT 1',
+      'SELECT `d_no` FROM `t_device` WHERE TRIM(`number`) = ? LIMIT 1',
       [normalized]
     )
-    return rows.length > 0 ? normalized : null
+    if (rows.length === 0) return null
+    const dNo = String(rows[0].d_no ?? '').trim()
+    return dNo || normalized
   } catch (err) {
-    console.error('[MappedData] 校验设备编号失败:', err.message)
+    console.error('[MappedData] 查询设备 d_no 失败:', err.message)
     return null
   }
 }
 
 /**
+ * 从上报数据（DEVICE_ID_FIELDS，包含 id）里取出设备号，去 t_device.number 里查
+ * 有没有完全一致的注册记录，查到了就返回这台设备的 d_no（见 resolveDNoByNumber）。
+ * 取不到候选字段、或候选字段的值查不到匹配记录，都返回 null。调用方拿到 null 就
+ * 跳过保存/上线判断，不会去用"数据库里第一个设备"顶替。
+ */
+async function resolveDeviceNo(info) {
+  const reported = getDeviceNo(info)
+  if (reported == null) return null
+  return resolveDNoByNumber(reported)
+}
+
+/**
  * 单设备模式（SINGLE_DEVICE_MODE=true）下的默认设备号：查 t_device 表里注册的第一个
- * 设备，返回它的 number（trim 后的字符串）。跟 resolveDeviceNo 不同：那个是校验 MQTT
- * 上报数据里的设备号是否已注册，找不到就返回 null；这个是直接取表里第一条注册记录。
- * 单设备模式下指令中心 t_direct 也是按这个真实设备号存取的（不是 d_no=NULL），调用方
- * 应该用这个函数取到的设备号去读写 t_direct，而不是自己传 null。
+ * 设备，返回它的 d_no（d_no 没填时用 number 顶替，见 resolveDNoByNumber）。跟
+ * resolveDeviceNo 不同：那个是校验 MQTT 上报数据里的设备号是否已注册，找不到就返回
+ * null；这个是直接取表里第一条注册记录。单设备模式下指令中心 t_direct 也是按这个
+ * d_no 存取的（不是 d_no=NULL），调用方应该用这个函数取到的设备号去读写 t_direct，
+ * 而不是自己传 null。
  */
 async function getDefaultDeviceId() {
   try {
     const [rows] = await promisePool.query(
-      'SELECT `number` FROM `t_device` ORDER BY `id` ASC LIMIT 1'
+      'SELECT `number`, `d_no` FROM `t_device` ORDER BY `id` ASC LIMIT 1'
     )
-    return rows[0] ? String(rows[0].number).trim() : null
+    if (!rows[0]) return null
+    const dNo = String(rows[0].d_no ?? '').trim()
+    return dNo || String(rows[0].number ?? '').trim() || null
   } catch (err) {
     console.error('[MappedData] 查询默认设备编号失败:', err.message)
     return null
@@ -134,7 +149,7 @@ async function saveMappedData({ table, mapperTable, info, dateTime }) {
   return { deviceNo: values[0], mappedFieldCount: columns.length - 3 }
 }
 
-module.exports = { saveMappedData, resolveDeviceNo, resolveFieldAliases, getDefaultDeviceId }
+module.exports = { saveMappedData, resolveDeviceNo, resolveDNoByNumber, resolveFieldAliases, getDefaultDeviceId }
 /**
  * 【文件职责】数据字段映射工具，将数据库或设备的原始字段转换为前端可用结构。
  * 【配置中心关联】如涉及显示字段，会按调用方传入的场景映射处理；本模块不持久化配置。

@@ -7,7 +7,7 @@ module.exports = async (req, res) => {
     try {
         const result = await addDeviceManageData(req.body)
         if (result.success) {
-            mqttClient.registerDevice(result.deviceNumber, { id: result.id, deviceName: result.deviceName })
+            mqttClient.registerDevice(result.dNo, { id: result.id, deviceName: result.deviceName, deviceNumber: result.deviceNumber })
         }
         res.json(result)
     } catch (err) {

@@ -20,7 +20,7 @@ const MessageRouter = require('./messageRouter')
 const DeviceManager = require('./deviceManager')
 const systemConfig = require('../config/systemConfig')
 const { firstValue } = require('../utils/protocol')
-const { resolveDeviceNo } = require('../utils/mappedData')
+const { resolveDeviceNo, resolveDNoByNumber } = require('../utils/mappedData')
 const { handleMessage: handleSensorData } = require('./sensorRealtime/sensorRealtimeHandler')
 const { handleMessage: handleBehaviorData } = require('./behaviorRealtime/behaviorRealtimeHandler')
 const { handleMessage: handleCombinedData } = require('./combinedRealtime/combinedRealtimeHandler')
@@ -77,7 +77,12 @@ mqttClient.on('message', async (topic, payload) => {
         const parsed = JSON.parse(raw)
         deviceId = firstValue(parsed, scene.HEARTBEAT_DEVICE_FIELDS) || raw
       } catch {}
-      if (deviceId) deviceManager.onHeartbeat(String(deviceId).trim())
+      if (deviceId) {
+        // 心跳包里的字段跟传感器/行为数据一样，是设备上报的原始编号（对应 t_device.number），
+        // 同样要转换成 d_no 再交给 DeviceManager，跟 'receive' 模式保持一致的设备标识。
+        const dNo = await resolveDNoByNumber(String(deviceId).trim())
+        if (dNo) deviceManager.onHeartbeat(dNo)
+      }
     }
     return
   }

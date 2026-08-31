@@ -18,7 +18,9 @@
  * 都重新读取，因此保存配置中心后会立即影响后续行为。
  *
  * 设备编号说明：
- *   - 设备以 t_device 表的 number 字段作为唯一标识
+ *   - MQTT 心跳/上报数据里的编号要跟 t_device.number 匹配才认得出是哪台设备
+ *   - 但在线状态、暂存指令这些内部都用 t_device.d_no 记录（d_no 没填就用 number
+ *     顶替），跟 t_sensor_data/t_behavior_data/t_direct 等业务表保持同一套编号
  *   - 如果 number 为 NULL 或空字符串，该设备不会被加载
  *   - 在设备管理页面添加设备时，必须填写设备编号
  *   - 只有数据库中已注册的设备才会被跟踪，测试数据不会显示
@@ -93,18 +95,22 @@ class DeviceManager {
     this._syncingDevices = true
     try {
       const [rows] = await promisePool.query(
-        `SELECT id, TRIM(number) AS number, device_name
+        `SELECT id, TRIM(number) AS number, TRIM(d_no) AS d_no, device_name
          FROM t_device
          ORDER BY id ASC`
       )
 
       const databaseKeys = new Set()
       const seenNumbers = new Set()
+      const seenDNos = new Set()
       for (const row of rows || []) {
         const rowId = Number.isInteger(Number(row.id)) ? Number(row.id) : null
         const deviceNumber = String(row.number || '').trim()
-        let trackingKey = deviceNumber
-        let displayId = deviceNumber
+        // d_no 没填时用 number 顶替，跟 utils/mappedData.js 的 resolveDNoByNumber
+        // 用同一套兜底规则，两边才能算出同一个编号。
+        const dNo = String(row.d_no || '').trim() || deviceNumber
+        let trackingKey = dNo
+        let displayId = dNo
         let issue = ''
 
         if (!deviceNumber) {
@@ -117,8 +123,15 @@ class DeviceManager {
           displayId = `${deviceNumber}（重复，ID: ${rowId ?? '?'}）`
           issue = '设备编号重复，无法独立匹配 MQTT 心跳'
           console.warn(`[DeviceManager] t_device 存在重复设备编号: ${deviceNumber} (id=${rowId ?? '?'})`)
+        } else if (seenDNos.has(dNo)) {
+          trackingKey = `__duplicate_dno__:${rowId ?? databaseKeys.size}`
+          displayId = `${dNo}（内部编号重复，ID: ${rowId ?? '?'}）`
+          issue = '内部编号（d_no）重复，无法独立跟踪在线状态'
+          console.warn(`[DeviceManager] t_device 存在重复内部编号: ${dNo} (id=${rowId ?? '?'})`)
+          seenNumbers.add(deviceNumber)
         } else {
           seenNumbers.add(deviceNumber)
+          seenDNos.add(dNo)
         }
 
         databaseKeys.add(trackingKey)
@@ -127,6 +140,7 @@ class DeviceManager {
           id: rowId,
           deviceName: String(row.device_name || '').trim(),
           deviceNumber,
+          dNo,
           displayId,
           issue,
         })
@@ -223,17 +237,23 @@ class DeviceManager {
     return (Date.now() - lastBeat) < getOfflineTimeout()
   }
 
-  /** 设备 CRUD 后同步内存注册表，无需重启服务。 */
+  /**
+   * 设备 CRUD 后同步内存注册表，无需重启服务。
+   * @param {string} deviceId - 设备的 d_no（内存里的跟踪 key）
+   * @param {Object} metadata - 可附带 deviceNumber（对应 t_device.number，MQTT 心跳识别用）
+   */
   registerDevice(deviceId, metadata = {}) {
     const normalized = String(deviceId ?? '').trim()
     if (!normalized) return
     if (!this._onlineStatus.has(normalized)) {
       this._onlineStatus.set(normalized, false)
     }
+    const existing = this._deviceMeta.get(normalized)
     this._deviceMeta.set(normalized, {
-      id: Number.isInteger(Number(metadata.id)) ? Number(metadata.id) : (this._deviceMeta.get(normalized)?.id ?? null),
-      deviceName: String(metadata.deviceName ?? this._deviceMeta.get(normalized)?.deviceName ?? '').trim(),
-      deviceNumber: normalized,
+      id: Number.isInteger(Number(metadata.id)) ? Number(metadata.id) : (existing?.id ?? null),
+      deviceName: String(metadata.deviceName ?? existing?.deviceName ?? '').trim(),
+      deviceNumber: String(metadata.deviceNumber ?? existing?.deviceNumber ?? normalized).trim(),
+      dNo: normalized,
       displayId: normalized,
       issue: '',
     })
