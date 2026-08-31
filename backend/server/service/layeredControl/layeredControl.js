@@ -16,6 +16,7 @@ const systemConfig = require('../../config/systemConfig')
 const { firstValue, getTopic, buildSwitchPayload } = require('../../utils/protocol')
 const { resolveDeviceNo, resolveFieldAliases } = require('../../utils/mappedData')
 const { getDirectValue, saveDirectData } = require('../directData/saveDirectConfig')
+const { getCurrentMode } = require('../directData/getControlMode')
 const { saveOperationHistory } = require('../operationHistory/saveOperationHistory')
 const { isPidEnabled } = require('../pidHeating/pidHeating')
 const { isLockedByFault, isAnyLocked } = require('../faultStatus/faultStatus')
@@ -273,6 +274,10 @@ async function evaluateLayeredControl(info) {
 
   const deviceNo = String((await resolveDeviceNo(info)) || '').trim() || null
 
+  // ====== 手动模式短路 ======
+  // 指令中心切到手动模式时，正常调节的控制权交还给人工，分层联动不再继续下发指令。
+  if ((await getCurrentMode(deviceNo)) === 'manual') return []
+
   const sensors = await readSensors(info)
   const states = await readSwitchStates(info)
   const targetTemp = await getTargetTemp(deviceNo, rootConfig.DEFAULT_TARGET_TEMP)
@@ -329,7 +334,7 @@ async function evaluateLayeredControl(info) {
     await setSwitch('pump', '水泵', pumpDesired, deviceNo, 'layered_control')
     actions.push({ device: 'pump', action: pumpDesired })
   }
-  // “自动控制开关”（指令配置页面）开启时改由 service/pidHeating/pidHeating.js 接管加热，这里跳过。
+  // “控制模式”（指令配置页面）开启时改由 service/pidHeating/pidHeating.js 接管加热，这里跳过。
   if (heaterDesired && !(await isPidEnabled(deviceNo))
     && states.heatOn !== (heaterDesired === 'on') && canAct(deviceNo, 'heater')) {
     await setSwitch('heater', '加热', heaterDesired, deviceNo, 'layered_control')

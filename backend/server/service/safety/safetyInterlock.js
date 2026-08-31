@@ -28,6 +28,7 @@ const systemConfig = require('../../config/systemConfig')
 const { firstValue, getTopic, buildSwitchPayload } = require('../../utils/protocol')
 const { resolveDeviceNo, resolveFieldAliases } = require('../../utils/mappedData')
 const { saveDirectData, getDirectValue } = require('../directData/saveDirectConfig')
+const { getCurrentMode } = require('../directData/getControlMode')
 const { saveOperationHistory } = require('../operationHistory/saveOperationHistory')
 const { nowLocalDateTime } = require('../../utils/helper')
 
@@ -81,12 +82,6 @@ async function resolveThresholdConfigId(slot) {
   return rows[0]?.id ?? null
 }
 
-async function getModeConfigId() {
-  // auto→manual 模式切换判定：跟 PID/autoControl/layeredControl 保持同一开关语义，
-  // 用 preffix='auto_control_enabled' 而不是 'mode'，保证跟指令中心配置一致。
-  return resolveConfigIdByPrefix('auto_control_enabled')
-}
-
 async function toNumber(raw) {
   if (raw == null || raw === '') return null
   const num = Number(raw)
@@ -98,18 +93,6 @@ async function getThresholdValue(slot, deviceNo) {
   const configId = await resolveThresholdConfigId(slot)
   if (configId == null) return null
   return toNumber(await getDirectValue({ config_id: configId, d_no: deviceNo }))
-}
-
-/** 当前控制模式：'auto' | 'manual' | null。 */
-async function getCurrentMode(deviceNo) {
-  const configId = await getModeConfigId()
-  if (configId == null) return null
-  const value = await getDirectValue({ config_id: configId, d_no: deviceNo })
-  if (value == null) return null
-  const v = String(value).trim().toLowerCase()
-  if (['on', 'auto', 'open', '1', 'true'].includes(v)) return 'auto'
-  if (['off', 'manual', 'close', '0', 'false'].includes(v)) return 'manual'
-  return null
 }
 
 /** 从一条上报消息中读取传感器数值（按字段映射表解析物理名）。 */

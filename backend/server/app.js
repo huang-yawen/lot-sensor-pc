@@ -242,7 +242,6 @@ mqttClient.on('processedMessage', (topic, data) => {
     const typeMap = {
         [topics.sensor]: 'sensor_data',
         [topics.behavior]: 'behavior_data',
-        [topics.alarm]: 'error_data'
     };
     const type = typeMap[topic] || 'unknown';
     broadcastThrottled(type, data)

@@ -19,7 +19,7 @@
  *   实操顺序建议：先只调 Kp（Ki=Kd=0）调到"能升温、有点小震荡"就行；再加 Ki 消除稳态
  *     误差；最后按需要加一点 Kd 压住超调。
  *
- * 都在"指令配置"页面按两层开关组织："自动控制开关"（t_direct_config，
+ * 都在"指令配置"页面按两层开关组织："控制模式"（t_direct_config，
  * preffix=auto_control_enabled）下面是目标温度和"PID恒温控制"（preffix=pid_enabled）
  * 子开关，PID恒温控制下面才是 Kp/Ki/Kd/控制周期/占空比上下限——两个开关都是开，PID
  * 才真正启用（见 isPidEnabled）。这些跟流量/压力/温度阈值一样，都是可以在前端现场
@@ -94,7 +94,7 @@ async function readSwitchOn(prefix, deviceNo) {
 }
 
 /**
- * PID 是否真正启用：需要"自动控制开关"（preffix=auto_control_enabled）和
+ * PID 是否真正启用：需要"控制模式"（preffix=auto_control_enabled）和
  * "PID恒温控制"（preffix=pid_enabled）两个指令项都是开，缺一不可（外层总开关 + 内层
  * PID 专属开关的两级结构）。两个指令项都还没配置时才退回 PID_HEATING.enabled 兜底。
  */
@@ -244,6 +244,8 @@ async function evaluatePidHeating(info) {
     return evaluateAutoTune(info)
   }
 
+  // 手动模式下 isPidEnabled 内部读到的"控制模式"开关是 off，master !== true，
+  // 这里会直接判 false 短路返回，不需要再单独判断一次手动模式。
   if (!(await isPidEnabled(deviceNo))) return []
 
   const fallback = rootConfig.PID_HEATING || {}

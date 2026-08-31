@@ -396,6 +396,7 @@ const configHelp = [
   { group: '上报协议', key: 'DEVICE_ID_FIELDS', description: '数据包中设备编号的候选属性名，按从左到右匹配。', example: '["VID","deviceId","d_no"]', notice: '大小写不敏感；至少保留一个。' },
   { group: '上报协议', key: 'TIME_FIELDS', description: '采集时间的候选属性名；均不存在时使用服务器时间。', example: '["Time","timestamp"]', notice: '建议底层上报 YYYY-MM-DD HH:mm:ss。' },
   { group: '上报协议', key: 'HEARTBEAT_DEVICE_FIELDS', description: 'JSON 心跳包中的设备编号候选名。', example: '["VID","deviceId"]', notice: '纯文本心跳同样支持。' },
+  { group: '上报协议', key: 'SENSOR_FIELD_MAP', description: '业务语义（temp1/temp2/flow/pressure）到 t_sensor_data 物理字段（field1~field10）的映射，自动控制、安全联锁、故障判断、分层联动都靠它认字段。', example: '{"temp1":"field1","temp2":"field2","flow":"field3","pressure":"field4"}', notice: 'key 是代码里固定读取的业务语义，不能改名；value 必须跟 t_sensor_field_mapper 表里实际配置的 db_name 保持一致。' },
   { group: '控制协议', key: 'CONTROL_VALUE_MAP', description: '软件标准状态到设备真实控制值的映射。', example: '{"on":"open","off":"close"}', notice: '水泵无响应时优先检查此项和控制主题。' },
   { group: '页面术语', key: 'TERMINOLOGY', description: '修改传感器、运行状态、设备、告警和智能判定的页面称呼。', example: 'sensor: 水循环数据', notice: '不改变数据库和 MQTT 字段。' },
   { group: '智能判定', key: 'INTELLIGENT_JUDGMENT.enabled', description: '是否调用现场 HTTP 智能判定服务。', example: 'true', notice: '正式比赛调用接口时开启。' },

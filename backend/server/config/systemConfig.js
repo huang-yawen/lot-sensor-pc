@@ -931,6 +931,51 @@ function validateAggregationMetrics(config) {
   })
 }
 
+const ALARM_OPERATORS = new Set(['>', '>=', '<', '<=', '==', '!='])
+
+/** 校验一条规则（或它的 require 前置条件）指定的字段来源：要么 source_table+source_field，
+ * 要么退回旧写法的 field（字符串或字符串数组），跟 evaluateRules.js 的 resolveFieldNames 兼容。 */
+function validateAlarmFieldSpec(spec, pathName) {
+  if (spec.source_table !== undefined || spec.source_field !== undefined) {
+    if (!METRIC_TABLES.has(spec.source_table)) throw new Error(`${pathName}.source_table 只能是 t_sensor_data 或 t_behavior_data`)
+    if (typeof spec.source_field !== 'string' || !spec.source_field.trim()) throw new Error(`${pathName}.source_field 不能为空`)
+    return
+  }
+  if (spec.field !== undefined) {
+    if (typeof spec.field !== 'string' && !Array.isArray(spec.field)) throw new Error(`${pathName}.field 必须是字符串或字符串数组`)
+    return
+  }
+  throw new Error(`${pathName} 必须指定 source_table+source_field 或 field`)
+}
+
+function validateAlarmRules(config) {
+  const ids = new Set()
+  ;(config.ALARM_RULES || []).forEach((rule, index) => {
+    const pathName = `ALARM_RULES[${index}]`
+    if (!rule || typeof rule !== 'object' || Array.isArray(rule)) throw new Error(`${pathName} 必须是 JSON 对象`)
+    if (typeof rule.id !== 'string' || !rule.id.trim()) throw new Error(`${pathName}.id 不能为空`)
+    if (ids.has(rule.id)) throw new Error(`告警规则标识重复: ${rule.id}`)
+    ids.add(rule.id)
+    if (typeof rule.name !== 'string' || !rule.name.trim()) throw new Error(`${pathName}.name 不能为空`)
+    validateAlarmFieldSpec(rule, pathName)
+    if (!ALARM_OPERATORS.has(rule.operator)) throw new Error(`${pathName}.operator 只能是 > >= < <= == != 之一`)
+    if (!Number.isFinite(Number(rule.threshold))) throw new Error(`${pathName}.threshold 必须是数字`)
+    if (typeof rule.enabled !== 'boolean') throw new Error(`${pathName}.enabled 必须是布尔值`)
+    if (rule.action !== undefined) {
+      if (!rule.action || typeof rule.action !== 'object' || Array.isArray(rule.action)) throw new Error(`${pathName}.action 必须是 JSON 对象`)
+      if (typeof rule.action.field !== 'string' || !rule.action.field.trim()) throw new Error(`${pathName}.action.field 不能为空`)
+    }
+    if (rule.require !== undefined) {
+      if (!rule.require || typeof rule.require !== 'object' || Array.isArray(rule.require)) throw new Error(`${pathName}.require 必须是 JSON 对象`)
+      validateAlarmFieldSpec(rule.require, `${pathName}.require`)
+      if (!Array.isArray(rule.require.values) || rule.require.values.length === 0) throw new Error(`${pathName}.require.values 至少需要一个值`)
+    }
+    if (rule.cooldownMs !== undefined && (!Number.isFinite(rule.cooldownMs) || rule.cooldownMs < 0)) {
+      throw new Error(`${pathName}.cooldownMs 必须是大于等于 0 的数字`)
+    }
+  })
+}
+
 /** 校验影响稳定性和连接安全的关键字段；校验失败时不会写入配置文件。 */
 function validate(config) {
   for (const key of ['SCENE_TAG', 'SCENE_DESCRIPTION', 'SYSTEM_TITLE', 'DEVICE_LABEL']) {
@@ -1072,6 +1117,7 @@ function validate(config) {
   }
   if (typeof switchDurationDisplay.enabled !== 'boolean') throw new Error('SWITCH_DURATION_DISPLAY.enabled 必须是布尔值')
   validateAggregationMetrics(config)
+  validateAlarmRules(config)
   return true
 }
 
