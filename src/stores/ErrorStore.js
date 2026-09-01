@@ -14,10 +14,14 @@ export const ErrorStore = defineStore("ErrorStore", () => {
   const total = ref(0);
   const loading = ref(false);
   const errTypeStats = ref([]);
+  // 饼图支持三种统计范围：全部（不带任何筛选）、当前筛选（跟表格同一批数据）、当前页
+  // （前端按表格当前页聚合，不发请求）。前两种各存一份，切换范围时不用重新请求。
+  const errTypeStatsAll = ref([]);
   const safetyData = ref([]);
   const safetyTotal = ref(0);
   const safetyLoading = ref(false);
   const safetyTypeStats = ref([]);
+  const safetyTypeStatsAll = ref([]);
 
   const formatDateTime = (value) => {
     if (!value) return "";
@@ -100,20 +104,21 @@ export const ErrorStore = defineStore("ErrorStore", () => {
     }
   };
 
-  const fetchErrTypeStats = async (params = {}) => {
+  // scope='filtered'（默认）：复用列表筛选条件（关键字+时间范围），图表和表格看到同一批数据；
+  // scope='all'：不带任何筛选条件，统计数据库里该类型的全部记录，存到单独一份 ref。
+  const fetchErrTypeStats = async (params = {}, scope = "filtered") => {
     try {
-      // 统计接口复用列表筛选条件，保证图表和表格看到的是同一批故障数据。
-      const response = await api.get("/errTypeStats", {
-        params: {
-          keyword: params.keyword || "",
-          startTime: formatDateTime(params.startTime),
-          endTime: formatDateTime(params.endTime),
-        },
-      });
+      const query = scope === "all" ? {} : {
+        keyword: params.keyword || "",
+        startTime: formatDateTime(params.startTime),
+        endTime: formatDateTime(params.endTime),
+      };
+      const response = await api.get("/errTypeStats", { params: query });
 
       const res = response.data;
       if (res.success) {
-        errTypeStats.value = res.data || [];
+        if (scope === "all") errTypeStatsAll.value = res.data || [];
+        else errTypeStats.value = res.data || [];
       }
     } catch (error) {
       console.error("errTypeStats 请求失败:", error);
@@ -122,20 +127,20 @@ export const ErrorStore = defineStore("ErrorStore", () => {
 
   // 安全联锁类型统计：复用同一个 /errTypeStats 接口，传 category=safety 只统计安全联锁
   // 记录自己的数据，跟故障统计（errTypeStats）完全分开，互不影响。
-  const fetchSafetyTypeStats = async (params = {}) => {
+  const fetchSafetyTypeStats = async (params = {}, scope = "filtered") => {
     try {
-      const response = await api.get("/errTypeStats", {
-        params: {
-          category: "safety",
-          keyword: params.keyword || "",
-          startTime: formatDateTime(params.startTime),
-          endTime: formatDateTime(params.endTime),
-        },
-      });
+      const query = scope === "all" ? { category: "safety" } : {
+        category: "safety",
+        keyword: params.keyword || "",
+        startTime: formatDateTime(params.startTime),
+        endTime: formatDateTime(params.endTime),
+      };
+      const response = await api.get("/errTypeStats", { params: query });
 
       const res = response.data;
       if (res.success) {
-        safetyTypeStats.value = res.data || [];
+        if (scope === "all") safetyTypeStatsAll.value = res.data || [];
+        else safetyTypeStats.value = res.data || [];
       }
     } catch (error) {
       console.error("safetyTypeStats 请求失败:", error);
@@ -149,11 +154,13 @@ export const ErrorStore = defineStore("ErrorStore", () => {
     fetchSafetyTypeStats,
     errData,
     errTypeStats,
+    errTypeStatsAll,
     total,
     loading,
     safetyData,
     safetyTotal,
     safetyLoading,
     safetyTypeStats,
+    safetyTypeStatsAll,
   };
 });

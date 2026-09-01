@@ -2,60 +2,9 @@
  * 【配置中心关联】无直接读取。 */
 const promisePool = require('../../config/dbPool')
 const systemConfig = require('../../config/systemConfig')
-const { CATEGORY_TYPES, resolveCategory, friendlyName } = require('./errorTypeNames')
-
-const isValidDateTime = (dateStr) => {
-    if (!dateStr) return true
-    const regex = /^\d{4}-\d{2}-\d{2}( \d{2}:\d{2}:\d{2})?$/
-    return regex.test(dateStr)
-}
-
-const validateDateRange = (startTime, endTime) => {
-    if (!startTime || !endTime) return true
-    const start = new Date(startTime)
-    const end = new Date(endTime)
-    return start <= end
-}
-
-const buildWhere = (query) => {
-    const keyword = query.keyword?.trim() || ''
-    let startTime = query.startTime || ''
-    let endTime = query.endTime || ''
-    const types = CATEGORY_TYPES[query.category] || CATEGORY_TYPES.fault
-    const conditions = [`type IN (${types.map(() => '?').join(',')})`]
-    const params = [...types]
-
-    if (startTime && !isValidDateTime(startTime)) {
-        throw new Error('开始时间格式不正确，应为 YYYY-MM-DD 或 YYYY-MM-DD HH:MM:SS')
-    }
-    if (endTime && !isValidDateTime(endTime)) {
-        throw new Error('结束时间格式不正确，应为 YYYY-MM-DD 或 YYYY-MM-DD HH:MM:SS')
-    }
-    if (!validateDateRange(startTime, endTime)) {
-        throw new Error('开始时间不能大于结束时间')
-    }
-
-    // 只为用户实际传入的筛选条件拼接 SQL 片段。
-    if (keyword) {
-        conditions.push('(d_no LIKE ? OR e_msg LIKE ?)')
-        params.push(`%${keyword}%`, `%${keyword}%`)
-    }
-
-    if (startTime) {
-        conditions.push('c_time >= ?')
-        params.push(startTime)
-    }
-
-    if (endTime) {
-        conditions.push('c_time <= ?')
-        params.push(endTime)
-    }
-
-    return {
-        whereClause: conditions.length ? `WHERE ${conditions.join(' AND ')}` : '',
-        params,
-    }
-}
+const { resolveCategory, friendlyName } = require('./errorTypeNames')
+// 筛选条件构造跟类型统计（getErrorTypeStats）共用同一份实现，两边口径必须一致。
+const { buildWhere } = require('./errorQueryFilter')
 
 // 查询带分页的故障历史记录，支持关键字和时间筛选。
 module.exports = async function getErrorHistory(query) {

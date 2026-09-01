@@ -31,6 +31,8 @@ const { saveDirectData, getDirectValue } = require('../directData/saveDirectConf
 const { getCurrentMode } = require('../directData/getControlMode')
 const { saveOperationHistory } = require('../operationHistory/saveOperationHistory')
 const { nowLocalDateTime } = require('../../utils/helper')
+// 流量波动阈值支持现场在指令中心调（preffix=flow_volatility），删掉就退回配置中心。
+const { getNumberValue } = require('../controlShared/controlHelpers')
 
 // 传感器掉线或短路时，很多硬件驱动不会直接不上报数据，而是把读数钳位成一个固定的
 // 极端大值（比如 9999）。这里用这个哨兵值单独识别"掉线/短路"这种情况，跟"读数超过
@@ -286,7 +288,7 @@ async function evaluateValueConditions(info, deviceNo, safetyConfig) {
   // 跟前面几次差得太大，同样会触发。
   if (safetyConfig.flowVolatility && sensors.flow != null) {
     const volatility = trackFlowVolatility(deviceNo, sensors.flow)
-    const threshold = Number(safetyConfig.flowVolatilityThreshold)
+    const threshold = await getNumberValue('flow_volatility', deviceNo, safetyConfig.flowVolatilityThreshold, 20)
     if (volatility != null && volatility > threshold) {
       triggers.push({
         id: 'flow_volatility',

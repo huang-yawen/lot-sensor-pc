@@ -13,7 +13,7 @@
  *
  * 规则清单（除 heaterHysteresis 外均可通过 LINKAGE_RULES 独立开关，规则函数在文件下方）：
  *   pumpAlwaysOn   水泵常开：无故障、其他传感器读数正常就保持运行，不跟温度挂钩。
- *   heaterHysteresis 加热滞回带通断：出水温度低于"目标-回差"才开，达到目标就关（是否生效由指令中心 heater_hysteresis_enabled 决定，不是这里的独立开关）。
+ *   heaterHysteresis 加热滞回带通断：出水温度低于"目标-回差"才开，达到目标就关（是否生效由指令中心 heater_hysteresis_enabled 决定，不是这里的独立开关；回差值优先取指令中心 heater_hysteresis，没有才用配置中心的兜底值）。
  *   flowSingle     水泵-流量单层：流量在区间内/低于下限->开；高于上限->关（保护）。
  *   pressureSingle 水泵/加热-压力单层：压力低于下限->开泵；高于上限->关泵关热。
  *   tempSingle     加热-温度单层（带滞回）：温度低于目标/下限->开；高于目标/上限->关。
@@ -38,6 +38,7 @@ const { isLockedByFault, isAnyLocked } = require('../faultStatus/faultStatus')
 const {
   ABNORMAL_MAX,
   getThresholdValue,
+  getNumberValue,
   readSensors,
   readSwitchStates,
   getTargetTemp,
@@ -234,15 +235,25 @@ async function evaluateLinkageRules(info) {
 
   if (config.pumpAlwaysOn !== false) collect(rulePumpAlwaysOn(sensors, faults))
   if (hysteresisEnabled) {
-    collect(ruleHeaterHysteresis(sensors, states, faults, targetTemp,
-      Number(config.tempDiffOpenThreshold ?? 3), Number(config.heaterHysteresisValue ?? 1)))
+    // 回差和温差过大阈值都跟目标温度一样，现场可以在指令中心实时调（preffix=
+    // heater_hysteresis / temp_diff_open）；指令项被删掉时自动退回配置中心的
+    // LINKAGE_RULES 对应值，两个都没有才用常量兜住，不会把 NaN 带进温度比较里。
+    const [hysteresis, diffOpenThreshold] = await Promise.all([
+      getNumberValue('heater_hysteresis', deviceNo, config.heaterHysteresisValue, 1),
+      getNumberValue('temp_diff_open', deviceNo, config.tempDiffOpenThreshold, 3),
+    ])
+    collect(ruleHeaterHysteresis(sensors, states, faults, targetTemp, diffOpenThreshold, hysteresis))
   }
   if (config.flowSingle === true) collect(ruleFlowSingle(sensors, flowLow, flowHigh))
   if (config.pressureSingle === true) collect(rulePressureSingle(sensors, pressureLow, pressureHigh))
   if (config.tempSingle === true) {
-    collect(ruleTempSingle(sensors, targetTemp, tempLow, tempHigh, Number(config.tempSingleHysteresis ?? 1)))
+    const tempSingleHysteresis = await getNumberValue('temp_single_hysteresis', deviceNo, config.tempSingleHysteresis, 1)
+    collect(ruleTempSingle(sensors, targetTemp, tempLow, tempHigh, tempSingleHysteresis))
   }
-  if (config.dualTemp === true) collect(ruleDualTemp(sensors, Number(config.dualTempDiffThreshold ?? 2)))
+  if (config.dualTemp === true) {
+    const dualTempDiff = await getNumberValue('dual_temp_diff', deviceNo, config.dualTempDiffThreshold, 2)
+    collect(ruleDualTemp(sensors, dualTempDiff))
+  }
   if (config.tempFlow === true) collect(ruleTempFlow(sensors, flowNormal, tempHigh, flowLow))
   if (config.pressureFlow === true) {
     collect(rulePressureFlow(sensors, pressureLow, pressureHigh, flowLow, flowHigh, flowNormal))

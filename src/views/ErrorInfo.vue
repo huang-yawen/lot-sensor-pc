@@ -86,14 +86,32 @@
 
       <div class="chart-container" v-if="chartsEnabled">
         <div class="chart-panel">
-          <PieChart :data="store.safetyTypeStats" title="安全联锁类型分布" />
+          <div class="chart-scope">
+            <span class="chart-scope-label">统计范围</span>
+            <el-radio-group v-model="safetyChartScope" size="small">
+              <el-radio-button value="all">全部</el-radio-button>
+              <el-radio-button value="filtered">当前筛选</el-radio-button>
+              <el-radio-button value="page">当前页</el-radio-button>
+            </el-radio-group>
+            <span class="chart-scope-hint">{{ safetyChartHint }}</span>
+          </div>
+          <PieChart :data="safetyChartData" :title="safetyChartTitle" />
         </div>
       </div>
     </div>
 
     <div class="chart-container" v-if="chartsEnabled">
       <div class="chart-panel">
-        <PieChart :data="store.errTypeStats" title="故障类型分布" />
+        <div class="chart-scope">
+          <span class="chart-scope-label">统计范围</span>
+          <el-radio-group v-model="errChartScope" size="small">
+            <el-radio-button value="all">全部</el-radio-button>
+            <el-radio-button value="filtered">当前筛选</el-radio-button>
+            <el-radio-button value="page">当前页</el-radio-button>
+          </el-radio-group>
+          <span class="chart-scope-hint">{{ errChartHint }}</span>
+        </div>
+        <PieChart :data="errChartData" :title="errChartTitle" />
       </div>
     </div>
   </div>
@@ -125,6 +143,44 @@ const showSafetyLog = computed(() => systemStore.config.SAFETY_INTERLOCK?.showOn
 const safetyCurrentPage = ref(1);
 const safetyPageSize = ref(5);
 
+// 饼图统计范围：all=数据库里该类型的全部记录；filtered=顶部搜索条件筛出来的那批
+// （跟表格同一批数据）；page=表格当前这一页的记录（纯前端聚合，不发请求）。
+const errChartScope = ref("all");
+const safetyChartScope = ref("all");
+
+/** 把表格行按"类型"列聚合成饼图要的 [{type, count}]，用于"当前页"范围。 */
+const aggregateByType = (rows) => {
+  const counter = new Map();
+  for (const row of rows || []) {
+    const type = row["类型"] || "未分类";
+    counter.set(type, (counter.get(type) || 0) + 1);
+  }
+  return [...counter.entries()]
+    .map(([type, count]) => ({ type, count }))
+    .sort((a, b) => b.count - a.count);
+};
+
+const pickChartData = (scope, allStats, filteredStats, pageRows) => {
+  if (scope === "all") return allStats;
+  if (scope === "filtered") return filteredStats;
+  return aggregateByType(pageRows);
+};
+
+const sumCount = (stats) => (stats || []).reduce((sum, item) => sum + (Number(item.count) || 0), 0);
+
+const errChartData = computed(() =>
+  pickChartData(errChartScope.value, store.errTypeStatsAll, store.errTypeStats, store.errData)
+);
+const safetyChartData = computed(() =>
+  pickChartData(safetyChartScope.value, store.safetyTypeStatsAll, store.safetyTypeStats, store.safetyData)
+);
+
+const SCOPE_LABELS = { all: "全部", filtered: "当前筛选", page: "当前页" };
+const errChartTitle = computed(() => `故障类型分布（${SCOPE_LABELS[errChartScope.value]}）`);
+const safetyChartTitle = computed(() => `安全联锁类型分布（${SCOPE_LABELS[safetyChartScope.value]}）`);
+const errChartHint = computed(() => `共 ${sumCount(errChartData.value)} 条`);
+const safetyChartHint = computed(() => `共 ${sumCount(safetyChartData.value)} 条`);
+
 // 故障记录是手写表格，也统一过滤 id/编号列。
 const headers = computed(() => {
   const data = store.errData;
@@ -148,6 +204,8 @@ const handleSearch = async (page = 1, showLoading = true) => {
     const params = getSearchParams();
     // 顶部这一个搜索框同时驱动故障记录表格和下面的安全联锁记录表格，两个表格各自独立分页。
     safetyCurrentPage.value = 1;
+    // 饼图的"全部"和"当前筛选"两种范围各拉一份，切换范围时纯前端切换、不用等请求；
+    // "当前页"范围直接用表格数据聚合，不占请求。
     const tasks = [
       store.fetchErrData({
         ...params,
@@ -155,10 +213,12 @@ const handleSearch = async (page = 1, showLoading = true) => {
         pageSize: pageSize.value,
       }),
       store.fetchErrTypeStats(params),
+      store.fetchErrTypeStats({}, "all"),
     ];
     if (showSafetyLog.value) {
       tasks.push(store.fetchSafetyData({ ...params, currentPage: 1, pageSize: safetyPageSize.value }));
       tasks.push(store.fetchSafetyTypeStats(params));
+      tasks.push(store.fetchSafetyTypeStats({}, "all"));
     }
     await Promise.all(tasks);
   } finally {
@@ -268,6 +328,24 @@ onUnmounted(() => {
 .chart-panel {
   width: min(100%, 980px);
   min-height: 560px;
+}
+
+.chart-scope {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+.chart-scope-label {
+  font-size: 13px;
+  color: #64748b;
+}
+
+.chart-scope-hint {
+  font-size: 12px;
+  color: #94a3b8;
 }
 
 .pagination-wrapper {

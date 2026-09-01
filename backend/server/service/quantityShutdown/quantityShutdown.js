@@ -16,6 +16,8 @@ const { firstValue, getTopic, buildSwitchPayload } = require('../../utils/protoc
 const { resolveDeviceNo, resolveFieldAliases } = require('../../utils/mappedData')
 const { getDirectValue, saveDirectData } = require('../directData/saveDirectConfig')
 const { saveOperationHistory } = require('../operationHistory/saveOperationHistory')
+// 定量值支持现场在指令中心调（preffix=total_flow_target），指令项删掉就退回配置中心。
+const { getNumberValue } = require('../controlShared/controlHelpers')
 
 /** 流量字段槽位（与字段映射表 field3 对齐）。 */
 const FLOW_FIELD = 'field3'
@@ -105,7 +107,8 @@ async function evaluateQuantityShutdown(info) {
     return null
   }
 
-  const target = Number(config.totalFlowTarget)
+  // 指令中心优先 → 配置中心兜底 → 0（0 会被下面判定为无效，等于不启用定量停机）
+  const target = await getNumberValue('total_flow_target', deviceNo, config.totalFlowTarget, 0)
   if (!Number.isFinite(target) || target <= 0) return null
 
   // 打开定量停机：开始新的计量周期。

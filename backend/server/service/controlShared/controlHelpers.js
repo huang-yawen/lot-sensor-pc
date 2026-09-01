@@ -95,13 +95,27 @@ async function findSwitchConfig(prefix, name) {
   return rows[0] || null
 }
 
-/** 读目标温度：优先指令中心 target_temperature，否则用配置中心默认值。 */
-async function getTargetTemp(deviceNo, fallback) {
-  const configId = await resolveConfigIdByPrefix('target_temperature')
+/**
+ * 读一个数值型指令项，三级兜底，保证返回的一定是有限数字：
+ *   1) 指令中心 t_direct 里这个 preffix 的当前值（现场实时调整，优先生效）；
+ *   2) 指令项被删掉、或者从没配过值时，回退到调用方传入的配置中心兜底值；
+ *   3) 配置中心那个也没了/不是数字时，用 hardFallback 常量兜住。
+ * 三层都不会抛异常——删掉指令项只是让它退回下一层，不会让控制逻辑吃到
+ * NaN/undefined（那会让比较判断永远为 false，表现成"规则悄悄失效"）。
+ */
+async function getNumberValue(prefix, deviceNo, fallback, hardFallback) {
+  const configId = await resolveConfigIdByPrefix(prefix)
   const value = configId != null
     ? await toNumber(await getDirectValue({ config_id: configId, d_no: deviceNo }))
     : null
-  return value != null ? value : Number(fallback) || 22
+  if (value != null) return value
+  const fb = Number(fallback)
+  return Number.isFinite(fb) ? fb : hardFallback
+}
+
+/** 读目标温度：优先指令中心 target_temperature，否则用配置中心默认值。 */
+async function getTargetTemp(deviceNo, fallback) {
+  return getNumberValue('target_temperature', deviceNo, fallback, 22)
 }
 
 /** 下发一次开关指令：找到对应指令项、拼协议报文、发布 MQTT、更新 t_direct、记操作历史。
@@ -137,6 +151,7 @@ module.exports = {
   resolveThresholdConfigId,
   toNumber,
   getThresholdValue,
+  getNumberValue,
   readSensors,
   readSwitchStates,
   findSwitchConfig,

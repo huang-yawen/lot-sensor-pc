@@ -71,7 +71,7 @@
         </el-form-item>
         <el-form-item label="加热滞回带回差（℃）">
           <el-input-number v-model="form.heaterHysteresisValue" :min="0" :step="0.5" :disabled="!form.enabled" />
-          <div class="hint">出水温度低于"目标-回差"才开加热，达到目标就关，中间维持现状不抖动。仅在"设备设置/指令配置"页面的"加热滞回带通断"开关打开时生效。</div>
+          <div class="hint">出水温度低于"目标-回差"才开加热，达到目标就关，中间维持现状不抖动。现场调回差请到"设备设置/指令配置"页面的"加热滞回回差"（那个优先生效），这里是它的兜底默认值；整条规则是否生效由同一页面的"加热滞回带通断"开关决定。</div>
         </el-form-item>
         <el-form-item label="温差过大阈值（℃）">
           <el-input-number v-model="form.tempDiffOpenThreshold" :min="0" :step="0.5" :disabled="!form.enabled" />

@@ -39,6 +39,8 @@ const promisePool = require('../../config/dbPool')
 const systemConfig = require('../../config/systemConfig')
 const { firstValue, getTopic, buildSwitchPayload } = require('../../utils/protocol')
 const { resolveDeviceNo, resolveFieldAliases, getDefaultDeviceId, getAllDeviceIds } = require('../../utils/mappedData')
+// 干烧判定时长/最小升温、水泵预热宽限期支持现场在指令中心调，删掉指令项就退回配置中心。
+const { getNumberValue } = require('../controlShared/controlHelpers')
 const { saveDirectData, getDirectValue } = require('../directData/saveDirectConfig')
 const { saveOperationHistory } = require('../operationHistory/saveOperationHistory')
 const { nowLocalDateTime } = require('../../utils/helper')
@@ -285,18 +287,26 @@ async function detectFault(info, deviceNo, faultConfig) {
   const sensors = await readSensors(info)
   const states = await readSwitchStates(info)
 
-  // 水泵开启满 pumpWarmupMs 才算"预热完成"，②④⑤三条故障都要求预热完成才判断，
-  // 避免水泵刚启动、流量/温差还没稳定的瞬间被误判。
   const pumpOnDurationMs = trackPumpOnDuration(deviceNo, states.pumpOn === true)
-  const warmupMs = Number(faultConfig.pumpWarmupMs) >= 0 ? Number(faultConfig.pumpWarmupMs) : 5000
-  const pumpWarmedUp = pumpOnDurationMs != null && pumpOnDurationMs >= warmupMs
 
-  const [flowLow, pressureLow, pressureHigh, tempDiffFromDirect] = await Promise.all([
+  const [flowLow, pressureLow, pressureHigh, tempDiffFromDirect, warmupMs, dryBurnDurationMs, dryBurnMinRiseC] = await Promise.all([
     getThresholdValue('flowLow', deviceNo),
     getThresholdValue('pressureLow', deviceNo),
     getThresholdValue('pressureHigh', deviceNo),
     getThresholdValue('tempDiff', deviceNo),
+    // 三个故障判定参数：指令中心优先 → 配置中心兜底 → 常量兜底，指令项删掉不影响运行。
+    getNumberValue('pump_warmup_ms', deviceNo, faultConfig.pumpWarmupMs, 5000),
+    getNumberValue('dry_burn_duration_ms', deviceNo, faultConfig.dryBurnDurationMs, 5000),
+    getNumberValue('dry_burn_min_rise', deviceNo, faultConfig.dryBurnMinRiseC, 0.1),
   ])
+
+  // 水泵开启满 warmupMs 才算"预热完成"，②④⑤三条故障都要求预热完成才判断，
+  // 避免水泵刚启动、流量/温差还没稳定的瞬间被误判。
+  const pumpWarmedUp = pumpOnDurationMs != null && pumpOnDurationMs >= warmupMs
+
+  // 把本轮实际生效的判定参数合进一份配置，交给下面的同步判定函数用，
+  // 这样那些函数不用改签名、也不用各自再去读一次指令中心。
+  const effectiveConfig = { ...faultConfig, pumpWarmupMs: warmupMs, dryBurnDurationMs, dryBurnMinRiseC }
   // 温差阈值：指令中心配置了"温差阈值"指令项就优先用指令中心的（跟其余阈值一样，
   // 保存后立即生效）；指令中心没配置时才退回配置中心 FAULT_STATUS.tempDiffThreshold
   // 兜底，不影响 flowLow/pressureLow/pressureHigh 这几个仍然只认指令中心的阈值。
@@ -328,8 +338,8 @@ async function detectFault(info, deviceNo, faultConfig) {
   }
 
   // ③ 干烧：加热开启后温度长时间不变化
-  if (faultConfig.dryBurn !== false && checkDryBurn(deviceNo, states.heatOn, sensors.temp2, faultConfig)) {
-    const durationMs = Number(faultConfig.dryBurnDurationMs) > 0 ? Number(faultConfig.dryBurnDurationMs) : 5000
+  if (faultConfig.dryBurn !== false && checkDryBurn(deviceNo, states.heatOn, sensors.temp2, effectiveConfig)) {
+    const durationMs = dryBurnDurationMs
     triggers.push({
       id: 'dry_burn', code: '③', priority: 1,
       name: '干烧',
