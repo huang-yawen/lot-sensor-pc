@@ -38,6 +38,12 @@
       </article>
     </section>
 
+    <section class="gauge-section">
+      <article class="gauge-card">
+        <GaugeChart :value="currentTemp" title="出水温度" unit="℃" :min="0" :max="60" />
+      </article>
+    </section>
+
     <section class="dashboard-grid">
       <article class="panel sensor-panel">
         <div class="panel-heading">
@@ -124,8 +130,10 @@ import api from '@/api'
 import { connect, on as wsOn } from '@/utils/websocket'
 import { useSystemConfigStore } from '@/stores/SystemConfigStore'
 import { DisplayStore } from '@/stores/DisplayStore'
+import GaugeChart from '@/components/GaugeChart.vue'
 
 const loading = ref(false)
+const currentTemp = ref(null)
 const dashboard = ref({})
 const computedMetrics = ref({})
 const deviceTotal = ref(0)
@@ -152,6 +160,7 @@ const computedMetricList = computed(() => {
   const entry = keys.length ? computedMetrics.value[keys[0]] : null
   if (!entry) return []
   const flags = entry.flags || {}
+  if (flags.enabled === false) return []
   const fmt = (v, digits = 2) => (v == null || !Number.isFinite(Number(v)) ? null : Number(v).toFixed(digits))
   const list = []
 
@@ -282,10 +291,11 @@ async function loadDashboard(showLoading = true) {
       api.get('/deviceData', { params: { currentPage: 1, pageSize: 100 } }),
       api.get('/api/mqtt/status'),
       api.get('/api/computed-metrics'),
+      api.get('/api/current-temp'),
     ]
     if (switchDurationEnabled.value) requests.push(api.get('/api/switch-duration'))
 
-    const [dataResult, deviceResult, mqttResult, computedResult, switchDurationResult] = await Promise.allSettled(requests)
+    const [dataResult, deviceResult, mqttResult, computedResult, currentTempResult, switchDurationResult] = await Promise.allSettled(requests)
     if (dataResult.status === 'fulfilled') dashboard.value = dataResult.value.data || {}
     if (deviceResult.status === 'fulfilled') {
       deviceTotal.value = Number(deviceResult.value.data?.data?.total) || 0
@@ -295,6 +305,10 @@ async function loadDashboard(showLoading = true) {
     }
     if (computedResult.status === 'fulfilled') {
       computedMetrics.value = computedResult.value.data?.data || {}
+    }
+    if (currentTempResult.status === 'fulfilled') {
+      const val = currentTempResult.value.data?.data
+      currentTemp.value = val == null ? null : Number(val)
     }
     if (switchDurationEnabled.value && switchDurationResult?.status === 'fulfilled') {
       switchDuration.value = switchDurationResult.value.data?.data || { pump: null, heater: null }
@@ -334,6 +348,8 @@ onUnmounted(() => {
 .metric-card.online { border-top-color: #10b981; }
 .metric-card.sensor { border-top-color: #0ea5e9; }
 .metric-card.warning { border-top-color: #f59e0b; }
+.gauge-section { margin: 16px 0; }
+.gauge-card { border: 1px solid #e5e7eb; border-radius: 14px; background: #fff; box-shadow: 0 6px 20px rgba(15, 23, 42, .05); padding: 12px; height: 220px; }
 .metric-card span, .metric-card small { display: block; color: #64748b; }
 .metric-card strong { display: block; margin: 9px 0 4px; font-size: 30px; color: #0f172a; }
 .dashboard-grid { display: grid; grid-template-columns: minmax(0, 2fr) minmax(280px, 1fr); gap: 16px; }

@@ -225,7 +225,7 @@ const defaultConfig = {
       window_size: 5,
       unit: '℃',
       precision: 2,
-      enabled: false,
+      enabled: true,
       mode: 'standalone',
       chart_type: 'line',
       color: '#3b82f6',
@@ -239,7 +239,7 @@ const defaultConfig = {
       window_size: 5,
       unit: 'L/min',
       precision: 2,
-      enabled: false,
+      enabled: true,
       mode: 'standalone',
       chart_type: 'line',
       color: '#0ea5e9',
@@ -253,7 +253,7 @@ const defaultConfig = {
       window_size: 10,
       unit: 'L/min',
       precision: 2,
-      enabled: false,
+      enabled: true,
       mode: 'standalone',
       chart_type: 'bar',
       color: '#f59e0b',
@@ -262,12 +262,12 @@ const defaultConfig = {
       metric_key: 'pressure_pulsation',
       metric_name: '压力脉动(20点)',
       source_table: 't_sensor_data',
-      source_field: 'field5',
+      source_field: 'field4',
       aggregation: 'volatility',
       window_size: 20,
       unit: 'kPa',
       precision: 2,
-      enabled: false,
+      enabled: true,
       mode: 'standalone',
       chart_type: 'bar',
       color: '#ef4444',
@@ -281,7 +281,7 @@ const defaultConfig = {
       window_size: 2,
       unit: '℃/次',
       precision: 2,
-      enabled: false,
+      enabled: true,
       mode: 'standalone',
       chart_type: 'line',
       color: '#f97316',
@@ -295,7 +295,7 @@ const defaultConfig = {
       window_size: 2,
       unit: 'L/min/次',
       precision: 2,
-      enabled: false,
+      enabled: true,
       mode: 'standalone',
       chart_type: 'line',
       color: '#8b5cf6',
@@ -519,6 +519,12 @@ const defaultConfig = {
     tempHigh: true,
     tempDiff: true,
     tempDiffThreshold: 3,
+    // 流量剧烈波动（疑似水锤/湍流）：最近 10 个读数里最大值-最小值超过这个阈值就触发，
+    // 窗口大小固定跟 TIME_WINDOW_METRICS 的 flow_volatility 指标一致。跟温差阈值一样是
+    // 纯配置中心维护，没有走"指令中心优先"那套（这个指标本来就是新引入的，指令中心
+    // 还没有对应的指令项）。
+    flowVolatility: true,
+    flowVolatilityThreshold: 20,
     manualMode: true,
     sensorOffline: true,
     heaterWithoutPump: true,
@@ -540,20 +546,22 @@ const defaultConfig = {
   // --------------------------------------------------------------------------
   // 11. 正常状况联动（自动控制）规则
   // --------------------------------------------------------------------------
-  // 仅在“自动模式”下运行，按目标温度自动启停水泵和加热。可逐项开关：
+  // 仅在“自动模式”下运行。水泵常开（无故障、其他传感器读数正常就保持运行，不跟
+  // 温度目标挂钩）；加热按温度目标做滞回带通断。可逐项开关：
   //   enabled              - 自动控制总开关
   //   pump                 - 允许自动控制水泵
   //   heater               - 允许自动控制加热
-  //   tempDiffCloseThreshold - 温差小于该值才允许“两侧达标后关泵”
   //   tempDiffOpenThreshold  - 温差超过该值判定“温差过大”，关闭加热
-  //   totalFlowTarget      - 累计流量目标；达到后关闭水泵（0=不启用）
+  //   heaterHysteresis     - 加热器滞回带回差（℃），出水温度低于“目标-回差”才开
   // 目标温度不在这里配置，统一用上面的 DEFAULT_TARGET_TEMP。
   AUTO_CONTROL: {
     enabled: false,
     pump: true,
     heater: true,
-    tempDiffCloseThreshold: 2,
     tempDiffOpenThreshold: 3,
+    // 加热器滞回带（死区）回差：出水温度低于"目标-回差"才开，达到目标就关，
+    // 中间这段维持现状不变，避免在目标温度附近因传感器噪声反复抖动开关。
+    heaterHysteresis: 1,
   },
 
   // --------------------------------------------------------------------------
@@ -774,6 +782,7 @@ const defaultConfig = {
     showPidTrackingChart: true,
     showDeviceStateChart: true,
     showDerivedMetricCharts: true,
+    showTempFlowScatter: true,
   },
 
   // --------------------------------------------------------------------------
@@ -1038,10 +1047,11 @@ function validate(config) {
   }
   const safety = config.SAFETY_INTERLOCK
   if (!safety || typeof safety !== 'object' || Array.isArray(safety)) throw new Error('SAFETY_INTERLOCK 必须是 JSON 对象')
-  for (const key of ['enabled', 'flowLow', 'pressureHigh', 'tempHigh', 'tempDiff', 'manualMode', 'sensorOffline', 'heaterWithoutPump', 'requirePumpBeforeHeater', 'showOnErrorPage']) {
+  for (const key of ['enabled', 'flowLow', 'pressureHigh', 'tempHigh', 'tempDiff', 'flowVolatility', 'manualMode', 'sensorOffline', 'heaterWithoutPump', 'requirePumpBeforeHeater', 'showOnErrorPage']) {
     if (typeof safety[key] !== 'boolean') throw new Error(`SAFETY_INTERLOCK.${key} 必须是布尔值`)
   }
   if (!Number.isFinite(safety.tempDiffThreshold)) throw new Error('SAFETY_INTERLOCK.tempDiffThreshold 必须是数字')
+  if (!Number.isFinite(safety.flowVolatilityThreshold) || safety.flowVolatilityThreshold < 0) throw new Error('SAFETY_INTERLOCK.flowVolatilityThreshold 必须是大于等于 0 的数字')
   if (!Number.isFinite(safety.alarmCooldownMs) || safety.alarmCooldownMs < 0) throw new Error('SAFETY_INTERLOCK.alarmCooldownMs 必须是大于等于 0 的数字')
   if (!Number.isFinite(config.DEFAULT_TARGET_TEMP)) throw new Error('DEFAULT_TARGET_TEMP 必须是数字')
   const auto = config.AUTO_CONTROL
@@ -1049,7 +1059,7 @@ function validate(config) {
   for (const key of ['enabled', 'pump', 'heater']) {
     if (typeof auto[key] !== 'boolean') throw new Error(`AUTO_CONTROL.${key} 必须是布尔值`)
   }
-  for (const key of ['tempDiffCloseThreshold', 'tempDiffOpenThreshold']) {
+  for (const key of ['tempDiffOpenThreshold', 'heaterHysteresis']) {
     if (!Number.isFinite(auto[key])) throw new Error(`AUTO_CONTROL.${key} 必须是数字`)
   }
   if (!['simple', 'layered'].includes(config.CONTROL_MODE)) throw new Error('CONTROL_MODE 只能是 simple 或 layered')
@@ -1105,7 +1115,7 @@ function validate(config) {
   }
   const historyCharts = config.HISTORY_CHARTS
   if (!historyCharts || typeof historyCharts !== 'object' || Array.isArray(historyCharts)) throw new Error('HISTORY_CHARTS 必须是 JSON 对象')
-  for (const key of ['showCumulative', 'showTimeWindow', 'showAverageChart', 'showTempChart', 'showFlowPressureChart', 'showPidTrackingChart', 'showDeviceStateChart', 'showDerivedMetricCharts']) {
+  for (const key of ['showCumulative', 'showTimeWindow', 'showAverageChart', 'showTempChart', 'showFlowPressureChart', 'showPidTrackingChart', 'showDeviceStateChart', 'showDerivedMetricCharts', 'showTempFlowScatter']) {
     if (typeof historyCharts[key] !== 'boolean') throw new Error(`HISTORY_CHARTS.${key} 必须是布尔值`)
   }
   if (!Number.isInteger(historyCharts.pointLimit) || historyCharts.pointLimit < 10 || historyCharts.pointLimit > 2000) {

@@ -53,6 +53,25 @@ const lastMode = new Map()
 /** 告警/联锁冷却时间戳，避免同一故障高频重复触发。 */
 const lastFired = new Map()
 
+/** 每个设备最近若干个流量读数的滑动窗口，用于判断流量波动幅度（疑似水锤/湍流）。 */
+const flowWindowMap = new Map()
+/** 窗口大小跟配置中心 TIME_WINDOW_METRICS 里 flow_volatility 指标保持一致，
+ * 同样的"最近 10 个点算一次波动幅度"口径，历史图表和实时联锁看到的是同一套标准。 */
+const FLOW_VOLATILITY_WINDOW = 10
+
+/** 追加一个新读数到滑动窗口，超出窗口大小就丢弃最早的一个；窗口还没填满 10 个点时
+ * 返回 null（数据不够，不判断，避免设备刚上线就误报），填满后返回窗口内最大值-
+ * 最小值，即这段时间流量的波动幅度。 */
+function trackFlowVolatility(deviceNo, flow) {
+  const key = deviceNo || 'global'
+  if (!flowWindowMap.has(key)) flowWindowMap.set(key, [])
+  const window = flowWindowMap.get(key)
+  window.push(flow)
+  if (window.length > FLOW_VOLATILITY_WINDOW) window.shift()
+  if (window.length < FLOW_VOLATILITY_WINDOW) return null
+  return Math.max(...window) - Math.min(...window)
+}
+
 /** 掉线监测定时器（条件 6）。 */
 let monitorTimer = null
 const MONITOR_INTERVAL_MS = 5000
@@ -258,6 +277,22 @@ async function evaluateValueConditions(info, deviceNo, safetyConfig) {
     const diff = Math.abs(sensors.temp1 - sensors.temp2)
     if (diff > Number(safetyConfig.tempDiffThreshold)) {
       triggers.push({ id: 'temp_diff', name: '温差过大', detail: `温差=${diff.toFixed(2)} > ${safetyConfig.tempDiffThreshold}℃` })
+    }
+  }
+
+  // 5. 流量剧烈波动（疑似水锤/湍流）：最近 10 个读数里最大值-最小值超过阈值。
+  // 跟前面几条比阈值不同——那几条是拿单次读数直接跟阈值比，这条要先攒够一段
+  // 时间的读数才能算出"波动幅度"这个统计量，所以哪怕这次读数本身正常，只要
+  // 跟前面几次差得太大，同样会触发。
+  if (safetyConfig.flowVolatility && sensors.flow != null) {
+    const volatility = trackFlowVolatility(deviceNo, sensors.flow)
+    const threshold = Number(safetyConfig.flowVolatilityThreshold)
+    if (volatility != null && volatility > threshold) {
+      triggers.push({
+        id: 'flow_volatility',
+        name: '流量剧烈波动（疑似水锤/湍流）',
+        detail: `最近${FLOW_VOLATILITY_WINDOW}个读数波动幅度=${volatility.toFixed(2)} > ${threshold}`,
+      })
     }
   }
 

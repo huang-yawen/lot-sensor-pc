@@ -60,10 +60,10 @@
                             </el-icon>
                             <span>{{ terms.device }}</span>
                         </template>
-                        <!-- <el-menu-item index="/device-management">
+                        <el-menu-item index="/device-management">
                             <el-icon><Grid /></el-icon>
                             <span>设备管理</span>
-                        </el-menu-item> -->
+                        </el-menu-item>
                         <el-menu-item index="/device-setting">
                             <el-icon><Setting /></el-icon>
                             <span>指令配置</span>

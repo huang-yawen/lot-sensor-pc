@@ -74,6 +74,12 @@ app.get('/api/time-window', timeWindowController)
 const averageChartController = require('./controllers/computedMetrics/averageChartController')
 app.get('/api/average-chart', averageChartController)
 
+const scatterChartController = require('./controllers/computedMetrics/scatterChartController')
+app.get('/api/temp-flow-scatter', scatterChartController)
+
+const currentTempController = require('./controllers/computedMetrics/currentTempController')
+app.get('/api/current-temp', currentTempController)
+
 // 设备状态时间线接口（水泵/加热开关历史，历史图表页面专用）
 const deviceStateTrendController = require('./controllers/computedMetrics/deviceStateTrendController')
 app.get('/api/device-state-trend', deviceStateTrendController)

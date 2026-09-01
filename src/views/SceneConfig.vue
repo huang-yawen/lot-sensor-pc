@@ -218,14 +218,9 @@
         <SafetyInterlockConfig class="embedded-config" />
       </el-tab-pane>
 
-      <el-tab-pane label="自动控制" name="autocontrol">
-        <el-alert type="info" :closable="false" show-icon title="正常状况联动：自动模式下按目标温度自动启停水泵和加热。可独立开关并设置目标参数。与“分层联动”互斥，同一时刻只有一套在跑。" />
-        <AutoControlConfig class="embedded-config" />
-      </el-tab-pane>
-
-      <el-tab-pane label="分层联动" name="layered">
-        <el-alert type="info" :closable="false" show-icon title="单一传感器独立控制层 + 多传感器融合联动层：严格按分层规则自动启停水泵和加热。可逐条开关，与“自动控制”互斥。" />
-        <LayeredControlConfig class="embedded-config" />
+      <el-tab-pane label="联动控制" name="controlmode">
+        <el-alert type="info" :closable="false" show-icon title="正常状况联动：自动模式下按目标温度或分层规则自动启停水泵和加热，两套逻辑二选一，可在页面里直接切换。" />
+        <ControlModeConfig class="embedded-config" />
       </el-tab-pane>
 
       <el-tab-pane label="故障状态" name="fault">
@@ -280,8 +275,7 @@ import { useSystemConfigStore } from '@/stores/SystemConfigStore'
 import DerivedMetricConfig from '@/views/DerivedMetricConfig.vue'
 import AggregationMetricConfig from '@/views/AggregationMetricConfig.vue'
 import SafetyInterlockConfig from '@/views/SafetyInterlockConfig.vue'
-import AutoControlConfig from '@/views/AutoControlConfig.vue'
-import LayeredControlConfig from '@/views/LayeredControlConfig.vue'
+import ControlModeConfig from '@/views/ControlModeConfig.vue'
 import FaultStatusConfig from '@/views/FaultStatusConfig.vue'
 import QuantityShutdownConfig from '@/views/QuantityShutdownConfig.vue'
 import ComputedMetricsConfig from '@/views/ComputedMetricsConfig.vue'
@@ -304,7 +298,7 @@ const directMappings = ref([])
 const mappingSaving = ref(false)
 const route = useRoute()
 const router = useRouter()
-const validTabs = ['guide', 'scene', 'mapping', 'formula', 'aggregation', 'safety', 'autocontrol', 'layered', 'fault', 'quantity', 'computed', 'pid', 'reference']
+const validTabs = ['guide', 'scene', 'mapping', 'formula', 'aggregation', 'safety', 'controlmode', 'fault', 'quantity', 'computed', 'pid', 'reference']
 const activeTab = ref(validTabs.includes(route.query.tab) ? route.query.tab : 'guide')
 const systemStore = useSystemConfigStore()
 const connectionMode = ref(getConnectionMode())
@@ -356,8 +350,7 @@ const quickGuide = [
   { title: 'SQL 公式与 ECharts', tab: 'formula', description: '用可视化表单建立派生指标，查询时由 MySQL 计算，再自动加入实时、历史和图表。', items: ['支持公式验证和测试值试算', '配置单位、精度和显示页面', '配置折线/柱状、左右轴、颜色和范围'] },
   { title: '累计与滑动统计', tab: 'aggregation', description: '用统一表单配置累计值、滑动平均、波动幅度和相邻变化量；同一页面底部还能控制"历史图表"页面每张图的显示与否和最大数据点数。', items: ['可选择传感数据或运行状态字段', '可仅在历史图表页面、仅在汇总数据页面或两处显示', '累计聚合方式支持 sum/avg/on_duration（开关持续时长累计，如水泵/加热运行时长）'] },
   { title: '安全联锁', tab: 'safety', description: '触发任一安全条件时自动关闭水泵和加热，保护设备和管道。', items: ['流量、压力、温度、温差等条件独立开关', '自动模式执行联锁，手动模式仅记录告警', '传感器掉线、进入手动模式等安全保护'] },
-  { title: '自动控制', tab: 'autocontrol', description: '自动模式下按目标温度自动启停水泵和加热（简化版，与“分层联动”互斥）。', items: ['水泵/加热独立启停控制', '目标温度、温差阈值可配置', '堵管/漏水/干烧保护联动关闭'] },
-  { title: '分层联动', tab: 'layered', description: '单一传感器独立控制层+多传感器融合联动层，严格按分层规则自动启停水泵和加热（与“自动控制”互斥）。', items: ['温度/流量/压力各自独立开关，温度含滞回回差', '双温度/温度+流量/压力+流量/温度+压力四条融合规则独立开关', '融合层结论优先于单一传感器层，同一执行器矛盾时“关”优先于“开”'] },
+  { title: '联动控制', tab: 'controlmode', description: '自动模式下按目标温度（简化版）或分层规则自动启停水泵和加热，页面里可直接切换用哪一套，同一时刻只有一套在跑。', items: ['简化版：水泵/加热独立启停控制、目标温度和温差阈值可配置', '分层版：温度/流量/压力各自独立开关（温度含滞回回差），双温度/温度+流量/压力+流量/温度+压力四条融合规则独立开关', '分层版融合层结论优先于单一传感器层，同一执行器矛盾时“关”优先于“开”'] },
   { title: '故障状态', tab: 'fault', description: '干烧/管道堵塞/水泵故障/水泵空转/出水口堵塞共 5 种硬故障，触发后保存故障前快照、强制关闭水泵和加热、复位按钮自动拨到"开"并锁定指令页面其他所有开关和参数。', items: ['5 种硬故障各自独立开关，同时触发时按优先级只显示最高的一个', '人工修复设备后把复位按钮拨回"关"，系统按快照恢复全部开关和参数（含目标温度、Kp/Ki/Kd、各类阈值）、按快照重启执行器', '与“安全联锁”相互独立、都全程生效'] },
   { title: '定量停机', tab: 'quantity', description: '累计流量达到设定值后自动停机，完成定量换热。', items: ['设定定量值（如 500L）', '达到目标关闭水泵和加热', '总流量仅做停机判定'] },
   { title: '需要计算的数据', tab: 'computed', description: '阻力系数、流速、换热效率、液位等工程指标，在首页专用板块展示；同一页面底部还能开关首页"水泵/加热累计运行时长、本次已运行时长"的显示。', items: ['系统阻力系数 K、压力陡降速率、温度变化率', '换热效率、能效比、流量-压力曲线', '累计流量、平均流速、平均温度（图表见历史图表页面）'] },
@@ -424,9 +417,9 @@ const configHelp = [
   { group: '告警联锁', key: 'ALARM_RULES 压力过高', description: '管路压力 > 500 kPa 告警，可选联锁关闭水泵。', example: 't_sensor_data.field4, >, 500', notice: '防止管路破裂。' },
   { group: '安全联锁', key: 'SAFETY_INTERLOCK', description: '流量过低/压力过高/温度过高/温差过大/手动模式/传感器掉线/未开泵先加热，触发任一启用条件立即强制关闭水泵和加热；自动、手动模式全程生效。', example: 'flowLow: true, tempDiffThreshold: 3', notice: '与"故障状态"相互独立，两者可同时命中；建议在"安全联锁"页可视化修改。' },
   { group: '自动控制', key: 'DEFAULT_TARGET_TEMP', description: '默认目标温度：指令中心 target_temperature 优先，未配置时兜底用这个值。AUTO_CONTROL、LAYERED_CONTROL、PID_HEATING 共用同一个值，不再各自维护一份。', example: '22', notice: '在"自动控制"或"PID恒温"任一页面改都会同步，不用两边分别改。' },
-  { group: '自动控制', key: 'AUTO_CONTROL', description: '仅"自动模式"下按目标温度自动启停水泵和加热的简化版联动，与 LAYERED_CONTROL 互斥，由 CONTROL_MODE 决定用哪一套。', example: 'tempDiffCloseThreshold: 2, tempDiffOpenThreshold: 3', notice: '建议在"自动控制"页可视化修改。' },
-  { group: '自动控制', key: 'CONTROL_MODE', description: '选择自动模式下用哪一套联动逻辑：simple=AUTO_CONTROL；layered=LAYERED_CONTROL。', example: 'simple', notice: '只能是 simple 或 layered，两套逻辑互斥。' },
-  { group: '分层联动', key: 'LAYERED_CONTROL', description: '单一传感器独立控制层 + 多传感器融合联动层，仅 CONTROL_MODE=layered 时生效；融合层结论优先于单一传感器层，同一执行器矛盾时"关"优先于"开"。', example: 'tempSingle: true, dualTempDiffThreshold: 2', notice: '建议在"分层联动"页可视化修改。' },
+  { group: '联动控制', key: 'AUTO_CONTROL', description: '仅"自动模式"下按目标温度自动启停水泵（常开）和加热（滞回带通断）的简化版联动，与 LAYERED_CONTROL 互斥，由 CONTROL_MODE 决定用哪一套。', example: 'heaterHysteresis: 1, tempDiffOpenThreshold: 3', notice: '建议在"联动控制"页可视化修改。' },
+  { group: '联动控制', key: 'CONTROL_MODE', description: '选择自动模式下用哪一套联动逻辑：simple=AUTO_CONTROL；layered=LAYERED_CONTROL。', example: 'simple', notice: '只能是 simple 或 layered，两套逻辑互斥。' },
+  { group: '联动控制', key: 'LAYERED_CONTROL', description: '单一传感器独立控制层 + 多传感器融合联动层，仅 CONTROL_MODE=layered 时生效；融合层结论优先于单一传感器层，同一执行器矛盾时"关"优先于"开"。', example: 'tempSingle: true, dualTempDiffThreshold: 2', notice: '建议在"联动控制"页可视化修改。' },
   { group: '定量停机', key: 'QUANTITY_SHUTDOWN', description: '本次计量周期累计流量达到 totalFlowTarget 后自动关闭水泵和加热；进入自动模式开始新周期，切回手动模式重置。', example: 'totalFlowTarget: 500', notice: '总流量仅做停机判定，不参与实时调节。' },
   { group: '故障状态', key: 'FAULT_STATUS', description: '干烧/管道堵塞/水泵故障/水泵空转/出水口堵塞共 5 种硬故障；触发后保存故障前快照、强制断电水泵和加热、复位按钮自动拨到"开"、锁定指令页面其他所有开关和参数为只读。水泵故障/水泵空转/出水口堵塞这三条都要求水泵已连续开启满 pumpWarmupMs 才开始判断，避免水泵刚启动瞬间误判。', example: 'dryBurnDurationMs: 5000, tempDiffThreshold: 3, pumpWarmupMs: 5000', notice: '用户人工修复后拨回"关"才会按快照恢复全部参数和开关；建议在"故障状态"页可视化修改。' },
   { group: 'PID恒温', key: 'PID_HEATING', description: '加热模块只有开关量，用时间比例控制模拟 PWM：固定周期 windowMs 内按 PID 算出的占空比决定加热开多久；只接管加热，与 AUTO_CONTROL/LAYERED_CONTROL 的加热下发互斥。', example: 'kp: 20, ki: 0.5, kd: 5, windowMs: 10000', notice: '指令中心 target_temperature 配置了就优先用指令中心的目标温度。' },

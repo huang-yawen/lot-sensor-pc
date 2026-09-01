@@ -61,6 +61,14 @@
       </div>
     </section>
 
+    <!-- ==================== 温度-流量相关性（散点图） ==================== -->
+    <section v-if="showTempFlowScatter" class="chart-section">
+      <h2 class="section-title">温度-流量相关性</h2>
+      <div class="chart-card chart-card-wide">
+        <div ref="scatterChartRef" class="chart-el chart-el-tall"></div>
+      </div>
+    </section>
+
     <!-- ==================== 温度曲线（温度1 / 温度2） ==================== -->
     <section v-if="showTempChart" class="chart-section">
       <h2 class="section-title">温度曲线</h2>
@@ -129,7 +137,7 @@
     </section>
 
     <el-empty
-      v-if="!loading && !cumulativeEntries.length && !timeWindowEntries.length && !showAverageChart && !showTempChart && !showFlowPressureChart && !showPidTrackingChart && !showDeviceStateChart && !cumulativeFlowEntry && !switchDurationEntries.length && !derivedMetricEntries.length"
+      v-if="!loading && !cumulativeEntries.length && !timeWindowEntries.length && !showAverageChart && !showTempFlowScatter && !showTempChart && !showFlowPressureChart && !showPidTrackingChart && !showDeviceStateChart && !cumulativeFlowEntry && !switchDurationEntries.length && !derivedMetricEntries.length"
       description="所选时间范围内暂无数据，或配置中心还没启用相关图表"
     />
   </div>
@@ -168,6 +176,7 @@ const historyChartsConfig = computed(() => ({
   showPidTrackingChart: true,
   showDeviceStateChart: true,
   showDerivedMetricCharts: true,
+  showTempFlowScatter: true,
   ...systemStore.config.HISTORY_CHARTS,
 }))
 
@@ -175,6 +184,7 @@ const cumulativeData = ref({})
 const timeWindowData = ref({})
 const averageChartRows = ref([])
 const targetTemp = ref(null)
+const scatterRows = ref([])
 const deviceStateRows = ref([])
 const derivedMetricData = ref({})
 
@@ -206,12 +216,13 @@ async function loadAll() {
   loading.value = true
   try {
     const params = currentRangeParams()
-    const [cumRes, twRes, avgRes, stateRes, derivedRes] = await Promise.allSettled([
+    const [cumRes, twRes, avgRes, stateRes, derivedRes, scatterRes] = await Promise.allSettled([
       api.get('/api/cumulative', { params }),
       api.get('/api/time-window', { params }),
       api.get('/api/average-chart', { params }),
       api.get('/api/device-state-trend', { params }),
       api.get('/api/derived-metrics/history', { params }),
+      api.get('/api/temp-flow-scatter', { params }),
     ])
     cumulativeData.value = cumRes.status === 'fulfilled' ? (cumRes.value.data?.data || {}) : {}
     timeWindowData.value = twRes.status === 'fulfilled' ? (twRes.value.data?.data || {}) : {}
@@ -219,6 +230,7 @@ async function loadAll() {
     targetTemp.value = avgRes.status === 'fulfilled' ? (avgRes.value.data?.data?.targetTemp ?? null) : null
     deviceStateRows.value = stateRes.status === 'fulfilled' ? (stateRes.value.data?.data || []) : []
     derivedMetricData.value = derivedRes.status === 'fulfilled' ? (derivedRes.value.data?.data || {}) : {}
+    scatterRows.value = scatterRes.status === 'fulfilled' ? (scatterRes.value.data?.data || []) : []
   } finally {
     loading.value = false
   }
@@ -448,6 +460,54 @@ watch([averageChartRows, averageChartRef], () => {
   })
 }, { deep: true })
 
+// ==================== 温度-流量相关性（散点图） ====================
+const showTempFlowScatter = computed(() => {
+  return historyChartsConfig.value.showTempFlowScatter !== false && scatterRows.value.length > 0
+})
+
+const scatterChartRef = ref(null)
+let scatterChartInstance = null
+
+function renderScatterChart() {
+  const rows = scatterRows.value
+  const el = scatterChartRef.value
+  if (!rows.length || !el || el.offsetWidth === 0) {
+    if (el) setTimeout(renderScatterChart, 50)
+    return
+  }
+  if (scatterChartInstance) scatterChartInstance.dispose()
+  const chart = echarts.init(el)
+  scatterChartInstance = chart
+
+  chart.setOption({
+    tooltip: {
+      trigger: 'item',
+      formatter: (p) => `流量 ${p.value[0]} L/s<br/>温度 ${p.value[1]} ℃`,
+    },
+    toolbox: {
+      feature: { saveAsImage: { title: '下载图片' } },
+      right: 10,
+      top: 0,
+    },
+    grid: { left: 50, right: 30, top: 40, bottom: 40 },
+    xAxis: { type: 'value', name: '流量 (L/s)', nameTextStyle: { fontSize: 11 } },
+    yAxis: { type: 'value', name: '温度 (℃)', nameTextStyle: { fontSize: 11 } },
+    series: [{
+      name: '温度-流量',
+      type: 'scatter',
+      symbolSize: 6,
+      data: rows.map((r) => [r.flow, r.temp]),
+      itemStyle: { color: '#8b5cf6', opacity: 0.6 },
+    }],
+  }, true)
+}
+
+watch([scatterRows, scatterChartRef], () => {
+  nextTick(() => {
+    if (scatterChartRef.value) renderScatterChart()
+  })
+}, { deep: true })
+
 // ==================== 温度曲线（温度1 / 温度2） ====================
 // 跟"平均温度与平均流速"共用同一批查询结果（averageChartRows 已经带了 temp1/temp2/flow/pressure），
 // 不用再单独发一次请求。
@@ -471,9 +531,35 @@ function renderTempChart() {
   tempChartInstance = chart
 
   const times = formatTimes(rows)
+  const series = [
+    { name: '温度1', type: 'line', smooth: true, data: rows.map((r) => r.temp1), itemStyle: { color: '#f97316' }, lineStyle: { color: '#f97316' } },
+    { name: '温度2', type: 'line', smooth: true, data: rows.map((r) => r.temp2), itemStyle: { color: '#3b82f6' }, lineStyle: { color: '#3b82f6' } },
+  ]
+  const legendData = ['温度1', '温度2']
+
+  // 出水温度滑动平均（rolling_avg_temp）是独立一次时间窗口查询，不能假设它跟这里
+  // 的 rows 行数、顺序一致——两边各自按等宽分桶降采样，桶内取到的具体那一行未必
+  // 完全相同。按 c_time 精确字符串匹配对齐到同一根 x 轴上，两边都用 dateStrings:true
+  // 的同一个连接池查出来，格式一致，能直接比较；对不上的点留空，用 connectNulls
+  // 接起来，不会因为个别点缺失就断成好几截。
+  const rollingAvgRows = timeWindowData.value?.rolling_avg_temp
+  if (rollingAvgRows?.length) {
+    const rollingAvgMap = new Map(rollingAvgRows.map((r) => [String(r.c_time), r.value]))
+    series.push({
+      name: '出水温度滑动平均',
+      type: 'line',
+      smooth: true,
+      connectNulls: true,
+      data: rows.map((r) => rollingAvgMap.get(String(r.c_time)) ?? null),
+      itemStyle: { color: '#10b981' },
+      lineStyle: { color: '#10b981', type: 'dashed' },
+    })
+    legendData.push('出水温度滑动平均')
+  }
+
   chart.setOption({
     tooltip: { trigger: 'axis' },
-    legend: { data: ['温度1', '温度2'], top: 0 },
+    legend: { data: legendData, top: 0 },
     toolbox: {
       feature: { magicType: { type: ['line', 'bar'] }, saveAsImage: { title: '下载图片' } },
       right: 10,
@@ -482,14 +568,11 @@ function renderTempChart() {
     grid: { left: 14, right: 60, top: 50, bottom: 50 },
     xAxis: { type: 'category', data: times, axisLabel: { rotate: 15, fontSize: 10 } },
     yAxis: { type: 'value', name: '℃', nameTextStyle: { fontSize: 11 } },
-    series: [
-      { name: '温度1', type: 'line', smooth: true, data: rows.map((r) => r.temp1), itemStyle: { color: '#f97316' }, lineStyle: { color: '#f97316' } },
-      { name: '温度2', type: 'line', smooth: true, data: rows.map((r) => r.temp2), itemStyle: { color: '#3b82f6' }, lineStyle: { color: '#3b82f6' } },
-    ],
+    series,
   }, true)
 }
 
-watch([averageChartRows, tempChartRef], () => {
+watch([averageChartRows, timeWindowData, tempChartRef], () => {
   nextTick(() => {
     if (tempChartRef.value) renderTempChart()
   })
@@ -845,6 +928,8 @@ function disposeAllCharts() {
   cumulativeChartInstance = null
   averageChartInstance?.dispose()
   averageChartInstance = null
+  scatterChartInstance?.dispose()
+  scatterChartInstance = null
   tempChartInstance?.dispose()
   tempChartInstance = null
   flowPressureChartInstance?.dispose()

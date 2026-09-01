@@ -6,8 +6,15 @@ const { saveOperationHistory } = require('../../service/operationHistory/saveOpe
 const { saveDirectData, getDirectValue } = require('../../service/directData/saveDirectConfig')
 const { getReportedTime, toWireValue, fromWireValue } = require('../../utils/protocol')
 
-/** 开关类型指令（config_id=0,1,2,4,9），t_direct 存 on/off，MQTT 发 open/close */
-const SWITCH_CONFIG_IDS = new Set([0, 1, 2, 4, 9])
+/** 按 preffix 查 t_direct_config 对应的 config_id。 */
+async function resolveConfigIdByPrefix(prefix) {
+    if (!prefix) return null
+    const [rows] = await promisePool.query(
+        "SELECT id FROM t_direct_config WHERE preffix IS NOT NULL AND preffix != '' AND LOWER(preffix) = LOWER(?) ORDER BY id ASC LIMIT 1",
+        [prefix]
+    )
+    return rows[0]?.id ?? null
+}
 
 /**
  * 检测设备状态变化：将行为数据的字段值与 t_direct 表中记录的预期值对比。
@@ -82,7 +89,7 @@ async function detectAndRecordChanges(info, d_no) {
             }
 
             // 开关类型需要映射：t_direct 存 on/off，设备实际回报 open/close
-            const isSwitch = String(config.f_type) === '1' || SWITCH_CONFIG_IDS.has(configId)
+            const isSwitch = String(config.f_type) === '1'
             const compareExpected = isSwitch
                 ? String(toWireValue(expectedVal))
                 : expectedVal
@@ -132,14 +139,27 @@ async function saveBehaviorData(info) {
 
     try {
         const mappedInfo = { ...info, d_no }
-        // 控制模式是 PC 端逻辑状态，设备不会上报；从 t_direct 读真实值落库，
-        // 存成 0(手动/off)/1(自动/on)，让行为数据页"控制模式"列显示真实数据。
-        // 自动/手动这个状态只存在于软件里，硬件本身不知道也不上报，所以这里由
-        // 后端自己去指令中心查一下当前模式是什么，拼进这条数据里再存库。
+        // 控制模式、PID恒温这两个状态是 PC 端逻辑状态，设备不会上报；从 t_direct 读
+        // 真实值落库，存成 0/1，让行为数据页对应列显示真实数据（t_behavior_field_mapper
+        // 的 value_map 会转成"手动/自动""关/开"这种文案）。自动/手动、PID恒温这两个
+        // 状态只存在于软件里，硬件本身不知道也不上报，所以由后端自己去指令中心查一下
+        // 当前值是什么，拼进这条数据里再存库。两个指令项的 config_id 不能硬编码——
+        // 场景调整、主键重新分配都可能让具体数字变化，只有 preffix 是稳定的。
         if (!Object.prototype.hasOwnProperty.call(mappedInfo, 'mode')) {
-            const rawMode = await getDirectValue({ config_id: 0, d_no })
-            const modeStr = String(rawMode ?? '').trim().toLowerCase()
-            mappedInfo.mode = ['on', 'auto', 'open', '1', 'true'].includes(modeStr) ? 1 : 0
+            const controlModeConfigId = await resolveConfigIdByPrefix('auto_control_enabled')
+            if (controlModeConfigId != null) {
+                const rawMode = await getDirectValue({ config_id: controlModeConfigId, d_no })
+                const modeStr = String(rawMode ?? '').trim().toLowerCase()
+                mappedInfo.mode = ['on', 'auto', 'open', '1', 'true'].includes(modeStr) ? 1 : 0
+            }
+        }
+        if (!Object.prototype.hasOwnProperty.call(mappedInfo, 'pidMode')) {
+            const pidModeConfigId = await resolveConfigIdByPrefix('pid_enabled')
+            if (pidModeConfigId != null) {
+                const rawPidMode = await getDirectValue({ config_id: pidModeConfigId, d_no })
+                const pidModeStr = String(rawPidMode ?? '').trim().toLowerCase()
+                mappedInfo.pidMode = ['on', 'auto', 'open', '1', 'true'].includes(pidModeStr) ? 1 : 0
+            }
         }
         await saveMappedData({
             table: 't_behavior_data',
