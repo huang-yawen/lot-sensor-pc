@@ -13,7 +13,7 @@
       type="info"
       :closable="false"
       show-icon
-      title="所有规则仅在“自动模式”且无安全故障（安全联锁未触发）、无硬故障锁定时运行。目标温度优先取指令中心的“目标温度”，否则使用下方默认值（与 PID 恒温控制共用同一个默认值）。同一执行器（水泵/加热）本轮如有多条规则结论矛盾，“关”优先于“开”（fail-safe）。"
+      title="所有规则仅在“自动模式”且无安全故障（安全联锁未触发）、无硬故障锁定时运行。目标温度全项目只有一个：优先取指令中心的“目标温度”指令项，没配置时才用下方兜底默认值，滞回带通断和 PID 恒温共用同一个值。同一执行器（水泵/加热）本轮如有多条规则结论矛盾，“关”优先于“开”（fail-safe）。"
     />
 
     <section class="control-section">
@@ -66,7 +66,8 @@
       </div>
       <el-form label-width="200px" class="control-form">
         <el-form-item label="默认目标温度（℃）">
-          <el-input-number v-model="targetTemp" :min="0" :step="0.5" :disabled="!form.enabled" />
+          <el-input-number v-model="targetTemp" :min="0" :step="0.5" />
+          <div class="hint">加热控制的公共设定值，滞回带通断和 PID 恒温读的是同一个目标温度，不会各管各的。现场调温请到"设备设置/指令配置"页面的"目标温度"（那个优先生效）；这里填的是指令项还没配置时的兜底默认值，全项目只有这一处能改。</div>
         </el-form-item>
         <el-form-item label="加热滞回带回差（℃）">
           <el-input-number v-model="form.heaterHysteresisValue" :min="0" :step="0.5" :disabled="!form.enabled" />
@@ -118,8 +119,10 @@ const defaultForm = () => ({
 })
 
 const form = reactive(defaultForm())
-// 默认目标温度是跟 PID 恒温控制共用的顶层配置（DEFAULT_TARGET_TEMP），不属于
-// LINKAGE_RULES，单独用一个 ref 管理，不跟着 form 一起整体打包保存。
+// 默认目标温度（DEFAULT_TARGET_TEMP）是加热控制的公共设定值，滞回带通断和 PID
+// 恒温读的是同一个，不属于 LINKAGE_RULES，单独用一个 ref 管理，不跟着 form 一起
+// 打包保存。全项目只有这一处提供编辑入口（PID 页面只读展示），避免同一个值有两个
+// 地方能改、改完互相不同步。
 const targetTemp = ref(22)
 
 const rules = [

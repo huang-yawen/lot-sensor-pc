@@ -45,9 +45,9 @@
         <el-form-item label="微分系数 Kd">
           <el-input-number v-model="form.kd" :min="0" :step="1" :disabled="!form.enabled" />
         </el-form-item>
-        <el-form-item label="默认目标温度（℃）">
-          <el-input-number v-model="targetTemp" :min="0" :step="0.5" :disabled="!form.enabled" />
-          <div class="hint">优先取指令中心的“目标温度”，未配置时用这个默认值（与“联动控制”页面共用同一个默认值，改这里那边也会同步变化）。</div>
+        <el-form-item label="当前目标温度（℃）">
+          <span class="readonly-value">{{ effectiveTargetTemp }}</span>
+          <div class="hint">目标温度是加热控制的公共设定值，滞回带通断和 PID 用的是同一个，不在这里改：现场请到“设备设置/指令配置”页面的“目标温度”调整；指令项没配置时才回退到“联动控制”页面的兜底默认值。</div>
         </el-form-item>
         <el-form-item label="控制周期（毫秒）">
           <el-input-number v-model="form.windowMs" :min="1000" :step="1000" :disabled="!form.enabled" />
@@ -174,9 +174,42 @@ const defaultForm = () => ({
 })
 
 const form = reactive(defaultForm())
-// 默认目标温度是跟联动控制共用的顶层配置（DEFAULT_TARGET_TEMP），不属于
-// PID_HEATING，单独用一个 ref 管理，不跟着 form 一起整体打包保存。
-const targetTemp = ref(22)
+// 目标温度是加热控制的公共设定值（滞回带通断和 PID 共用同一个），不属于 PID_HEATING，
+// 本页只读展示不提交：兜底默认值的唯一编辑入口在"联动控制"页，现场调温在"指令配置"页。
+const targetTemp = ref(22)          // 配置中心兜底默认值（本页只读展示，不提交）
+const commandTargetTemp = ref(null) // 指令中心 target_temperature 的实际值
+const effectiveTargetTemp = computed(() =>
+  commandTargetTemp.value != null ? `${commandTargetTemp.value}（来自指令中心）` : `${targetTemp.value}（兜底默认值，指令中心未配置）`
+)
+
+// 指令项按 ref_id/children 组织成树，preffix 可能在任意层级，递归找出 target_temperature 的 config_id，
+// 再跟 /directRender 返回的 config_id -> value 对上号，拿到现场实际生效的目标温度。
+function findConfigId(nodes, preffix) {
+  for (const node of nodes || []) {
+    if (node.preffix === preffix) return node.id
+    for (const group of Object.values(node.children || {})) {
+      const hit = findConfigId(group, preffix)
+      if (hit != null) return hit
+    }
+  }
+  return null
+}
+
+async function loadCommandTargetTemp() {
+  try {
+    const [treeRes, renderRes] = await Promise.all([
+      api.get('/directData'),
+      api.get('/directRender', { params: { d_no: 'null' } }),
+    ])
+    const configId = findConfigId(treeRes.data?.data, 'target_temperature')
+    const hit = (renderRes.data?.data || []).find(item => item.config_id === configId)
+    const value = Number(hit?.value)
+    commandTargetTemp.value = Number.isFinite(value) ? value : null
+  } catch (error) {
+    console.error('[PidHeatingConfig] 读取指令中心目标温度失败:', error)
+    commandTargetTemp.value = null
+  }
+}
 
 const autoTuneForm = reactive({
   relayHighDuty: 100,
@@ -238,6 +271,7 @@ async function load() {
     Object.assign(form, defaultForm(), pid)
     targetTemp.value = response.data.data.DEFAULT_TARGET_TEMP ?? 22
     applyAutoTuneState(response.data.data.PID_AUTOTUNE)
+    await loadCommandTargetTemp()
   } catch (error) {
     ElMessage.error(error.response?.data?.message || 'PID 恒温控制配置加载失败')
   } finally {
@@ -248,7 +282,7 @@ async function load() {
 async function save() {
   saving.value = true
   try {
-    await api.post('/api/system-config', { PID_HEATING: { ...form }, DEFAULT_TARGET_TEMP: targetTemp.value })
+    await api.post('/api/system-config', { PID_HEATING: { ...form } })
     ElMessage.success('PID 恒温控制配置已保存并立即生效')
   } catch (error) {
     ElMessage.error(error.response?.data?.message || '保存失败')
@@ -314,6 +348,7 @@ load()
 </script>
 
 <style scoped>
+.readonly-value { font-weight: 600; color: #1f2937; }
 .pid-section { margin-top: 16px; padding: 18px; border: 1px solid #e5e7eb; border-radius: 12px; background: #fff; }
 .section-heading { display: flex; align-items: center; justify-content: space-between; gap: 18px; margin-bottom: 14px; }
 .section-heading h3 { margin: 0 0 5px; color: #0f172a; }

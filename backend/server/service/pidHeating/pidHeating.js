@@ -46,6 +46,9 @@ const { firstValue, getTopic, buildSwitchPayload } = require('../../utils/protoc
 const { resolveDeviceNo, resolveFieldAliases } = require('../../utils/mappedData')
 const { getDirectValue, saveDirectData } = require('../directData/saveDirectConfig')
 const { saveOperationHistory } = require('../operationHistory/saveOperationHistory')
+// 目标温度是加热控制的公共设定值（SP），滞回带通断和 PID 都读同一个，
+// 取值逻辑只在 controlShared/controlHelpers.js 维护一份，这里直接复用。
+const { getTargetTemp } = require('../controlShared/controlHelpers')
 const { isLockedByFault, isAnyLocked } = require('../faultStatus/faultStatus')
 
 /** 每个设备的 PID 状态。
@@ -124,14 +127,6 @@ async function getPidNumber(name, deviceNo, fallback) {
     ? await toNumber(await getDirectValue({ config_id: configId, d_no: deviceNo }))
     : null
   return value != null ? value : fallback
-}
-
-async function getTargetTemp(deviceNo, fallback) {
-  const configId = await resolveConfigIdByPrefix('target_temperature')
-  const value = configId != null
-    ? await toNumber(await getDirectValue({ config_id: configId, d_no: deviceNo }))
-    : null
-  return value != null ? value : Number(fallback) || 22
 }
 
 /**
