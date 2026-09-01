@@ -49,6 +49,26 @@
     <section class="judgment-section">
       <div class="section-heading">
         <div>
+          <h3>入口显示</h3>
+          <p>这个功能会在哪些页面出现，跟“怎么调用”一起放在这一处，不用再去场景配置的其他标签页找。</p>
+        </div>
+      </div>
+      <el-form label-width="160px" class="judgment-form">
+        <el-form-item label="传感器历史页面">
+          <el-switch v-model="form.showOnSensorPage" active-text="显示“智能判定”按钮" />
+        </el-form-item>
+        <el-form-item label="行为历史页面">
+          <el-switch v-model="form.showOnBehaviorPage" active-text="显示“智能判定”按钮" />
+        </el-form-item>
+        <el-form-item label="左侧菜单">
+          <el-switch v-model="form.showHistoryMenu" active-text="显示“智能判定记录”菜单" />
+        </el-form-item>
+      </el-form>
+    </section>
+
+    <section class="judgment-section">
+      <div class="section-heading">
+        <div>
           <h3>请求设置</h3>
           <p>怎么把选中的数据发给判定服务。</p>
         </div>
@@ -187,6 +207,9 @@ const saving = ref(false)
 const defaultForm = () => ({
   enabled: false,
   mockWhenDisabled: true,
+  showOnSensorPage: true,
+  showOnBehaviorPage: true,
+  showHistoryMenu: true,
   url: 'http://127.0.0.1:5000/judgment',
   method: 'POST',
   timeoutMs: 10000,

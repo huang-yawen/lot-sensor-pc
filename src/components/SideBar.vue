@@ -83,7 +83,7 @@
                         </el-icon>
                             <span>{{ terms.alarm }}</span>
                     </el-menu-item>
-                    <el-menu-item v-if="config.ENABLE_JUDGMENT_HISTORY" index="/judgment-history" to="/judgment-history">
+                    <el-menu-item v-if="config.INTELLIGENT_JUDGMENT?.showHistoryMenu" index="/judgment-history" to="/judgment-history">
                         <el-icon><Document /></el-icon>
                         <span>{{ terms.judgment }}记录</span>
                     </el-menu-item>

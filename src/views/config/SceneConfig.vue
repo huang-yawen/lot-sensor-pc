@@ -68,7 +68,7 @@
       </el-tab-pane>
 
       <el-tab-pane label="场景参数与场景包" name="scene">
-        <el-alert type="success" :closable="false" show-icon title="此处保存系统全部基础参数及数据库元数据。修改前先导出；不清楚某个字段时，可到“完整字段说明”搜索字段名。" />
+        <el-alert type="success" :closable="false" show-icon title="下面的 JSON 只放没有独立配置页面的字段（场景名称、MQTT、字段映射、告警规则等）。安全联锁、联动控制、PID恒温、故障状态、定量停机、计算数据、智能判定、累计与滑动统计、公式与图表、指令映射这些模块请到各自标签页改，这里不重复暴露。导出/导入的场景包仍然是完整配置，备份恢复不受影响。" />
         <el-collapse class="guide">
       <el-collapse-item title="第一次使用请先看：配置保存和生效规则" name="start">
         <ul>
@@ -77,47 +77,7 @@
           <li>布尔值必须写成 <code>true/false</code>，不能写成字符串；时间间隔和超时统一使用毫秒。</li>
           <li>保存后页面配置立即生效；只有 MQTT 地址、账号、QoS 或主题变化时才会自动重连。</li>
           <li>配置文件持久化在 <code>backend/server/data/system-config.json</code>，重启后不会丢失。</li>
-        </ul>
-      </el-collapse-item>
-      <el-collapse-item title="常用字段说明：页面、设备与 MQTT" name="basic">
-        <el-descriptions :column="1" border size="small">
-          <el-descriptions-item label="SCENE_TAG / SYSTEM_TITLE">场景包名称，以及左侧导航和浏览器页签标题。</el-descriptions-item>
-          <el-descriptions-item label="SINGLE_DEVICE_MODE">true 为单设备并自动选第一台；false 为多设备，可按设备编号控制。</el-descriptions-item>
-          <el-descriptions-item label="MQTT_URL">格式如 mqtt://192.168.1.10:1883；需要 TLS 时使用 mqtts://。</el-descriptions-item>
-          <el-descriptions-item label="MQTT_QOS">只能填 0、1、2；比赛现场通常使用 1。</el-descriptions-item>
-          <el-descriptions-item label="MQTT_TOPICS">sensor=传感量，behavior=运行状态，heartbeat=心跳，control=控制下发。</el-descriptions-item>
-          <el-descriptions-item label="DEVICE_ID_FIELDS / TIME_FIELDS">上报 JSON 中设备编号和时间的候选属性名，系统按从左到右的顺序查找。</el-descriptions-item>
-          <el-descriptions-item label="CONTROL_VALUE_MAP">页面值到设备值的转换，例如 on→open、off→close；设备使用 on/off 时可映射为自身。</el-descriptions-item>
-          <el-descriptions-item label="OPERATION_HISTORY_MODE">both=软件和底层都记录；software_only=只记录软件；device_only=只记录底层；off=关闭记录。</el-descriptions-item>
-        </el-descriptions>
-      </el-collapse-item>
-      <el-collapse-item title="智能判定配置说明" name="judgment">
-        <ul>
-          <li><code>enabled=true</code> 才会请求现场 HTTP 服务；<code>mockWhenDisabled</code> 只用于无服务时的占位演示。</li>
-          <li><code>requestMode=batch</code> 表示多条数据一次提交；<code>single</code> 表示逐条请求。</li>
-          <li v-pre>请求模板支持 <code>{{records}}</code>、<code>{{record}}</code>、<code>{{ids}}</code> 和 <code>{{record.field1}}</code>。</li>
-          <li><code>resultPath</code> 是响应结果的点路径。例如响应为 <code>{"data":{"results":[]}}</code> 时填写 <code>data.results</code>。</li>
-          <li><code>conclusionPath</code> 和 <code>confidencePath</code> 分别指定单条结果中的结论与置信度字段。</li>
-        </ul>
-      </el-collapse-item>
-      <el-collapse-item title="告警与自动联锁说明（重要）" name="alarm">
-        <ul>
-          <li><code>ALARM_RULES</code> 推荐用 <code>source_table</code>+<code>source_field</code>（field1~field10）认字段，物理名从对应的字段映射表动态解析，改了物理名不用同步改规则；仍兼容旧写法直接在 <code>field</code> 里写死候选别名数组。<code>operator</code> 支持 &gt;、&gt;=、&lt;、&lt;=、==、!=。</li>
-          <li><code>require</code> 是前置条件，例如只有水泵开启时才判断流量过低。</li>
-          <li><code>action</code> 是联锁下发字段和值，值仍会经过 <code>CONTROL_VALUE_MAP</code> 转换。</li>
-          <li><strong>ENABLE_AUTO_INTERLOCK 默认必须保持 false。</strong>确认接线、电平、主题和开关值后，才能在有人监护的情况下测试开启。</li>
-        </ul>
-      </el-collapse-item>
-      <el-collapse-item title="metadata 数据库元数据说明" name="metadata">
-        <ul>
-          <li><code>t_sensor_field_mapper</code>：传感量中文名、数据库 field1～field10、上报属性名、单位和显示开关。</li>
-          <li><code>t_behavior_field_mapper</code>：水泵、加热、阀门等运行状态的字段映射。</li>
-          <li><code>t_direct_config</code>：控制项名称、控件类型、范围、控制 JSON 属性名 <code>preffix</code> 等。</li>
-          <li>开关类指令（控件类型=开关）可在“指令映射”表格里直接填 <code>wire_on_payload</code>/<code>wire_off_payload</code>：开、关各自的完整指令 JSON，原样下发，不做任何字段推断，改协议只需改这两个输入框；不填则退回 <code>{ MQTT字段: 开/关的值 }</code>。</li>
-          <li><code>t_derived_metric</code>：SQL 公式指标及 ECharts 样式；建议优先使用“公式与图表”可视化页面修改。</li>
-          <li><code>p_name</code> 可用竖线写多个别名，例如 <code>Tin|inlet_temperature|temp_in</code>。</li>
-          <li><code>value_map</code> 可选，把数据库原始值换成展示文案，JSON 对象，例如 <code>{"0":"关","1":"开"}</code>；只改显示，不改数据库里存的原始值，不配置就原样显示。</li>
-          <li>导入 metadata 会整体替换对应元数据表，请勿删除仍需使用的行；数据库事务失败时会自动回滚。</li>
+          <li>导入 <code>metadata</code> 会整体替换对应的元数据表，请勿删除仍需使用的行；数据库事务失败时会自动回滚。</li>
         </ul>
       </el-collapse-item>
         </el-collapse>
@@ -249,6 +209,12 @@
       </el-tab-pane>
 
       <el-tab-pane label="完整字段说明" name="reference">
+        <el-alert
+          type="info"
+          :closable="false"
+          show-icon
+          title="这里只列没有独立配置页面、需要在“场景参数与场景包”里改 JSON 的字段。安全联锁、联动控制、PID恒温、故障状态、定量停机、计算数据、智能判定、累计与滑动统计、公式与图表、指令映射这些模块有各自的标签页，参数说明就写在对应页面上，不在这里重复一遍。"
+        />
         <div class="reference-toolbar">
           <el-input v-model="helpKeyword" clearable placeholder="搜索配置名、中文用途、示例或注意事项，例如：operation、主题、超时" />
           <span>共 {{ filteredHelp.length }} 项；点击“定位”可跳到场景 JSON。</span>
@@ -290,6 +256,39 @@ import {
 } from '@/utils/runtimeEndpoint'
 
 const text = ref('')
+// 编辑框里只放"没有独立配置页面"的字段；完整场景包另存一份，导出/导入/保存时用它兜底，
+// 避免整包导入时把没显示出来的模块重置成出厂默认值（importConfig 是以 defaultConfig 为底合并的）。
+const fullScene = ref(null)
+
+// 这些配置项各自有独立配置标签页，编辑框里不再重复暴露（改它们请去对应标签页）
+const PAGE_OWNED_CONFIG_KEYS = [
+  'SAFETY_INTERLOCK',
+  'LINKAGE_RULES', 'DEFAULT_TARGET_TEMP',
+  'FAULT_STATUS', 'QUANTITY_SHUTDOWN',
+  'COMPUTED_METRICS', 'SWITCH_DURATION_DISPLAY',
+  'PID_HEATING', 'PID_AUTOTUNE',
+  'INTELLIGENT_JUDGMENT',
+  'CUMULATIVE_METRICS', 'TIME_WINDOW_METRICS', 'HISTORY_CHARTS',
+]
+// t_direct_config 在"指令映射"页编辑，t_derived_metric 在"公式与图表"页编辑
+const PAGE_OWNED_METADATA_TABLES = ['t_direct_config', 't_derived_metric']
+
+/** 从完整场景包里剔掉"有独立配置页面"的部分，得到编辑框里显示的精简场景。 */
+function toEditableScene(scene) {
+  const config = { ...(scene?.config || {}) }
+  for (const key of PAGE_OWNED_CONFIG_KEYS) delete config[key]
+  const metadata = { ...(scene?.metadata || {}) }
+  for (const table of PAGE_OWNED_METADATA_TABLES) delete metadata[table]
+  return { config, metadata }
+}
+
+/** 把编辑框里的精简场景合并回完整场景包，保证提交给后端的始终是完整配置。 */
+function mergeEditableIntoFull(editable) {
+  const full = JSON.parse(JSON.stringify(fullScene.value || {}))
+  full.config = { ...(full.config || {}), ...(editable?.config || {}) }
+  full.metadata = { ...(full.metadata || {}), ...(editable?.metadata || {}) }
+  return full
+}
 const saving = ref(false)
 const fileInput = ref(null)
 const jsonEditor = ref(null)
@@ -298,7 +297,7 @@ const directMappings = ref([])
 const mappingSaving = ref(false)
 const route = useRoute()
 const router = useRouter()
-const validTabs = ['guide', 'scene', 'mapping', 'formula', 'aggregation', 'safety', 'controlmode', 'fault', 'quantity', 'computed', 'pid', 'reference']
+const validTabs = ['guide', 'scene', 'mapping', 'formula', 'aggregation', 'safety', 'controlmode', 'fault', 'quantity', 'computed', 'pid', 'judgment', 'reference']
 const activeTab = ref(validTabs.includes(route.query.tab) ? route.query.tab : 'guide')
 const systemStore = useSystemConfigStore()
 const connectionMode = ref(getConnectionMode())
@@ -344,7 +343,7 @@ async function changeConnectionMode(nextMode) {
 }
 
 const quickGuide = [
-  { title: '基础页面与运行参数', tab: 'scene', description: '决定系统叫什么、显示哪些页面、单设备还是多设备，以及刷新、分页和离线时间。', items: ['SYSTEM_TITLE 与 TERMINOLOGY 控制页面文字', '功能开关控制判定、图表和操作历史', '时间参数统一使用毫秒'] },
+  { title: '基础页面与运行参数', tab: 'scene', description: '决定系统叫什么、显示哪些页面、单设备还是多设备，以及刷新、分页和离线时间。', items: ['SYSTEM_TITLE 与 TERMINOLOGY 控制页面文字', '功能开关控制图表和操作历史；智能判定、告警联锁各自的显示/启用开关分别在对应标签页配置', '时间参数统一使用毫秒'] },
   { title: 'MQTT 与设备字段', tab: 'scene', description: '系统固定使用 MQTT，但现场 Broker、主题和上报 JSON 字段仍可能变化。', items: ['核对 Broker、QoS 和五类主题', '配置设备编号、时间字段候选名', '统一 open/close 与 on/off 控制值'] },
   { title: '字段、控制、告警与判定', tab: 'scene', description: '这些内容随任务书变化最大，都包含在同一个场景包的 config 和 metadata 中。', items: ['传感字段和运行状态映射', '按钮、开关、滑块等控制项', '本地告警、联锁和 HTTP 智能判定'] },
   { title: 'SQL 公式与 ECharts', tab: 'formula', description: '用可视化表单建立派生指标，查询时由 MySQL 计算，再自动加入实时、历史和图表。', items: ['支持公式验证和测试值试算', '配置单位、精度和显示页面', '配置折线/柱状、左右轴、颜色和范围'] },
@@ -369,15 +368,8 @@ const configHelp = [
   { group: '设备显示', key: 'HIDE_NUMBER_FIELDS', description: '是否隐藏设备编号列。', example: 'false', notice: '多设备场景通常保持 false。' },
   { group: '设备显示', key: 'HIDE_DEVICE_SELECTOR', description: '是否强制隐藏设备选择器。', example: 'false', notice: '开启后多设备也无法在页面选择设备。' },
   { group: '设备显示', key: 'SHOW_SECONDS', description: '时间格式是否显示秒。true 时显示为 "2026/07/20 11:51:03"，false 时显示为 "2026/07/20 11:51"。', example: 'true', notice: '保存后立即生效，影响所有页面的时间显示。' },
-  { group: '功能开关', key: 'ENABLE_SENSOR_RECOGNIZE', description: '传感器历史页是否显示智能判定按钮。', example: 'true', notice: '仅控制入口显示。' },
-  { group: '功能开关', key: 'ENABLE_BEHAVIOR_RECOGNIZE', description: '运行状态历史页是否显示智能判定按钮。', example: 'true', notice: '题目不要求时可关闭。' },
-  { group: '功能开关', key: 'ENABLE_JUDGMENT_HISTORY', description: '是否显示智能判定记录菜单。', example: 'true', notice: '若评分要求记录查询必须开启。' },
   { group: '功能开关', key: 'OPERATION_HISTORY_MODE', description: '操作历史来源：both 两种都记；software_only 仅软件；device_only 仅底层；off 关闭。', example: 'both', notice: '你当前需求应使用 both。' },
   { group: '功能开关', key: 'ENABLE_CHARTS', description: '是否显示实时和历史 ECharts 图表。', example: 'true', notice: '重点考 ECharts 时保持开启。' },
-  { group: '功能开关', key: 'ENABLE_LOCAL_ALARM', description: '是否由服务端根据规则计算告警。', example: 'true', notice: '不影响设备主动上报告警。' },
-  { group: '功能开关', key: 'ENABLE_AUTO_INTERLOCK', description: '告警触发后是否自动执行控制动作。', example: 'false', notice: '危险项；实机协议和接线确认前必须为 false。' },
-  { group: '统计指标', key: 'CUMULATIVE_METRICS', description: '从第一条匹配数据开始累计数值字段。', example: 'field3 → 累计流量', notice: '建议在“累计与滑动统计”页可视化修改。' },
-  { group: '统计指标', key: 'TIME_WINDOW_METRICS', description: '按最近 N 条计算滑动平均、波动幅度或相邻变化量。', example: 'field2 / 5 条 / avg', notice: '建议在“累计与滑动统计”页可视化修改。' },
   { group: '刷新分页', key: 'DEFAULT_PAGE_SIZE', description: '历史列表默认每页条数，范围 1-100。', example: '10', notice: '只影响默认分页大小。' },
   { group: '刷新分页', key: 'REALTIME_REFRESH_INTERVAL', description: '实时数据刷新间隔，单位毫秒；0 表示关闭自动刷新。', example: '3000', notice: '过小会增加数据库和网络负担。' },
   { group: '刷新分页', key: 'HEARTBEAT_TIMEOUT', description: '多久未收到心跳即判定设备离线，单位毫秒。', example: '10000', notice: '必须不小于 1000，通常取心跳周期的 2-3 倍。' },
@@ -392,39 +384,19 @@ const configHelp = [
   { group: '上报协议', key: 'SENSOR_FIELD_MAP', description: '业务语义（temp1/temp2/flow/pressure）到 t_sensor_data 物理字段（field1~field10）的映射，自动控制、安全联锁、故障判断、分层联动都靠它认字段。', example: '{"temp1":"field1","temp2":"field2","flow":"field3","pressure":"field4"}', notice: 'key 是代码里固定读取的业务语义，不能改名；value 必须跟 t_sensor_field_mapper 表里实际配置的 db_name 保持一致。' },
   { group: '控制协议', key: 'CONTROL_VALUE_MAP', description: '软件标准状态到设备真实控制值的映射。', example: '{"on":"open","off":"close"}', notice: '水泵无响应时优先检查此项和控制主题。' },
   { group: '页面术语', key: 'TERMINOLOGY', description: '修改传感器、运行状态、设备、告警和智能判定的页面称呼。', example: 'sensor: 水循环数据', notice: '不改变数据库和 MQTT 字段。' },
-  { group: '智能判定', key: 'INTELLIGENT_JUDGMENT.enabled', description: '是否调用现场 HTTP 智能判定服务。', example: 'true', notice: '正式比赛调用接口时开启。' },
-  { group: '智能判定', key: 'INTELLIGENT_JUDGMENT.url / method / timeoutMs', description: '服务地址、HTTP 方法和超时时间。', example: 'POST / 10000', notice: '服务在其他电脑时不能使用 127.0.0.1。' },
-  { group: '智能判定', key: 'INTELLIGENT_JUDGMENT.headers', description: 'HTTP 请求头，可配置 Content-Type 或 Authorization。', example: '{"Content-Type":"application/json"}', notice: 'Token 等敏感信息会进入场景包。' },
-  { group: '智能判定', key: 'INTELLIGENT_JUDGMENT.requestMode / requestTemplate', description: '选择单条或批量请求，并用占位符组织现场要求的请求体。', example: '{"data":"{{records}}"}', notice: '支持 records、record、ids 和 record.field1 等。' },
-  { group: '智能判定', key: 'INTELLIGENT_JUDGMENT.resultPath / conclusionPath / confidencePath', description: '用点路径从响应中提取结果数组、结论和置信度。', example: 'data.results / result / confidence', notice: '按现场响应 JSON 层级填写。' },
-  { group: '告警联锁', key: 'ALARM_RULES', description: '配置字段、比较符、阈值、前置条件、冷却时间及可选联锁动作。', example: 'flow < 0.5 时关闭 heater', notice: 'action 仅在自动联锁开启时执行。' },
-  { group: '数据库映射', key: 'metadata.t_sensor_field_mapper', description: '传感数据中文名、field1-field10、MQTT 属性名、单位和显示开关。', example: 'field1 = 进水温度 = Tin', notice: '赛题换字段时重点修改。' },
-  { group: '数据库映射', key: 'metadata.t_behavior_field_mapper', description: '水泵、加热、阀门等运行状态字段映射。', example: 'field1 = 水泵 = pump', notice: '属性名要与设备状态上报一致。' },
-  { group: '数据库映射', key: 'metadata.t_direct_config', description: '控制项名称、控件类型、范围、下发字段和值。', example: '水泵开关 / switch / pump', notice: '保存后决定\u201c指令配置\u201d页面生成哪些控件。' },
-  { group: 'SQL与图表', key: 'metadata.t_derived_metric', description: '派生指标公式、单位、精度和 ECharts 样式。', example: 'field2-field1 = 温差', notice: '建议在\u201c公式与图表\u201d页可视化编辑。' },
+  { group: '告警联锁', key: 'ALARM_RULES.enabled / autoInterlockEnabled', description: 'enabled 是否由服务端根据 rules 计算告警（不影响设备主动上报告警）；autoInterlockEnabled 告警触发后是否自动执行规则里的联锁动作，默认 false，开启前必须实机安全测试。', example: 'true / false', notice: '危险项：接线和协议未确认前，autoInterlockEnabled 必须保持 false。' },
+  { group: '告警联锁', key: 'ALARM_RULES.rules', description: '规则列表。推荐用 source_table+source_field（field1~field10）认字段，物理名由字段映射表动态解析，改了物理名不用同步改规则（仍兼容旧写法：field 里直接写候选别名数组）；operator 支持 > >= < <= == !=；require 是前置条件（例如只有水泵开启时才判断流量过低）；action 是联锁下发的字段和值，值会经 CONTROL_VALUE_MAP 转换；cooldownMs 是该规则的告警冷却时间。', example: 'flow < 0.5 且水泵开启时关闭 heater', notice: 'action 仅在 autoInterlockEnabled=true 时执行。' },
+  { group: '数据库映射', key: 'metadata.t_sensor_field_mapper', description: '传感数据中文名、field1-field10、MQTT 属性名（p_name）、单位和显示开关。p_name 可用竖线写多个别名，例如 Tin|inlet_temperature|temp_in，按顺序匹配上报报文。', example: 'field1 = 进水温度 = Tin', notice: '赛题换字段时重点修改；导入 metadata 会整体替换这张表，别删掉仍在用的行。' },
+  { group: '数据库映射', key: 'metadata.t_behavior_field_mapper', description: '水泵、加热、阀门等运行状态字段映射，p_name 同样支持竖线多别名。可选的 value_map 把数据库原始值换成展示文案（JSON 对象，例如 {"0":"关","1":"开"}），只改显示不改存储值，不配置就原样显示。', example: 'field1 = 水泵 = pump', notice: '属性名要与设备状态上报一致；导入 metadata 会整体替换这张表。' },
   { group: '数据库映射', key: 'field1 (进水温度)', description: '进水口温度传感器，MQTT属性名建议 Tin 或 inlet_temperature，单位 \u2103。', example: 'Tin', notice: '请确认现场实际属性名。' },
   { group: '数据库映射', key: 'field2 (出水温度)', description: '出水口温度传感器，MQTT属性名建议 Tout 或 outlet_temperature，单位 \u2103。', example: 'Tout', notice: '与进水温度分属不同位置。' },
   { group: '数据库映射', key: 'field3 (循环流量)', description: '流量传感器，MQTT属性名建议 Flow 或 flow_rate，单位 L/min。', example: 'Flow', notice: '可能有累计值需求。' },
   { group: '数据库映射', key: 'field4 (管路压力)', description: '压力传感器，MQTT属性名建议 Pressure 或 pressure，单位 kPa。', example: 'Pressure', notice: '管路过压需告警。' },
   { group: '数据库映射', key: 'behavior field2 (水泵)', description: '水泵状态，MQTT属性名建议 pump，取值约定 1=开/0=关。', example: 'pump', notice: '确认与CONTROL_VALUE_MAP一致；field1是控制模式，不是水泵。' },
   { group: '数据库映射', key: 'behavior field3 (加热模块)', description: '加热模块状态，MQTT属性名建议 heater，取值约定 1=开/0=关。', example: 'heater', notice: '水泵未开时禁止加热。' },
-  { group: '数据库映射', key: 'd_config 水泵开关', description: '控件类型 switch，下发属性 pump，值 on/off。', example: 'preffix: pump', notice: '经CONTROL_VALUE_MAP转换为设备真实值。' },
-  { group: '数据库映射', key: 'd_config 加热开关', description: '控件类型 switch，下发属性 heater，值 on/off。', example: 'preffix: heater', notice: '联锁时自动关闭。' },
-  { group: 'SQL与图表', key: 't_derived_metric 温差', description: '进出水温差 = field2 - field1，精度1位。', example: 'delta_temp / 温差 / field2 - field1', notice: '折线图左轴展示。' },
-  { group: 'SQL与图表', key: 't_derived_metric 平均温度', description: '平均温度 = (field1 + field2) / 2，精度1位。', example: 'avg_temp / 平均温度 / (field1+field2)/2', notice: '折线图左轴展示。' },
-  { group: '告警联锁', key: 'ALARM_RULES 温度过高', description: '出水温度 > 80\u2103 告警，可选联锁关闭加热。', example: 't_sensor_data.field2, >, 80', notice: '联锁前必须ENABLE_AUTO_INTERLOCK=false。' },
+  { group: '告警联锁', key: 'ALARM_RULES 温度过高', description: '出水温度 > 80\u2103 告警，可选联锁关闭加热。', example: 't_sensor_data.field2, >, 80', notice: '联锁前必须 autoInterlockEnabled=false。' },
   { group: '告警联锁', key: 'ALARM_RULES 流量过低', description: '水泵开启时流量 < 0.5 L/min 告警。', example: 'require: t_behavior_data.field2 values: [open]', notice: '水泵未开时不触发。' },
   { group: '告警联锁', key: 'ALARM_RULES 压力过高', description: '管路压力 > 500 kPa 告警，可选联锁关闭水泵。', example: 't_sensor_data.field4, >, 500', notice: '防止管路破裂。' },
-  { group: '安全联锁', key: 'SAFETY_INTERLOCK', description: '流量过低/压力过高/温度过高/温差过大/手动模式/传感器掉线/未开泵先加热，触发任一启用条件立即强制关闭水泵和加热；自动、手动模式全程生效。', example: 'flowLow: true, tempDiffThreshold: 3', notice: '与"故障状态"相互独立，两者可同时命中；建议在"安全联锁"页可视化修改。' },
-  { group: '联动控制', key: 'DEFAULT_TARGET_TEMP', description: '默认目标温度：指令中心 target_temperature 优先，未配置时兜底用这个值。LINKAGE_RULES、PID_HEATING 共用同一个值，不再各自维护一份。', example: '22', notice: '在"联动控制"或"PID恒温"任一页面改都会同步，不用两边分别改。' },
-  { group: '联动控制', key: 'LINKAGE_RULES', description: '"自动模式"下的正常状况联动统一规则库，规则清单里的规则各自独立开关，可任意组合勾选，不再局限于固定套路。同一执行器本轮如有多条规则结论矛盾，"关"优先于"开"（fail-safe）。加热滞回带通断的启用与否不在这里勾选，由指令中心独立开关 heater_hysteresis_enabled 决定，这里的 heaterHysteresisValue/tempDiffOpenThreshold 只是它的参数。', example: 'pumpAlwaysOn: true, heaterHysteresisValue: 1, tempDiffOpenThreshold: 3', notice: '建议在"联动控制"页可视化修改。' },
-  { group: '定量停机', key: 'QUANTITY_SHUTDOWN', description: '本次计量周期累计流量达到 totalFlowTarget 后自动关闭水泵和加热；进入自动模式开始新周期，切回手动模式重置。', example: 'totalFlowTarget: 500', notice: '总流量仅做停机判定，不参与实时调节。' },
-  { group: '故障状态', key: 'FAULT_STATUS', description: '干烧/管道堵塞/水泵故障/水泵空转/出水口堵塞共 5 种硬故障；触发后保存故障前快照、强制断电水泵和加热、复位按钮自动拨到"开"、锁定指令页面其他所有开关和参数为只读。水泵故障/水泵空转/出水口堵塞这三条都要求水泵已连续开启满 pumpWarmupMs 才开始判断，避免水泵刚启动瞬间误判。', example: 'dryBurnDurationMs: 5000, tempDiffThreshold: 3, pumpWarmupMs: 5000', notice: '用户人工修复后拨回"关"才会按快照恢复全部参数和开关；建议在"故障状态"页可视化修改。' },
-  { group: 'PID恒温', key: 'PID_HEATING', description: '加热模块只有开关量，用时间比例控制模拟 PWM：固定周期 windowMs 内按 PID 算出的占空比决定加热开多久；只接管加热，跟 LINKAGE_RULES 的滞回带通断是指令中心两个各自独立的开关（pid_enabled / heater_hysteresis_enabled），两个都开时 PID 优先，这里的 enabled 只是指令项还没配置时的兜底默认值。', example: 'kp: 20, ki: 0.5, kd: 5, windowMs: 10000', notice: '指令中心 target_temperature 配置了就优先用指令中心的目标温度。' },
-  { group: 'PID恒温', key: 'PID_AUTOTUNE', description: '继电反馈整定法：让加热在目标温度±回差间强制切换高/低占空比，逼出振荡后按 Ziegler-Nichols 公式反推 Kp/Ki/Kd，写入 result 供页面点"应用"，不会自动覆盖当前生效参数。', example: 'relayHighDuty: 100, minCycles: 4', notice: 'status/progress/message/result 由后端运行时写回，不需要手动填。' },
-  { group: '计算数据', key: 'COMPUTED_METRICS', description: '首页"计算数据"板块的工程指标（阻力系数K、压力陡降速率、换热效率、液位等）显示开关，以及计算所需参数（额定功率、管径、初始水量等）。', example: 'resistanceK: true, heaterRatedPower: 2000', notice: 'enabled 是总开关；建议在"计算数据"页可视化修改。' },
-  { group: '历史图表', key: 'HISTORY_CHARTS', description: '控制"历史图表"页面每张图是否展示、每张图最多显示多少个数据点。', example: 'pointLimit: 300, showPidTrackingChart: true', notice: '在"累计与滑动统计"页面底部可视化修改。' },
-  { group: '计算数据', key: 'SWITCH_DURATION_DISPLAY', description: '控制首页运行状态区，水泵/加热开启时是否额外显示"累计运行时长"和"本次已运行时长"。', example: 'enabled: true', notice: '数据来源固定为 CUMULATIVE_METRICS 中 cumulative_pump_time/cumulative_heat_time 两条记录；在"计算数据"页面底部可视化修改。' },
 ]
 
 const filteredHelp = computed(() => {
@@ -441,7 +413,8 @@ watch(activeTab, tab => {
 async function load() {
   const response = await api.get('/api/system-config/export')
   const scene = response.data.data
-  text.value = JSON.stringify(scene, null, 2)
+  fullScene.value = scene
+  text.value = JSON.stringify(toEditableScene(scene), null, 2)
   directMappings.value = JSON.parse(JSON.stringify(scene.metadata?.t_direct_config || []))
 }
 
@@ -492,7 +465,7 @@ async function saveDirectMappings() {
     }
     await ElMessageBox.confirm('保存后新的 MQTT 字段映射立即用于指令下发，是否继续？', '保存指令映射', { type: 'warning' })
     mappingSaving.value = true
-    const scene = parse()
+    const scene = mergeEditableIntoFull(parse())
     if (!scene.metadata) scene.metadata = {}
     scene.metadata.t_direct_config = JSON.parse(JSON.stringify(directMappings.value))
     const response = await api.post('/api/system-config/import', scene)
@@ -512,7 +485,7 @@ function parse() {
 
 async function save() {
   try {
-    const scene = parse()
+    const scene = mergeEditableIntoFull(parse())
     await ElMessageBox.confirm('应用后 MQTT 可能自动重连，是否继续？', '应用场景', { type: 'warning' })
     saving.value = true
     const response = await api.post('/api/system-config/import', scene)
@@ -527,7 +500,7 @@ async function save() {
 
 function download() {
   try {
-    const scene = parse()
+    const scene = mergeEditableIntoFull(parse())
     const blob = new Blob([`${JSON.stringify(scene, null, 2)}\n`], { type: 'application/json;charset=utf-8' })
     const url = URL.createObjectURL(blob)
     const link = document.createElement('a')
@@ -543,9 +516,10 @@ async function readFile(event) {
   if (!file) return
   try {
     const content = await file.text()
-    JSON.parse(content)
-    text.value = content
-    ElMessage.success('场景文件已载入，请检查后点击\u201c校验并应用\u201d')
+    const scene = JSON.parse(content)
+    fullScene.value = scene
+    text.value = JSON.stringify(toEditableScene(scene), null, 2)
+    ElMessage.success('场景文件已载入（编辑框只显示无独立配置页面的部分，其余照常导入），请检查后点击\u201c校验并应用\u201d')
   } catch (error) { ElMessage.error(`文件不是有效 JSON：${error.message}`) }
   event.target.value = ''
 }

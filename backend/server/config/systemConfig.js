@@ -42,7 +42,7 @@ const EventEmitter = require('events')
  *
  * 【布尔值规则】true=开启，false=关闭。不要写成字符串 "true"/"false"。
  * 【时间单位】除数据库时间外，本文件中的 timeout/interval 均以毫秒为单位。
- * 【安全原则】ENABLE_AUTO_INTERLOCK 默认必须保持 false，只有确认设备接线、继电器
+ * 【安全原则】ALARM_RULES.autoInterlockEnabled 默认必须保持 false，只有确认设备接线、继电器
  * 高低电平和控制协议后才能开启。错误联锁可能导致水泵或加热模块误动作。
  * ============================================================================
  */
@@ -118,14 +118,10 @@ const defaultConfig = {
   // --------------------------------------------------------------------------
   // 3. 页面功能开关
   // --------------------------------------------------------------------------
-  // 是否在传感器历史页面显示“智能判定”按钮。
-  ENABLE_SENSOR_RECOGNIZE: true,
-
-  // 是否在运行状态/行为历史页面显示“智能判定”按钮。
-  ENABLE_BEHAVIOR_RECOGNIZE: true,
-
-  // 是否在左侧菜单显示“智能判定记录”页面。
-  ENABLE_JUDGMENT_HISTORY: true,
+  // 智能判定相关的显示开关（是否显示按钮/菜单）已经并入 INTELLIGENT_JUDGMENT
+  // （showOnSensorPage/showOnBehaviorPage/showHistoryMenu），本地告警规则的
+  // 总开关也已并入 ALARM_RULES（enabled/autoInterlockEnabled），不再放在这里——
+  // 同一个功能的配置只应该在一个地方，避免要改一处设置却要跑两个页面。
 
   // 操作历史记录模式：
   // both=同时记录软件指令和底层操作（推荐）；software_only=只记录软件指令；
@@ -134,14 +130,9 @@ const defaultConfig = {
   // “底层操作”指设备状态上报与系统保存的期望状态不一致时识别出的现场操作。
   OPERATION_HISTORY_MODE: 'both',
 
-  // 是否显示历史/实时数据图表。关闭后只保留表格或卡片。
+  // 是否显示历史/实时数据图表。关闭后只保留表格或卡片。这个开关横跨多个页面
+  // （传感器/行为历史等），不专属某一个功能模块，留在这里。
   ENABLE_CHARTS: true,
-
-  // 是否根据 ALARM_RULES 在服务端自行计算告警；不影响设备主动上报的告警。
-  ENABLE_LOCAL_ALARM: true,
-
-  // 是否在本地规则触发后执行 rule.action。默认关闭，开启前必须进行实机安全测试。
-  ENABLE_AUTO_INTERLOCK: false,
 
   // --------------------------------------------------------------------------
   // 4. 累计与滑动统计指标
@@ -392,6 +383,15 @@ const defaultConfig = {
 
     // 服务未启用时是否允许确定性的本地占位判定。比赛正式演示建议启用真实服务。
     mockWhenDisabled: true,
+
+    // 是否在传感器历史页面显示“智能判定”按钮。
+    showOnSensorPage: true,
+
+    // 是否在运行状态/行为历史页面显示“智能判定”按钮。
+    showOnBehaviorPage: true,
+
+    // 是否在左侧菜单显示“智能判定记录”页面。
+    showHistoryMenu: true,
 
     // 完整 HTTP 地址。若服务在另一台电脑，127.0.0.1 必须改成那台电脑的局域网 IP。
     url: 'http://127.0.0.1:5000/judgment',
@@ -780,7 +780,11 @@ const defaultConfig = {
   // --------------------------------------------------------------------------
   // 14. 本地告警与自动联锁规则
   // --------------------------------------------------------------------------
-  // 每条规则字段说明：
+  // enabled：总开关，是否由服务端根据下面 rules 自行计算告警；不影响设备主动上报的告警。
+  // autoInterlockEnabled：是否在本地规则触发后执行 rule.action。默认关闭，开启前
+  //   必须进行实机安全测试。
+  //
+  // rules 每条规则字段说明：
   // id：稳定且唯一的英文编号，也作为告警编号；name：页面显示名称；
   // source_table + source_field：待比较字段的"槽位"（跟 CUMULATIVE_METRICS/
   //   TIME_WINDOW_METRICS 认字段的方式一致），实际物理名从对应的字段映射表
@@ -791,41 +795,47 @@ const defaultConfig = {
   // require：可选前置条件，同样用 source_table+source_field（或 field），
   //   values 为任一允许值；
   // action：联锁动作，field 是下发 JSON 属性名，value 会经过 CONTROL_VALUE_MAP 转换。
-  // 注意：action 只有 ENABLE_AUTO_INTERLOCK=true 时才实际下发。
-  ALARM_RULES: [
-    {
-      id: 'temperature_high',
-      name: '出水温度过高',
-      source_table: 't_sensor_data',
-      source_field: 'field2',
-      operator: '>',
-      threshold: 80,
-      action: { field: 'heater', value: 'off' },
-      enabled: true,
-    },
-    {
-      id: 'flow_low',
-      name: '循环流量过低',
-      source_table: 't_sensor_data',
-      source_field: 'field3',
-      operator: '<',
-      threshold: 0.5,
-      // 只有水泵处于开启状态时，低流量才属于异常。
-      require: { source_table: 't_behavior_data', source_field: 'field2', values: ['open', 'on', 1, true] },
-      action: { field: 'heater', value: 'off' },
-      enabled: true,
-    },
-    {
-      id: 'pressure_high',
-      name: '管路压力过高',
-      source_table: 't_sensor_data',
-      source_field: 'field5',
-      operator: '>',
-      threshold: 500,
-      action: { field: 'pump', value: 'off' },
-      enabled: true,
-    },
-  ],
+  // 注意：action 只有 autoInterlockEnabled=true 时才实际下发。
+  ALARM_RULES: {
+    enabled: true,
+    autoInterlockEnabled: false,
+    rules: [
+      {
+        id: 'temperature_high',
+        name: '出水温度过高',
+        source_table: 't_sensor_data',
+        source_field: 'field2',
+        operator: '>',
+        threshold: 80,
+        action: { field: 'heater', value: 'off' },
+        enabled: true,
+      },
+      {
+        id: 'flow_low',
+        name: '循环流量过低',
+        source_table: 't_sensor_data',
+        source_field: 'field3',
+        operator: '<',
+        threshold: 0.5,
+        // 只有水泵处于开启状态时，低流量才属于异常。
+        require: { source_table: 't_behavior_data', source_field: 'field2', values: ['open', 'on', 1, true] },
+        action: { field: 'heater', value: 'off' },
+        enabled: true,
+      },
+      {
+        id: 'pressure_high',
+        name: '管路压力过高',
+        source_table: 't_sensor_data',
+        // field4=压力（t_sensor_field_mapper 只配置了 field1~4），field5 从未
+        // 赋予过语义，之前这里写的 field5 是遗留错误，改成 field4。
+        source_field: 'field4',
+        operator: '>',
+        threshold: 500,
+        action: { field: 'pump', value: 'off' },
+        enabled: true,
+      },
+    ],
+  },
 }
 
 const events = new EventEmitter()
@@ -940,9 +950,14 @@ function validateAlarmFieldSpec(spec, pathName) {
 }
 
 function validateAlarmRules(config) {
+  const alarm = config.ALARM_RULES
+  if (!alarm || typeof alarm !== 'object' || Array.isArray(alarm)) throw new Error('ALARM_RULES 必须是 JSON 对象')
+  if (typeof alarm.enabled !== 'boolean') throw new Error('ALARM_RULES.enabled 必须是布尔值')
+  if (typeof alarm.autoInterlockEnabled !== 'boolean') throw new Error('ALARM_RULES.autoInterlockEnabled 必须是布尔值')
+  if (!Array.isArray(alarm.rules)) throw new Error('ALARM_RULES.rules 必须是数组')
   const ids = new Set()
-  ;(config.ALARM_RULES || []).forEach((rule, index) => {
-    const pathName = `ALARM_RULES[${index}]`
+  alarm.rules.forEach((rule, index) => {
+    const pathName = `ALARM_RULES.rules[${index}]`
     if (!rule || typeof rule !== 'object' || Array.isArray(rule)) throw new Error(`${pathName} 必须是 JSON 对象`)
     if (typeof rule.id !== 'string' || !rule.id.trim()) throw new Error(`${pathName}.id 不能为空`)
     if (ids.has(rule.id)) throw new Error(`告警规则标识重复: ${rule.id}`)
@@ -974,9 +989,7 @@ function validate(config) {
   }
   for (const key of [
     'SINGLE_DEVICE_MODE', 'HIDE_ID_FIELDS', 'HIDE_NUMBER_FIELDS', 'HIDE_DEVICE_SELECTOR',
-    'SHOW_SECONDS',
-    'ENABLE_SENSOR_RECOGNIZE', 'ENABLE_BEHAVIOR_RECOGNIZE', 'ENABLE_JUDGMENT_HISTORY',
-    'ENABLE_CHARTS', 'ENABLE_LOCAL_ALARM', 'ENABLE_AUTO_INTERLOCK',
+    'SHOW_SECONDS', 'ENABLE_CHARTS',
   ]) {
     if (typeof config[key] !== 'boolean') throw new Error(`${key} 必须是布尔值`)
   }
@@ -995,6 +1008,9 @@ function validate(config) {
   if (!Array.isArray(config.HEARTBEAT_DEVICE_FIELDS) || config.HEARTBEAT_DEVICE_FIELDS.length === 0) throw new Error('HEARTBEAT_DEVICE_FIELDS 至少需要一个字段')
   for (const key of ['temp1', 'temp2', 'flow', 'pressure']) {
     if (!/^field\d+$/.test(config.SENSOR_FIELD_MAP?.[key] || '')) throw new Error(`SENSOR_FIELD_MAP.${key} 必须是 field1~field10 这样的字段名`)
+  }
+  for (const key of ['showOnSensorPage', 'showOnBehaviorPage', 'showHistoryMenu']) {
+    if (typeof config.INTELLIGENT_JUDGMENT[key] !== 'boolean') throw new Error(`INTELLIGENT_JUDGMENT.${key} 必须是布尔值`)
   }
   if (!config.INTELLIGENT_JUDGMENT.url || !/^https?:\/\//i.test(config.INTELLIGENT_JUDGMENT.url)) throw new Error('INTELLIGENT_JUDGMENT.url 必须是 http:// 或 https:// 地址')
   if (!Number.isFinite(config.INTELLIGENT_JUDGMENT.timeoutMs) || config.INTELLIGENT_JUDGMENT.timeoutMs <= 0) throw new Error('INTELLIGENT_JUDGMENT.timeoutMs 必须大于 0')

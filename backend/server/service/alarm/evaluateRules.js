@@ -1,6 +1,6 @@
 /** 【文件职责】告警规则评估与自动联锁服务。故障状态触发、指令页面锁定期间，
  *   自动联锁动作会被跳过（告警记录仍照常写入），避免绕过锁定改写 t_direct。
- * 【配置中心关联】ALARM_RULES、ENABLE_LOCAL_ALARM、ENABLE_AUTO_INTERLOCK 每次评估读取。 */
+ * 【配置中心关联】ALARM_RULES（enabled/autoInterlockEnabled/rules）每次评估读取。 */
 const promisePool = require('../../config/dbPool')
 const systemConfig = require('../../config/systemConfig')
 const { firstValue, getTopic, toWireValue, buildSwitchPayload } = require('../../utils/protocol')
@@ -46,12 +46,12 @@ async function requirementMet(info, requirement) {
 
 async function evaluateRules(info) {
   const config = systemConfig.getConfig()
-  if (!config.ENABLE_LOCAL_ALARM) return []
+  if (!config.ALARM_RULES?.enabled) return []
   const deviceNo = String((await resolveDeviceNo(info)) || 'default')
   const state = { ...(latestState.get(deviceNo) || {}), ...info }
   latestState.set(deviceNo, state)
   const alarms = []
-  for (const rule of config.ALARM_RULES || []) {
+  for (const rule of config.ALARM_RULES.rules || []) {
     if (!rule.enabled || !OPERATORS[rule.operator]) continue
     if (!(await requirementMet(state, rule.require))) continue
     const candidates = await resolveFieldNames(rule)
@@ -71,7 +71,7 @@ async function evaluateRules(info) {
       [deviceNo === 'default' ? null : deviceNo, recordTime, message, rule.id, rule.name]
     )
     let interlock = null
-    if (config.ENABLE_AUTO_INTERLOCK && rule.action?.field) {
+    if (config.ALARM_RULES.autoInterlockEnabled && rule.action?.field) {
       const targetDevice = deviceNo === 'default' ? null : deviceNo
       // 故障状态触发后，指令页面（含所有开关和参数）会被锁定为只读，故障前状态由
       // 快照保护、等用户手动复位后才恢复。这里的自动联锁跟前端提交走的是不同代码
@@ -124,5 +124,5 @@ async function evaluateRules(info) {
 
 module.exports = { evaluateRules }
 /** 【文件职责】告警规则计算与可选自动联锁服务。
- * 【配置中心关联】ALARM_RULES、ENABLE_LOCAL_ALARM、ENABLE_AUTO_INTERLOCK、CONTROL_VALUE_MAP；
+ * 【配置中心关联】ALARM_RULES（enabled/autoInterlockEnabled/rules）、CONTROL_VALUE_MAP；
  * 每次评估都读取最新配置，自动联锁默认应保持关闭。 */

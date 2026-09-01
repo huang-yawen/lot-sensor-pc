@@ -165,7 +165,7 @@ const refreshFromPush = () => {
 onMounted(async () => {
   try {
     const config = await systemStore.load()
-    showRecognizeBtn.value = config.ENABLE_BEHAVIOR_RECOGNIZE === true
+    showRecognizeBtn.value = config.INTELLIGENT_JUDGMENT?.showOnBehaviorPage === true
     store.pageSize = config.DEFAULT_PAGE_SIZE || 5
   } catch (err) {
     console.error('[BehaviorHistory] 获取系统配置失败:', err)

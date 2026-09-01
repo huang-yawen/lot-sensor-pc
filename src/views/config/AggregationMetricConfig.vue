@@ -126,6 +126,7 @@ const displayConfig = reactive({
   showPidTrackingChart: true,
   showDeviceStateChart: true,
   showDerivedMetricCharts: true,
+  showTempFlowScatter: true,
 })
 const chartSwitches = [
   { key: 'showCumulative', label: '累计统计', description: '累计流量等持续累加指标的历史趋势图。' },
@@ -136,6 +137,7 @@ const chartSwitches = [
   { key: 'showPidTrackingChart', label: 'PID跟踪对比', description: '目标温度参考线 + 温度2 实际值，直观看恒温控制精度。' },
   { key: 'showDeviceStateChart', label: '设备状态时间线', description: '水泵、加热开关状态阶梯图，展示自动控制的实际动作历史。' },
   { key: 'showDerivedMetricCharts', label: '自定义公式指标', description: '"公式与图表"里勾选了"历史图表"的自定义指标，每条一张图。' },
+  { key: 'showTempFlowScatter', label: '温度-流量相关性', description: '出水温度与瞬时流量的散点图，用来看两者的相关趋势。' },
 ]
 const dialogVisible = ref(false)
 const dialogType = ref('cumulative')

@@ -15,12 +15,10 @@ export const useSystemConfigStore = defineStore('systemConfig', () => {
     SINGLE_DEVICE_MODE: true,
     HIDE_DEVICE_SELECTOR: false,
     ENABLE_CHARTS: true,
-    ENABLE_SENSOR_RECOGNIZE: true,
-    ENABLE_BEHAVIOR_RECOGNIZE: true,
-    ENABLE_JUDGMENT_HISTORY: true,
     DEFAULT_PAGE_SIZE: 5,
     REALTIME_REFRESH_INTERVAL: 3000,
-    TERMINOLOGY: { sensor: '传感器数据', behavior: '运行状态', device: '设备', alarm: '告警记录', judgment: '智能判定' }
+    TERMINOLOGY: { sensor: '传感器数据', behavior: '运行状态', device: '设备', alarm: '告警记录', judgment: '智能判定' },
+    INTELLIGENT_JUDGMENT: { showOnSensorPage: true, showOnBehaviorPage: true, showHistoryMenu: true }
   })
   const loaded = ref(false)
 
