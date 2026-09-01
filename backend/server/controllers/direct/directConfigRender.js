@@ -2,6 +2,7 @@
  * 【配置中心关联】SINGLE_DEVICE_MODE 每次请求读取，决定设备选择方式。 */
 const promisePool = require('../../config/dbPool')
 const systemConfig = require('../../config/systemConfig')
+const { getDefaultDeviceId } = require('../../utils/mappedData')
 
 // 组装全局配置和设备配置的最终渲染结果。
 module.exports = async (req, res) => {
@@ -20,13 +21,11 @@ module.exports = async (req, res) => {
 
         if (singleDeviceMode) {
             // ========== 单设备模式 ==========
-            // 从 t_device 表获取第一个设备的编号
-            const [deviceRows] = await promisePool.query(
-                'SELECT `number` FROM `t_device` ORDER BY `id` ASC LIMIT 1'
-            )
-            if (deviceRows && deviceRows.length > 0) {
-                targetDeviceId = String(deviceRows[0].number).trim()
-            }
+            // 跟指令保存路径（updateDirectConfigAndPublish.js）统一用 getDefaultDeviceId()
+            // 取默认设备号：以前这里自己查 t_device.number，保存路径查的是 t_device.d_no，
+            // 两个字段值不一致时保存和回显各自认的设备号对不上，指令保存成功但页面上
+            // 一直显示不出来（回退成默认值）。
+            targetDeviceId = await getDefaultDeviceId()
         } else {
             // ========== 多设备模式 ==========
             if (d_no && d_no !== 'null') {

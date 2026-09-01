@@ -60,7 +60,7 @@ const routes=[
                 meta: { title: '智能判定记录' }
             },{
                 path:'/scene-config',
-                component:()=>import('@/views/SceneConfig.vue'),
+                component:()=>import('@/views/config/SceneConfig.vue'),
                 meta: { title: '配置中心' }
             },{
                 path:'/derived-metrics',
