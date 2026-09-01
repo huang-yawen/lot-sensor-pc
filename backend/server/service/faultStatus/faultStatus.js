@@ -168,7 +168,7 @@ async function readSensors(info) {
 }
 
 async function readSwitchStates(info) {
-  // 行为数据：field1=水泵，field2=加热器（与 safetyInterlock / autoControl 保持一致）
+  // 行为数据：field1=水泵，field2=加热器（与 safetyInterlock / linkageRules 保持一致）
   const pumpAliases = await resolveFieldAliases('t_behavior_data', 'field1')
   const heatAliases = await resolveFieldAliases('t_behavior_data', 'field2')
   const toOn = v => {

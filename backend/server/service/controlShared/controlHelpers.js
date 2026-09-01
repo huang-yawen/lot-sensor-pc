@@ -1,9 +1,7 @@
-/** 【文件职责】自动控制（simple）与分层联动（layered）共用的工具函数——两套模式
- * 是互斥的档位（CONTROL_MODE 二选一，不会同时跑），但读传感器、读开关状态、按
- * preffix 查阈值、下发指令这些底层动作完全一样，之前各自维护一份几乎逐字相同的
- * 实现，容易改一处忘改另一处，现在统一收在这里，两边都从这里 import。
- * 决策逻辑（decidePump/decideHeater、分层的七个 decide* 规则函数）不在这里——
- * 那是两套档位真正不同、需要保持独立的部分，不属于这次合并的范围。
+/** 【文件职责】service/linkageRules/linkageRules.js 共用的底层工具函数——读传感器、
+ * 读开关状态、按 preffix 查阈值、下发指令，各条规则都要用到这些动作，抽出来只维护
+ * 一份实现。9 条规则函数本身（rulePumpAlwaysOn/ruleHeaterHysteresis 等）不在这里——
+ * 那是规则之间真正不同、需要保持独立的部分。
  * 【配置中心关联】SENSOR_FIELD_MAP、SINGLE_DEVICE_MODE、MQTT_QOS 每次调用实时读取。 */
 const promisePool = require('../../config/dbPool')
 const systemConfig = require('../../config/systemConfig')
@@ -25,8 +23,7 @@ const THRESHOLD_SLOTS = {
   pressureHigh: { prefix: 'pressure_high', name: '压力上限阈值' },
 }
 
-/** 防抖：同一设备同一开关切换至少间隔 minIntervalMs；两套模式共用同一份计时状态，
- * 模式切换时防抖不会从零开始，不会因为切模式那一刻允许连续瞬间切换。 */
+/** 防抖：同一设备同一开关切换至少间隔 minIntervalMs；所有规则共用同一份计时状态。 */
 const lastSwitchTime = new Map()
 
 async function resolveConfigIdByPrefix(prefix) {
@@ -108,8 +105,7 @@ async function getTargetTemp(deviceNo, fallback) {
 }
 
 /** 下发一次开关指令：找到对应指令项、拼协议报文、发布 MQTT、更新 t_direct、记操作历史。
- * source 由调用方传入（'auto_control' 或 'layered_control'），日志和操作历史里
- * 都带着这个来源标签，能区分是哪套模式下发的这条指令。 */
+ * source 由调用方传入（如 'linkage_rules'），日志和操作历史里都带着这个来源标签。 */
 async function setSwitch(prefix, name, value, deviceNo, source) {
   const conf = await findSwitchConfig(prefix, name)
   if (!conf) return false

@@ -110,7 +110,7 @@ async function isHeaterConfig(configId) {
   return String(rows[0].preffix || '').trim().toLowerCase() === 'heater'
 }
 
-/** 按 preffix 查 t_direct_config.id，跟 autoControl.js/safetyInterlock.js 里的同名函数逻辑一致。 */
+/** 按 preffix 查 t_direct_config.id，跟 controlShared/controlHelpers.js/safetyInterlock.js 里的同名函数逻辑一致。 */
 async function resolveConfigIdByPrefix(prefix) {
   if (!prefix) return null
   const [rows] = await promisePool.query(

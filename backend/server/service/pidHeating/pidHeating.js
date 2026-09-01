@@ -26,9 +26,9 @@
  * 调整的指令项；systemConfig.js 的 PID_HEATING 只在两个开关都还没配置
  * （指令项不存在）时用作兜底默认值。
  *
- * 与 CONTROL_MODE（simple/layered）是两条独立的线——PID 只接管加热这一个执行器，
- * 水泵仍由 CONTROL_MODE 对应的模块决定；PID 启用时，autoControl.js / layeredControl.js
- * 会跳过各自的加热下发逻辑，只由这里下发加热指令。
+ * 与 LINKAGE_RULES 是两条独立的线——PID 只接管加热这一个执行器，
+ * 水泵仍由 LINKAGE_RULES 决定；PID 启用时，linkageRules.js
+ * 会跳过加热下发逻辑，只由这里下发加热指令。
  *
  * 【控制对象说明】
  *   T1 (field1) = 进水温度（temp_in），用于参考
@@ -100,7 +100,7 @@ async function readSwitchOn(prefix, deviceNo) {
  */
 async function isPidEnabled(deviceNo) {
   // 自整定运行期间这里也返回 true，相当于把加热的控制权一起交给自整定。
-  // autoControl.js/layeredControl.js 都是调这个函数判断要不要让位给 PID，
+  // linkageRules.js 调这个函数判断要不要让位给 PID，
   // 所以自整定期间它们看到的也是"PID 已启用"，同样会让位。
   if (systemConfig.getConfig().PID_AUTOTUNE?.enabled === true) return true
   const master = await readSwitchOn('auto_control_enabled', deviceNo)
