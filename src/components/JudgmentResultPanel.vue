@@ -1,21 +1,24 @@
 <!--
  * 【文件职责】
- * 智能判定结果的可视化展示：结论 + 置信度进度条做成醒目的结果卡片，
+ * 智能判定结果的可视化展示：结论 + 置信度做成简洁的结果区块，
  * 原始 JSON 响应折叠在下面留作详情/调试，供 SensorHistory/BehaviorHistory 共用。
  * 【配置中心关联】无直接读取；展示内容完全来自调用方传入的判定结果。
  * -->
 <template>
   <div v-if="result" class="judgment-result">
-    <el-tag v-if="result.mock" type="warning" class="mock-tag">本地占位判定（服务未启用，不是真实结果）</el-tag>
-    <div class="judgment-summary" :class="isNegative ? 'is-negative' : 'is-normal'">
-      <div class="judgment-conclusion">{{ conclusion ?? '（未取到结论，请检查“智能判定”配置里的结果解析设置）' }}</div>
+    <el-tag v-if="result.mock" type="warning" class="mock-tag" effect="plain" size="small">本地占位判定（服务未启用，不是真实结果）</el-tag>
+    <div class="judgment-summary">
+      <div class="summary-head">
+        <span class="status-dot" :class="isNegative ? 'is-negative' : 'is-normal'"></span>
+        <span class="judgment-conclusion">{{ conclusion ?? '（未取到结论，请检查“智能判定”配置里的结果解析设置）' }}</span>
+      </div>
       <div v-if="confidencePercent != null" class="judgment-confidence">
-        <span>置信度</span>
-        <el-progress :percentage="confidencePercent" :color="isNegative ? '#f56c6c' : '#67c23a'" :stroke-width="10" style="flex: 1" />
+        <span class="confidence-label">置信度</span>
+        <el-progress :percentage="confidencePercent" :color="isNegative ? '#ef4444' : '#22c55e'" :stroke-width="4" :show-text="false" style="flex: 1" />
         <span class="confidence-number">{{ confidencePercent }}%</span>
       </div>
     </div>
-    <el-collapse>
+    <el-collapse class="raw-collapse">
       <el-collapse-item title="查看原始响应数据">
         <pre class="raw-json">{{ JSON.stringify(result, null, 2) }}</pre>
       </el-collapse-item>
@@ -53,12 +56,38 @@ const isNegative = computed(() => {
 </script>
 
 <style scoped>
-.mock-tag { margin-bottom: 10px; }
-.judgment-summary { padding: 20px; border-radius: 10px; margin-bottom: 14px; }
-.judgment-summary.is-negative { background: #fef0f0; border: 1px solid #fbc4c4; }
-.judgment-summary.is-normal { background: #f0f9eb; border: 1px solid #c2e7b0; }
-.judgment-conclusion { font-size: 22px; font-weight: 700; color: #303133; margin-bottom: 12px; }
-.judgment-confidence { display: flex; align-items: center; gap: 10px; color: #606266; font-size: 14px; }
-.confidence-number { font-weight: 600; color: #303133; min-width: 42px; text-align: right; }
-.raw-json { background: #f5f5f5; padding: 16px; border-radius: 8px; font-size: 13px; max-height: 300px; overflow: auto; white-space: pre-wrap; word-break: break-all; margin: 0; }
+.mock-tag { margin-bottom: 12px; }
+
+.judgment-summary {
+  padding: 4px 0 18px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid #f4f4f5;
+}
+
+.summary-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.status-dot.is-negative { background: #ef4444; }
+.status-dot.is-normal { background: #22c55e; }
+
+.judgment-conclusion { font-size: 18px; font-weight: 600; color: #18181b; letter-spacing: -0.01em; }
+
+.judgment-confidence { display: flex; align-items: center; gap: 10px; color: #71717a; font-size: 12px; padding-left: 17px; }
+.confidence-label { flex-shrink: 0; }
+.confidence-number { font-weight: 500; color: #52525b; min-width: 34px; text-align: right; }
+
+.raw-collapse { border-top: none; }
+.raw-collapse :deep(.el-collapse-item__header) { font-size: 13px; color: #a1a1aa; border-bottom: none; }
+.raw-collapse :deep(.el-collapse-item__wrap) { border-bottom: none; }
+.raw-json { background: #fafafa; padding: 14px 16px; border-radius: 6px; font-size: 12px; max-height: 300px; overflow: auto; white-space: pre-wrap; word-break: break-all; margin: 0; color: #52525b; }
 </style>

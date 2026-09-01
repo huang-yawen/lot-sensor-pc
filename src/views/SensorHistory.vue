@@ -34,17 +34,7 @@
     </TableContainer>
 
     <!-- 识别结果对话框（原始数据展示） -->
-    <el-dialog
-      v-model="dialogVisible"
-      title="智能判定结果"
-      width="700px"
-      :close-on-click-modal="false"
-    >
-      <JudgmentResultPanel :result="recognizeResult" />
-      <template #footer>
-        <el-button @click="dialogVisible = false">关闭</el-button>
-      </template>
-    </el-dialog>
+    <JudgmentResultDialog v-model:visible="dialogVisible" :result="recognizeResult" />
 
     <div class="chartContainer" v-if="chartsEnabled && data.length > 0">
       <LineBarCharts :data="data" :pageSize="pageSize" :settings="store.chartSettings" />
@@ -59,7 +49,7 @@ import { ElMessage } from 'element-plus'
 import { PaginationStore } from '@/stores/PaginationStore.js'
 import TableContainer from '@/components/TableContainer.vue'
 import LineBarCharts from '@/components/LineBarCharts.vue'
-import JudgmentResultPanel from '@/components/JudgmentResultPanel.vue'
+import JudgmentResultDialog from '@/components/JudgmentResultDialog.vue'
 import api from '@/api'
 import { useSystemConfigStore } from '@/stores/SystemConfigStore'
 

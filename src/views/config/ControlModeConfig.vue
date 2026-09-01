@@ -1,7 +1,9 @@
 <!--
- * 【文件职责】正常状况联动可视化配置页——统一规则库，9 条规则逐条独立勾选，
- * 可以任意组合，不再是"简化版/分层联动二选一"。原来两套互斥逻辑（自动控制/
- * 分层联动）已经合并成一份规则清单，赛场上要什么组合直接勾，不用改代码。
+ * 【文件职责】正常状况联动可视化配置页——统一规则库，规则清单里的规则逐条独立
+ * 勾选，可以任意组合，不再是"简化版/分层联动二选一"。加热的控制算法（滞回带
+ * 通断/PID）是例外，不在这份清单里，是"设备设置/指令配置"页面两个各自独立的
+ * 开关，两个都开时 PID 优先；现场只想留一种，直接在数据库删掉另一个的指令项，
+ * 不影响系统运行。
  * 【配置中心关联】读取/写入 systemConfig.LINKAGE_RULES、DEFAULT_TARGET_TEMP，
  * 保存后立即生效。
  * -->
@@ -31,6 +33,12 @@
           <p>逐条勾选启用，可以任意组合。“影响执行器”一列标注这条规则会参与决策哪个执行器。</p>
         </div>
       </div>
+      <el-alert
+        type="info"
+        :closable="false"
+        show-icon
+        title="加热的控制算法不在这份清单里：滞回带通断和 PID 恒温是“设备设置/指令配置”页面两个各自独立的开关（“加热滞回带通断”“PID恒温控制”），两个都开时 PID 优先。现场只想用其中一种，直接在数据库删掉另一个的指令项即可，不影响系统运行。"
+      />
       <el-table :data="rules" border stripe>
         <el-table-column label="规则" width="140">
           <template #default="scope"><strong>{{ scope.row.name }}</strong></template>
@@ -61,12 +69,12 @@
           <el-input-number v-model="targetTemp" :min="0" :step="0.5" :disabled="!form.enabled" />
         </el-form-item>
         <el-form-item label="加热滞回带回差（℃）">
-          <el-input-number v-model="form.heaterHysteresisValue" :min="0" :step="0.5" :disabled="!form.enabled || !form.heaterHysteresis" />
-          <div class="hint">出水温度低于"目标-回差"才开加热，达到目标就关，中间维持现状不抖动。（heaterHysteresis 规则用）</div>
+          <el-input-number v-model="form.heaterHysteresisValue" :min="0" :step="0.5" :disabled="!form.enabled" />
+          <div class="hint">出水温度低于"目标-回差"才开加热，达到目标就关，中间维持现状不抖动。仅在"设备设置/指令配置"页面的"加热滞回带通断"开关打开时生效。</div>
         </el-form-item>
         <el-form-item label="温差过大阈值（℃）">
-          <el-input-number v-model="form.tempDiffOpenThreshold" :min="0" :step="0.5" :disabled="!form.enabled || !form.heaterHysteresis" />
-          <div class="hint">进出水温差超过此值判定异常，关闭加热。（heaterHysteresis 规则用）</div>
+          <el-input-number v-model="form.tempDiffOpenThreshold" :min="0" :step="0.5" :disabled="!form.enabled" />
+          <div class="hint">进出水温差超过此值判定异常，关闭加热。仅在"加热滞回带通断"开关打开时生效。</div>
         </el-form-item>
         <el-form-item label="温度单层滞回回差（℃）">
           <el-input-number v-model="form.tempSingleHysteresis" :min="0" :step="0.5" :disabled="!form.enabled || !form.tempSingle" />
@@ -96,7 +104,6 @@ const saving = ref(false)
 const defaultForm = () => ({
   enabled: false,
   pumpAlwaysOn: true,
-  heaterHysteresis: true,
   heaterHysteresisValue: 1,
   tempDiffOpenThreshold: 3,
   flowSingle: false,
@@ -117,7 +124,6 @@ const targetTemp = ref(22)
 
 const rules = [
   { key: 'pumpAlwaysOn', name: '水泵常开', targets: '水泵', description: '无故障、其他传感器（流量/压力）读数正常就保持运行，不跟温度目标挂钩；触发保护故障时关闭。工业上推荐常开——水泵关闭会导致出水温度因死水滞留而失真。' },
-  { key: 'heaterHysteresis', name: '加热滞回带', targets: '加热', description: '出水温度低于"目标-回差"才开，达到目标就关，中间维持现状；水泵关闭或流量=0 / 保护故障 / 温差过大时强制关闭。推荐搭配水泵常开一起用。' },
   { key: 'flowSingle', name: '流量单层', targets: '水泵', description: '流量在下上限阈值之间或低于下限->打开水泵；高于上限->关闭水泵保护。' },
   { key: 'pressureSingle', name: '压力单层', targets: '水泵/加热', description: '压力低于下限阈值->打开水泵；高于上限阈值->关闭水泵、关闭加热。' },
   { key: 'tempSingle', name: '温度单层', targets: '加热', description: '任一温度低于目标温度或温度下限->打开加热；高于目标温度或温度上限->关闭加热；按上方回差滞回防抖动。' },

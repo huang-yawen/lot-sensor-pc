@@ -208,7 +208,10 @@ module.exports = async (req, res) => {
     const requirePumpBeforeHeater = systemConfig.getConfig().SAFETY_INTERLOCK?.requirePumpBeforeHeater !== false
     if (requirePumpBeforeHeater && isOnValue(value) && await isHeaterConfig(config_id)) {
       const pumpConfigId = await resolveConfigIdByPrefix('pump')
-      const pumpQueryDNo = singleDeviceMode ? null : d_no
+      // 单设备模式下水泵的值存在真实设备号下（不是 d_no IS NULL 的全局行），
+      // 这里必须用 getDefaultDeviceId() 查真实设备号，传 null 会永远查不到水泵
+      // 当前状态，导致这条检查在单设备模式下把"打开加热"一律误判拒绝。
+      const pumpQueryDNo = singleDeviceMode ? await getDefaultDeviceId() : d_no
       const pumpValue = pumpConfigId != null ? await getDirectValue({ config_id: pumpConfigId, d_no: pumpQueryDNo }) : null
       if (!isOnValue(pumpValue)) {
         console.warn(`[DirectUpdate] 指令 ${config_id} 被拒绝：水泵未开启时不允许打开加热`)
@@ -243,13 +246,19 @@ module.exports = async (req, res) => {
 
     // 2.5 没有配置 MQTT 字段的指令（如阈值类参考值）只在本地保存，不下发设备。
     if (payload === null) {
-      const saveDNo = singleDeviceMode ? deviceId : d_no
+      // 统一用上面已经标准化过的 deviceId（null=全局，设备号=设备专属），不能直接
+      // 用前端传来的原始 d_no——多设备模式下它可能是字符串 'null'/'undefined'，
+      // t_direct 那层 saveDirectData/getDirectValue 内部有 normalizeDeviceNo 兜底
+      // 不受影响，但 saveOperationHistory 没有这层兜底，字符串 'null' 会被当成真实
+      // 设备号原样存进 t_operation_history，导致这条全局操作历史归错到一个叫
+      // "null" 的设备名下。
+      const saveDNo = deviceId
       const oldValue = await getDirectValue({ config_id, d_no: saveDNo })
       const saveResult = await saveDirectData({ config_id, value, d_no: saveDNo })
       console.log('[DirectUpdate] 本地配置保存成功（未配置 MQTT 字段，不下发）:', saveResult)
 
       const historyResult = await saveOperationHistory({
-        d_no: deviceId || saveDNo,
+        d_no: deviceId,
         config_id: Number(config_id),
         old_value: oldValue,
         new_value: String(value),
@@ -303,10 +312,9 @@ module.exports = async (req, res) => {
       }
       console.log('[DirectUpdate] MQTT 第二次发送成功')
 
-      // 5. 发送成功后再保存到数据库
-      // 单设备模式：保存时传入设备号，保存为设备专属配置
-      // 多设备模式：保存时传入原始 d_no（null=全局，设备号=设备专属）
-      const saveDNo = singleDeviceMode ? deviceId : d_no
+      // 5. 发送成功后再保存到数据库。统一用上面已标准化的 deviceId（null=全局，
+      // 设备号=设备专属），理由同上（2.5 步）：不能直接用前端传来的原始 d_no。
+      const saveDNo = deviceId
       const oldValue = await getDirectValue({ config_id, d_no: saveDNo })
       const saveResult = await saveDirectData({ config_id, value, d_no: saveDNo })
       console.log('[DirectUpdate] 数据库保存成功:', saveResult)
@@ -314,7 +322,7 @@ module.exports = async (req, res) => {
       // 记录操作历史（手动指令下发）
       // 只存 config_id + new_value，操作名称和值含义通过 JOIN t_direct_config 获取
       const historyResult = await saveOperationHistory({
-        d_no: deviceId || saveDNo,
+        d_no: deviceId,
         config_id: Number(config_id),
         old_value: oldValue,
         new_value: String(value),

@@ -553,9 +553,11 @@ const defaultConfig = {
   // “打开”（fail-safe）。目标温度不在这里配置，统一用上面的 DEFAULT_TARGET_TEMP。
   //   enabled                  - 联动总开关
   //   pumpAlwaysOn              - 水泵常开：无故障、流量/压力读数正常就保持运行
-  //   heaterHysteresis          - 加热滞回带通断：出水温度低于“目标-回差”才开，达到目标就关
-  //   heaterHysteresisValue     - 加热滞回带回差（℃）
-  //   tempDiffOpenThreshold     - 温差过大判定阈值（℃），超过关闭加热（heaterHysteresis 规则用）
+  //   heaterHysteresisValue     - 加热滞回带回差（℃），滞回带通断这条规则的参数
+  //   tempDiffOpenThreshold     - 温差过大判定阈值（℃），超过关闭加热，滞回带通断这条规则的参数
+  //   （加热滞回带通断本身是否生效不在这里勾选，由指令中心独立开关
+  //    preffix=heater_hysteresis_enabled 决定；跟 pid_enabled 各自独立，两个都开
+  //    时 PID 优先，见 pidHeating.js/isPidEnabled 和 linkageRules.js）
   //   flowSingle                 - 流量单层：区间内/低于下限开水泵，高于上限关水泵保护
   //   pressureSingle             - 压力单层：低于下限开水泵，高于上限关水泵、关加热
   //   tempSingle                 - 温度单层（带滞回）：低于目标/下限开加热，高于目标/上限关加热
@@ -569,7 +571,6 @@ const defaultConfig = {
   LINKAGE_RULES: {
     enabled: false,
     pumpAlwaysOn: true,
-    heaterHysteresis: true,
     // 加热器滞回带（死区）回差：出水温度低于"目标-回差"才开，达到目标就关，
     // 中间这段维持现状不变，避免在目标温度附近因传感器噪声反复抖动开关。
     heaterHysteresisValue: 1,
@@ -657,8 +658,10 @@ const defaultConfig = {
   // --------------------------------------------------------------------------
   // 加热模块只有开关量、没有功率输出，用“时间比例控制”模拟 PWM：固定周期 windowMs，
   // PID 输出的占空比 duty(0~100%) 决定这个周期内加热开多久。仅接管加热这一个执行器，
-  // 水泵仍由 LINKAGE_RULES 决定；enabled=true 时 linkageRules.js 会跳过加热下发。
-  //   enabled       - PID 恒温控制总开关
+  // 水泵仍由 LINKAGE_RULES 决定。是否真正启用由指令中心独立开关
+  // pid_enabled 决定（跟 heater_hysteresis_enabled 各自独立，两个都开时 PID
+  // 优先），这里的 enabled 只在指令项还没配置时用作兜底默认值。
+  //   enabled       - PID 恒温控制兜底开关（现场指令项优先）
   //   kp/ki/kd      - PID 三个系数
   //   windowMs      - 时间比例控制周期（毫秒），默认 10000（10 秒）
   // 目标温度不在这里配置，统一用前面的 DEFAULT_TARGET_TEMP。
@@ -1035,7 +1038,7 @@ function validate(config) {
   if (!Number.isFinite(config.DEFAULT_TARGET_TEMP)) throw new Error('DEFAULT_TARGET_TEMP 必须是数字')
   const linkage = config.LINKAGE_RULES
   if (!linkage || typeof linkage !== 'object' || Array.isArray(linkage)) throw new Error('LINKAGE_RULES 必须是 JSON 对象')
-  for (const key of ['enabled', 'pumpAlwaysOn', 'heaterHysteresis', 'flowSingle', 'pressureSingle', 'tempSingle', 'dualTemp', 'tempFlow', 'pressureFlow', 'tempPressure']) {
+  for (const key of ['enabled', 'pumpAlwaysOn', 'flowSingle', 'pressureSingle', 'tempSingle', 'dualTemp', 'tempFlow', 'pressureFlow', 'tempPressure']) {
     if (typeof linkage[key] !== 'boolean') throw new Error(`LINKAGE_RULES.${key} 必须是布尔值`)
   }
   for (const key of ['heaterHysteresisValue', 'tempDiffOpenThreshold', 'tempSingleHysteresis', 'dualTempDiffThreshold']) {

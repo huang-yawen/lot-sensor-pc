@@ -21,14 +21,17 @@
  *
  * 都在"指令配置"页面按两层开关组织："控制模式"（t_direct_config，
  * preffix=auto_control_enabled）下面是目标温度和"PID恒温控制"（preffix=pid_enabled）
- * 子开关，PID恒温控制下面才是 Kp/Ki/Kd/控制周期/占空比上下限——两个开关都是开，PID
- * 才真正启用（见 isPidEnabled）。这些跟流量/压力/温度阈值一样，都是可以在前端现场
- * 调整的指令项；systemConfig.js 的 PID_HEATING 只在两个开关都还没配置
- * （指令项不存在）时用作兜底默认值。
+ * 子开关，选中时下面才是 Kp/Ki/Kd/控制周期/占空比上下限——控制模式是自动、且
+ * PID恒温控制开关是开，PID 才真正启用（见 isPidEnabled）。这些跟流量/压力/温度
+ * 阈值一样，都是可以在前端现场调整的指令项；systemConfig.js 的 PID_HEATING 只在
+ * 两个指令项都还没配置时用作兜底默认值。
  *
- * 与 LINKAGE_RULES 是两条独立的线——PID 只接管加热这一个执行器，
- * 水泵仍由 LINKAGE_RULES 决定；PID 启用时，linkageRules.js
- * 会跳过加热下发逻辑，只由这里下发加热指令。
+ * 加热滞回带通断是另一个独立的指令项（preffix=heater_hysteresis_enabled，跟本
+ * 开关同级、各自独立，不是同一个开关的两个选项），由 linkageRules.js 判断是否
+ * 生效。两个开关都是独立指令项，删掉其中任意一个（比如赛场上确定只用某一种
+ * 策略）不影响另一个正常运行——查不到就当作未启用，不会报错。两个都开时 PID
+ * 优先，linkageRules.js 用 !isPidEnabled(deviceNo) 判断滞回带规则是否轮到自己，
+ * 两条策略不会同时下发指令。
  *
  * 【控制对象说明】
  *   T1 (field1) = 进水温度（temp_in），用于参考
@@ -97,6 +100,9 @@ async function readSwitchOn(prefix, deviceNo) {
  * PID 是否真正启用：需要"控制模式"（preffix=auto_control_enabled）和
  * "PID恒温控制"（preffix=pid_enabled）两个指令项都是开，缺一不可（外层总开关 + 内层
  * PID 专属开关的两级结构）。两个指令项都还没配置时才退回 PID_HEATING.enabled 兜底。
+ * pid_enabled 这条指令项被删除时 readSwitchOn 返回 null，走 master===true &&
+ * null===true 判断，结果是 false（未启用），不会报错——赛场上删掉这个开关就等于
+ * 永久禁用 PID，只用滞回带通断。
  */
 async function isPidEnabled(deviceNo) {
   // 自整定运行期间这里也返回 true，相当于把加热的控制权一起交给自整定。
@@ -450,4 +456,4 @@ async function evaluatePidHeating(info) {
 
 // readTempOut/getTargetTemp/setHeater/resolveConfigIdByName 额外导出给 pidAutoTune.js 复用，
 // 避免自整定服务重复实现同一套字段读取/指令下发逻辑。
-module.exports = { evaluatePidHeating, isPidEnabled, readTempOut, getTargetTemp, setHeater, resolveConfigIdByName }
+module.exports = { evaluatePidHeating, isPidEnabled, readSwitchOn, readTempOut, getTargetTemp, setHeater, resolveConfigIdByName }

@@ -6,33 +6,48 @@
  * -->
 <template>
   <div>
-    <div class="input">
-      <form @submit.prevent>
-        <el-input v-model="input" placeholder="输入设备编号或设备名称" style="width: 240px" :suffix-icon="Search" />
-        <el-button type="primary" :loading="store.loading" @click="handleSearch" class="search-btn">开始查找</el-button>
-      </form>
-      <el-button type="success" @click="showAddForm" class="add-btn">新增设备</el-button>
+    <div class="search-form">
+      <div class="search-form-inner">
+        <el-input
+          v-model="input"
+          style="width: 240px; flex-shrink: 0;"
+          placeholder="输入设备编号或设备名称"
+          :suffix-icon="Search"
+          clearable
+        />
+        <div class="button-wrapper">
+          <el-button type="primary" :loading="store.loading" @click="handleSearch">开始查找</el-button>
+          <el-button type="success" @click="showAddForm">新增设备</el-button>
+        </div>
+      </div>
     </div>
 
-    <div class="table">
-      <table v-if="deviceData.length > 0">
-        <thead>
-          <tr>
-            <th v-for="key in tableColumns" :key="key">{{ key }}</th>
-            <th>操作</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="item in deviceData" :key="item.id">
-            <td v-for="key in tableColumns" :key="key">{{ item[key] }}</td>
-            <td>
-              <el-button type="primary" @click="showEditForm(item)">修改</el-button>
-              <el-button type="danger" @click="handleDelete(item)">删除</el-button>
-            </td>
-          </tr>
-        </tbody>
-      </table>
-      <div v-else class="empty-table">
+    <div class="table-wrapper">
+      <el-table
+        :data="deviceData"
+        style="width: 100%"
+        v-if="deviceData.length > 0"
+        border
+        stripe
+        :header-cell-style="{ background: '#f8fafc', color: '#475569', fontWeight: 600 }"
+      >
+        <el-table-column
+          v-for="key in tableColumns"
+          :key="key"
+          :prop="key"
+          :label="key"
+          show-overflow-tooltip
+          align="center"
+          :width="getColumnWidth(key)"
+        />
+        <el-table-column label="操作" align="center" width="180">
+          <template #default="scope">
+            <el-button type="primary" @click="showEditForm(scope.row)">修改</el-button>
+            <el-button type="danger" @click="handleDelete(scope.row)">删除</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+      <div v-else class="empty-state">
         {{ store.loading ? '加载中...' : '暂无数据' }}
       </div>
     </div>
@@ -127,11 +142,19 @@ const handlePageSizeChange = (size) => {
 }
 
 const deviceData = computed(() => store.deviceData)
-// 设备管理是手写表格，也要接入全局字段显示开关。
+// 设备管理表格也要接入全局字段显示开关。
 const tableColumns = computed(() => {
   const firstItem = deviceData.value[0]
   return firstItem ? Object.keys(firstItem).filter(displayStore.isFieldVisible) : []
 })
+
+// 列宽策略跟 TableContainer.vue 保持一致：id 列窄，时间类列固定宽度，其余自适应。
+const getColumnWidth = (key) => {
+  const lower = String(key).toLowerCase()
+  if (lower === 'id' || lower === '序号') return 80
+  if (lower.includes('时间') || lower.includes('创立时间') || lower.includes('操作时间') || lower.includes('创建时间')) return 195
+  return ''
+}
 
 const fetchData = async () => {
   console.log('搜索参数:', { input: input.value, currentPage: currentPage.value, pageSize: pageSize.value })
@@ -261,49 +284,33 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-.input {
+.search-form {
+  padding-bottom: 24px;
+}
+
+.search-form-inner {
   display: flex;
-  position: relative;
-  gap: 16px;
   align-items: center;
+  gap: 16px;
+  flex-wrap: nowrap;
+  height: 40px;
+}
+
+.button-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.button-wrapper .el-button {
+  min-width: 100px;
 }
 
 .pagination-wrapper {
   margin-top: 24px;
   display: flex;
   justify-content: center;
-}
-
-.search-btn {
-  margin-left: 16px;
-  background-color: #374270;
-  color: white;
-  border: none;
-  border-radius: 6px;
-  padding: 8px 24px;
-  font-weight: 500;
-  transition: all 0.2s ease;
-}
-
-.search-btn:hover {
-  background-color: #4a5a91;
-  box-shadow: 0 2px 8px rgba(55, 66, 112, 0.3);
-}
-
-.add-btn {
-  position: absolute;
-  right: 0;
-  background-color: #10b981;
-  border: none;
-  border-radius: 6px;
-  padding: 8px 20px;
-  font-weight: 500;
-  transition: all 0.2s ease;
-}
-
-.add-btn:hover {
-  background-color: #059669;
-  box-shadow: 0 2px 8px rgba(16, 185, 129, 0.3);
 }
 
 .form-row {
@@ -343,92 +350,33 @@ onMounted(async () => {
   cursor: not-allowed;
 }
 
-.table {
-  margin-top: 24px;
+.table-wrapper {
   background: white;
-  border-radius: 12px;
-  border: 1px solid #e2e8f0;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
-  overflow: hidden;
-}
-
-.table > table {
-  width: 100%;
-  border-collapse: collapse;
-  text-align: center;
-  font-size: 14px;
-}
-
-.table th {
-  background-color: #f8fafc;
-  color: #475569;
-  font-weight: 600;
-  padding: 14px 16px;
-  font-size: 14px;
-  border-bottom: 2px solid #e2e8f0;
-}
-
-.table td {
-  padding: 14px 16px;
-  border-bottom: 1px solid #f1f5f9;
-  color: #334155;
-}
-
-.table tbody tr {
-  transition: all 0.2s ease;
-}
-
-.table tbody tr:hover {
-  background-color: #f8fafc;
-}
-
-.table tbody tr:nth-child(even) {
-  background-color: #fafbfc;
-}
-
-.table td button {
-  padding: 6px 14px;
   border-radius: 4px;
-  font-size: 13px;
-  font-weight: 500;
-  transition: all 0.2s ease;
-  margin: 0 4px;
+  border: 1px solid #e2e8f0;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
+  overflow: auto;
 }
 
-.table td button:nth-child(1) {
-  color: #374270;
-  background-color: #eef2ff;
-  border: 1px solid #ddd6fe;
-}
-
-.table td button:nth-child(1):hover {
-  background-color: #ddd6fe;
-}
-
-.table td button:nth-child(2) {
-  color: #dc2626;
-  background-color: #fef2f2;
-  border: 1px solid #fee2e2;
-}
-
-.table td button:nth-child(2):hover {
-  background-color: #fee2e2;
-}
-
-.empty-table {
+.empty-state {
   text-align: center;
-  padding: 60px;
-  color: #94a3b8;
-  font-size: 16px;
+  padding: 50px;
+  color: #999;
+  font-size: 30px;
 }
 
-.empty-table::before {
-  content: '';
-  display: block;
-  width: 64px;
-  height: 64px;
-  margin: 0 auto 16px;
-  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='64' height='64' viewBox='0 0 24 24' fill='none' stroke='%23cbd5e1' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z'/%3E%3Cline x1='3' y1='6' x2='21' y2='6'/%3E%3Cpath d='M16 10a4 4 0 0 1-8 0'/%3E%3C/svg%3E") no-repeat center;
+@media (max-width: 768px) {
+  .search-form-inner {
+    flex-direction: column;
+    align-items: stretch;
+    height: auto;
+  }
+
+  .search-form-inner .el-input {
+    width: 100% !important;
+    margin-left: 0 !important;
+    margin-bottom: 10px;
+  }
 }
 
 .modal-mask {

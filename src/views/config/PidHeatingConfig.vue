@@ -9,14 +9,14 @@
       type="info"
       :closable="false"
       show-icon
-      title="加热模块只有开关量、没有功率输出，用“时间比例控制”模拟 PWM：固定一个周期（下方“控制周期”），PID 算出的占空比决定这个周期内加热开多久、关多久，而不是简单全开/全关。只接管加热这一个执行器，水泵仍由“自动控制”或“分层联动”决定，二者互斥。"
+      title="加热模块只有开关量、没有功率输出，用“时间比例控制”模拟 PWM：固定一个周期（下方“控制周期”），PID 算出的占空比决定这个周期内加热开多久、关多久，而不是简单全开/全关。只接管加热这一个执行器，水泵仍由“联动控制”决定；加热滞回带通断和 PID 是“指令配置”页面两个各自独立的开关，两个都开时 PID 优先。"
     />
 
     <section class="pid-section">
       <div class="section-heading">
         <div>
           <h3>PID 恒温控制开关</h3>
-          <p>启用后，“自动控制”“分层联动”里的加热下发都会自动让位，只由本模块控制加热。</p>
+          <p>启用后，“联动控制”里的加热滞回带通断规则会自动让位，只由本模块控制加热。</p>
         </div>
         <el-switch v-model="form.enabled" active-text="启用 PID 恒温控制" />
       </div>
@@ -47,7 +47,7 @@
         </el-form-item>
         <el-form-item label="默认目标温度（℃）">
           <el-input-number v-model="targetTemp" :min="0" :step="0.5" :disabled="!form.enabled" />
-          <div class="hint">优先取指令中心的“目标温度”，未配置时用这个默认值（与“自动控制”页面共用同一个默认值，改这里那边也会同步变化）。</div>
+          <div class="hint">优先取指令中心的“目标温度”，未配置时用这个默认值（与“联动控制”页面共用同一个默认值，改这里那边也会同步变化）。</div>
         </el-form-item>
         <el-form-item label="控制周期（毫秒）">
           <el-input-number v-model="form.windowMs" :min="1000" :step="1000" :disabled="!form.enabled" />
@@ -92,7 +92,7 @@
       <div class="section-heading">
         <div>
           <h3>PID 自整定（继电反馈整定法）</h3>
-          <p>开启后暂时接管加热输出，让加热器在"目标温度 ± 回差"之间强制切换，逼出温度振荡，自动算出建议的 Kp/Ki/Kd。跟上方"PID 恒温控制开关"是否启用无关；测试期间"自动控制""分层联动"会自动让位。</p>
+          <p>开启后暂时接管加热输出，让加热器在"目标温度 ± 回差"之间强制切换，逼出温度振荡，自动算出建议的 Kp/Ki/Kd。跟上方"PID 恒温控制开关"是否启用无关；测试期间"联动控制"里的加热滞回带通断会自动让位。</p>
         </div>
       </div>
       <el-alert
@@ -174,7 +174,7 @@ const defaultForm = () => ({
 })
 
 const form = reactive(defaultForm())
-// 默认目标温度是跟自动控制共用的顶层配置（DEFAULT_TARGET_TEMP），不属于
+// 默认目标温度是跟联动控制共用的顶层配置（DEFAULT_TARGET_TEMP），不属于
 // PID_HEATING，单独用一个 ref 管理，不跟着 form 一起整体打包保存。
 const targetTemp = ref(22)
 

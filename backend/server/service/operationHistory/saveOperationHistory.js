@@ -11,6 +11,7 @@
 const promisePool = require('../../config/dbPool')
 const { shouldRecord } = require('./operationHistoryPolicy')
 const { nowLocalDateTime, formatLocalDateTime } = require('../../utils/helper')
+const { normalizeDeviceNo } = require('../directData/saveDirectConfig')
 let ensureTablePromise = null
 
 function ensureOperationHistoryTable() {
@@ -46,14 +47,19 @@ async function saveOperationHistory({ d_no, config_id, old_value = null, new_val
         : nowLocalDateTime())
     : nowLocalDateTime()
 
+  // 跟 saveDirectConfig.js 用同一套标准化：调用方传来的原始 d_no 有时是未处理过的
+  // 字符串 'null'/'undefined'（比如多设备模式下全局配置），不标准化会被当成真实
+  // 设备号原样存进去，这条操作历史会被错误归到一个叫"null"的设备名下。
+  const finalDNo = normalizeDeviceNo(d_no)
+
   try {
     await ensureOperationHistoryTable()
     const [result] = await promisePool.execute(
       `INSERT INTO t_operation_history (d_no, config_id, old_value, new_value, source, c_time)
        VALUES (?, ?, ?, ?, ?, ?)`,
-      [d_no || null, config_id ?? null, old_value == null ? null : String(old_value), new_value == null ? null : String(new_value), source, time]
+      [finalDNo, config_id ?? null, old_value == null ? null : String(old_value), new_value == null ? null : String(new_value), source, time]
     )
-    console.log('[OperationHistory] 保存成功:', { d_no, config_id, old_value, new_value, source, c_time: time, id: result.insertId })
+    console.log('[OperationHistory] 保存成功:', { d_no: finalDNo, config_id, old_value, new_value, source, c_time: time, id: result.insertId })
     return { success: true, insertId: result.insertId }
   } catch (error) {
     console.error('[OperationHistory] 保存失败:', error.message)

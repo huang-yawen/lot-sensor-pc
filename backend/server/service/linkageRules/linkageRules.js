@@ -1,11 +1,19 @@
 /**
  * 【文件职责】正常状况联动统一规则引擎——取代原来互斥的"自动控制（简化版）"和
- * "分层联动"两套独立逻辑。9 条规则各自独立开关，可以任意勾选组合，不再被迫
- * 二选一：赛场上评委要什么组合，直接在配置中心逐条勾选，不用改代码、不用重启。
+ * "分层联动"两套独立逻辑。除加热控制算法外，其余规则各自独立开关，可以任意勾选组合，
+ * 不再被迫二选一：赛场上评委要什么组合，直接在配置中心逐条勾选，不用改代码、
+ * 不用重启。
  *
- * 规则清单（每条都可通过 LINKAGE_RULES 独立开关，规则函数在文件下方）：
+ * 加热是个例外：滞回带通断（heaterHysteresis）和 PID 恒温是互斥的两套温控算法，
+ * 不能同时生效，所以不放进"自由勾选"的规则清单，各自是指令中心里独立的开关
+ * （preffix=heater_hysteresis_enabled / pid_enabled，谁也不依赖谁），两个都开时
+ * PID 优先（见下方 evaluateLinkageRules 里 !pidEnabled 的判断）。两个开关互相
+ * 独立：赛场上确定只用某一种策略，直接从 t_direct_config 删掉另一个的指令项，
+ * 查不到就当作未启用，程序不会报错。
+ *
+ * 规则清单（除 heaterHysteresis 外均可通过 LINKAGE_RULES 独立开关，规则函数在文件下方）：
  *   pumpAlwaysOn   水泵常开：无故障、其他传感器读数正常就保持运行，不跟温度挂钩。
- *   heaterHysteresis 加热滞回带通断：出水温度低于"目标-回差"才开，达到目标就关。
+ *   heaterHysteresis 加热滞回带通断：出水温度低于"目标-回差"才开，达到目标就关（是否生效由指令中心 heater_hysteresis_enabled 决定，不是这里的独立开关）。
  *   flowSingle     水泵-流量单层：流量在区间内/低于下限->开；高于上限->关（保护）。
  *   pressureSingle 水泵/加热-压力单层：压力低于下限->开泵；高于上限->关泵关热。
  *   tempSingle     加热-温度单层（带滞回）：温度低于目标/下限->开；高于目标/上限->关。
@@ -25,7 +33,7 @@
 const systemConfig = require('../../config/systemConfig')
 const { resolveDeviceNo } = require('../../utils/mappedData')
 const { getCurrentMode } = require('../directData/getControlMode')
-const { isPidEnabled } = require('../pidHeating/pidHeating')
+const { isPidEnabled, readSwitchOn } = require('../pidHeating/pidHeating')
 const { isLockedByFault, isAnyLocked } = require('../faultStatus/faultStatus')
 const {
   ABNORMAL_MAX,
@@ -213,13 +221,19 @@ async function evaluateLinkageRules(info) {
   ])
   const flowNormal = isFlowNormal(sensors.flow, flowLow, flowHigh)
   const faults = await detectFaults(sensors, deviceNo, states)
+  // 加热滞回带通断 / PID 恒温是指令中心两个独立开关（heater_hysteresis_enabled /
+  // pid_enabled），不是 LINKAGE_RULES 里能跟其他规则一起自由勾选的一项。两个都
+  // 没配置/被删除时 readSwitchOn 返回 null，=== true 判断为 false，等同未启用，
+  // 不会报错。两个都开时 PID 优先，滞回带规则整条不计算，加热完全交给 pidHeating.js。
+  const pidEnabled = await isPidEnabled(deviceNo)
+  const hysteresisEnabled = !pidEnabled && (await readSwitchOn('heater_hysteresis_enabled', deviceNo)) === true
 
   const pumpCandidates = []
   const heaterCandidates = []
   const collect = (r) => { pumpCandidates.push(r.pump); heaterCandidates.push(r.heater) }
 
   if (config.pumpAlwaysOn !== false) collect(rulePumpAlwaysOn(sensors, faults))
-  if (config.heaterHysteresis !== false) {
+  if (hysteresisEnabled) {
     collect(ruleHeaterHysteresis(sensors, states, faults, targetTemp,
       Number(config.tempDiffOpenThreshold ?? 3), Number(config.heaterHysteresisValue ?? 1)))
   }
@@ -248,9 +262,9 @@ async function evaluateLinkageRules(info) {
     actions.push({ device: 'pump', action: pumpDesired })
   }
 
-  // “控制模式”（指令配置页面）开启 PID 恒温时改由 service/pidHeating/pidHeating.js
-  // 接管加热，这里跳过，避免两边抢控制权。
-  if (heaterDesired && !(await isPidEnabled(deviceNo))
+  // PID恒温控制开关是开时改由 service/pidHeating/pidHeating.js 接管加热，这里跳过，
+  // 避免两边抢控制权（pidEnabled 已经在上面算过一次，这里不用重复查）。
+  if (heaterDesired && !pidEnabled
     && states.heatOn !== undefined && states.heatOn !== (heaterDesired === 'on') && canAct(deviceNo, 'heater')) {
     await setSwitch('heater', '加热', heaterDesired, deviceNo, 'linkage_rules')
     actions.push({ device: 'heater', action: heaterDesired })
