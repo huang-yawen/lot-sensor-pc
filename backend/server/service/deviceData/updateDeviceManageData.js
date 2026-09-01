@@ -8,22 +8,22 @@ const promisePool = require('../../config/dbPool')
  * @param {number} data.oldId - 原设备ID
  * @param {number} data.id - 新设备ID
  * @param {string} data['设备名称'] - 设备名称
- * @param {string} data['设备编号'] - 设备编号
- * @param {string} [data['内部编号']] - 系统内部统一使用的编号（d_no），不填则跟设备编号一致
+ * @param {string} data['设备编号'] - 设备编号（d_no，系统内部统一使用，展示给用户看的编号）
+ * @param {string} [data['内部编号']] - 身份识别编号（number，MQTT 上报匹配用），不填则跟设备编号一致
  * @param {string} [data['备注']] - 备注
  * @returns {Promise<{success: boolean, message: string}>}
  */
 module.exports = async (data) => {
     const oldId = Number(data.oldId)
     const deviceName = String(data['设备名称'] ?? '').trim()
-    const number = String(data['设备编号'] ?? data['电车编号id'] ?? '').trim()
-    const dNo = String(data['内部编号'] ?? '').trim() || number
+    const dNo = String(data['设备编号'] ?? data['电车编号id'] ?? '').trim()
+    const number = String(data['内部编号'] ?? '').trim() || dNo
     const remarks = String(data['备注'] ?? '').trim() || null
 
     if (!Number.isInteger(oldId) || oldId <= 0) {
         return { success: false, message: 'oldId 无效' }
     }
-    if (!deviceName || !number) {
+    if (!deviceName || !dNo) {
         return { success: false, message: '设备名称和设备编号不能为空' }
     }
     const [[existingDevice]] = await promisePool.execute(
@@ -35,10 +35,10 @@ module.exports = async (data) => {
     }
 
     const [[duplicate]] = await promisePool.execute(
-        'SELECT id FROM `t_device` WHERE TRIM(`number`) = ? AND `id` <> ? LIMIT 1',
-        [number, oldId]
+        'SELECT id FROM `t_device` WHERE TRIM(`d_no`) = ? AND `id` <> ? LIMIT 1',
+        [dNo, oldId]
     )
-    if (duplicate) return { success: false, message: `设备编号“${number}”已存在` }
+    if (duplicate) return { success: false, message: `设备编号“${dNo}”已存在` }
 
     const [result] = await promisePool.execute(
         `UPDATE t_device SET

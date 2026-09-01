@@ -38,7 +38,7 @@
 const promisePool = require('../../config/dbPool')
 const systemConfig = require('../../config/systemConfig')
 const { firstValue, getTopic, buildSwitchPayload } = require('../../utils/protocol')
-const { resolveDeviceNo, resolveFieldAliases } = require('../../utils/mappedData')
+const { resolveDeviceNo, resolveFieldAliases, getDefaultDeviceId, getAllDeviceIds } = require('../../utils/mappedData')
 const { saveDirectData, getDirectValue } = require('../directData/saveDirectConfig')
 const { saveOperationHistory } = require('../operationHistory/saveOperationHistory')
 const { nowLocalDateTime } = require('../../utils/helper')
@@ -649,14 +649,12 @@ async function initFaultStateFromDb() {
     if (resetConfId == null) return
 
     const singleDeviceMode = systemConfig.getConfig().SINGLE_DEVICE_MODE === true
-    let deviceNos = []
-    if (singleDeviceMode) {
-      const [rows] = await promisePool.query('SELECT `number` FROM `t_device` ORDER BY `id` ASC LIMIT 1')
-      if (rows[0]?.number) deviceNos = [String(rows[0].number).trim()]
-    } else {
-      const [rows] = await promisePool.query('SELECT `number` FROM `t_device`')
-      deviceNos = rows.map(r => String(r.number).trim()).filter(Boolean)
-    }
+    // 跟指令保存/渲染路径统一用 mappedData.js 的 getDefaultDeviceId/getAllDeviceIds，
+    // 不再自己查 t_device.number——以前这里只查 number，跟别处优先取 d_no 不一致，
+    // 两个字段值不同时这里会用错设备号，恢复不到正确设备的故障态。
+    const deviceNos = singleDeviceMode
+      ? [await getDefaultDeviceId()].filter(Boolean)
+      : await getAllDeviceIds()
 
     for (const deviceNo of deviceNos) {
       const value = await getDirectValue({ config_id: resetConfId, d_no: deviceNo })

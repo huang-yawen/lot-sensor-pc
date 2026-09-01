@@ -68,6 +68,22 @@ async function getDefaultDeviceId() {
   }
 }
 
+/**
+ * 多设备模式下取全部注册设备的 d_no 列表（d_no 没填时用 number 顶替，规则同
+ * getDefaultDeviceId）。目前给 faultStatus.js 启动时逐设备恢复故障态用。
+ */
+async function getAllDeviceIds() {
+  try {
+    const [rows] = await promisePool.query('SELECT `number`, `d_no` FROM `t_device`')
+    return rows
+      .map(row => String(row.d_no ?? '').trim() || String(row.number ?? '').trim())
+      .filter(Boolean)
+  } catch (err) {
+    console.error('[MappedData] 查询设备编号列表失败:', err.message)
+    return []
+  }
+}
+
 const MAPPER_TABLE_BY_DATA_TABLE = {
   t_sensor_data: 't_sensor_field_mapper',
   t_behavior_data: 't_behavior_field_mapper',
@@ -149,7 +165,7 @@ async function saveMappedData({ table, mapperTable, info, dateTime }) {
   return { deviceNo: values[0], mappedFieldCount: columns.length - 3 }
 }
 
-module.exports = { saveMappedData, resolveDeviceNo, resolveDNoByNumber, resolveFieldAliases, getDefaultDeviceId }
+module.exports = { saveMappedData, resolveDeviceNo, resolveDNoByNumber, resolveFieldAliases, getDefaultDeviceId, getAllDeviceIds }
 /**
  * 【文件职责】数据字段映射工具，将数据库或设备的原始字段转换为前端可用结构。
  * 【配置中心关联】如涉及显示字段，会按调用方传入的场景映射处理；本模块不持久化配置。

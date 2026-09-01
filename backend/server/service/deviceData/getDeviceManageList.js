@@ -15,8 +15,8 @@ const buildDeviceQuery = (searchMode, keywordLike, useCollate = false) => {
 
     return {
         where: useCollate
-            ? 'number LIKE ? OR device_name COLLATE utf8mb4_general_ci LIKE ?'
-            : 'number LIKE ? OR device_name LIKE ?',
+            ? 'd_no LIKE ? OR device_name COLLATE utf8mb4_general_ci LIKE ?'
+            : 'd_no LIKE ? OR device_name LIKE ?',
         params: [keywordLike, keywordLike],
     }
 }
@@ -43,7 +43,7 @@ module.exports = async function getDeviceManageList(query) {
     )
 
     let [deviceData] = await promisePool.query(
-        `SELECT id, number AS '设备编号', d_no AS '内部编号', device_name AS '设备名称',
+        `SELECT id, d_no AS '设备编号', number AS '内部编号', device_name AS '设备名称',
                 remarks AS '备注', ctime AS '创建时间'
          FROM t_device
          WHERE ${queryFields.where}
@@ -58,7 +58,7 @@ module.exports = async function getDeviceManageList(query) {
         ;[deviceData] = await promisePool.query(
             `SELECT id, device_name AS '设备名称',
                     remarks AS '备注',
-                    number AS '设备编号', d_no AS '内部编号', ctime AS '创建时间'
+                    d_no AS '设备编号', number AS '内部编号', ctime AS '创建时间'
              FROM t_device
              WHERE ${fallbackFields.where}
              ORDER BY id
