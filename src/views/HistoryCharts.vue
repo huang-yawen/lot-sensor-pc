@@ -96,6 +96,17 @@
       </div>
     </section>
 
+    <!-- ==================== 恒流速跟踪对比（目标流速参考线 + 平均流速实际值） ==================== -->
+    <section v-if="showPumpVelocityTrackingChart" class="chart-section">
+      <h2 class="section-title">
+        恒流速跟踪对比
+        <span class="target-temp-badge">当前目标流速 {{ targetVelocity }} m/s</span>
+      </h2>
+      <div class="chart-card chart-card-wide">
+        <div ref="pumpVelocityTrackingChartRef" class="chart-el chart-el-tall"></div>
+      </div>
+    </section>
+
     <!-- ==================== 设备状态时间线（水泵/加热开关阶梯图） ==================== -->
     <section v-if="showDeviceStateChart" class="chart-section">
       <h2 class="section-title">设备状态时间线</h2>
@@ -184,6 +195,7 @@ const cumulativeData = ref({})
 const timeWindowData = ref({})
 const averageChartRows = ref([])
 const targetTemp = ref(null)
+const targetVelocity = ref(null)
 const scatterRows = ref([])
 const deviceStateRows = ref([])
 const derivedMetricData = ref({})
@@ -228,6 +240,7 @@ async function loadAll() {
     timeWindowData.value = twRes.status === 'fulfilled' ? (twRes.value.data?.data || {}) : {}
     averageChartRows.value = avgRes.status === 'fulfilled' ? (avgRes.value.data?.data?.rows || []) : []
     targetTemp.value = avgRes.status === 'fulfilled' ? (avgRes.value.data?.data?.targetTemp ?? null) : null
+    targetVelocity.value = avgRes.status === 'fulfilled' ? (avgRes.value.data?.data?.targetVelocity ?? null) : null
     deviceStateRows.value = stateRes.status === 'fulfilled' ? (stateRes.value.data?.data || []) : []
     derivedMetricData.value = derivedRes.status === 'fulfilled' ? (derivedRes.value.data?.data || {}) : {}
     scatterRows.value = scatterRes.status === 'fulfilled' ? (scatterRes.value.data?.data || []) : []
@@ -691,6 +704,73 @@ watch([averageChartRows, targetTemp, pidTrackingChartRef], () => {
   })
 }, { deep: true })
 
+// ==================== 恒流速跟踪对比（目标流速参考线 + 平均流速实际值） ====================
+// 跟 PID 跟踪对比同一个套路：目标流速在指令中心只有"当前值"没有历史，画成水平参考线，
+// 跟实际流速曲线对照，直接看出恒流速控制把流速稳在了什么位置、超调有多大。
+// 实际值用的是 averageChartRows 里已经算好的 averageVelocity（v = Q / A），
+// 跟恒流速控制模块判断用的是同一个公式和单位，两边对得上号。
+const showPumpVelocityTrackingChart = computed(() => {
+  if (historyChartsConfig.value.showPumpVelocityTrackingChart === false) return false
+  return targetVelocity.value != null && averageChartRows.value.some((r) => r.averageVelocity != null)
+})
+
+const pumpVelocityTrackingChartRef = ref(null)
+let pumpVelocityTrackingChartInstance = null
+
+function renderPumpVelocityTrackingChart() {
+  const rows = averageChartRows.value
+  const el = pumpVelocityTrackingChartRef.value
+  if (!rows.length || !el || el.offsetWidth === 0) {
+    if (el) setTimeout(renderPumpVelocityTrackingChart, 50)
+    return
+  }
+  if (pumpVelocityTrackingChartInstance) pumpVelocityTrackingChartInstance.dispose()
+  const chart = echarts.init(el)
+  pumpVelocityTrackingChartInstance = chart
+
+  const times = formatTimes(rows)
+  chart.setOption({
+    tooltip: { trigger: 'axis' },
+    legend: { data: ['平均流速（实际）'], top: 0 },
+    toolbox: {
+      feature: { magicType: { type: ['line', 'bar'] }, saveAsImage: { title: '下载图片' } },
+      right: 10,
+      top: 0,
+    },
+    grid: { left: 14, right: 60, top: 50, bottom: 50 },
+    xAxis: { type: 'category', data: times, axisLabel: { rotate: 15, fontSize: 10 } },
+    yAxis: { type: 'value', name: 'm/s', nameTextStyle: { fontSize: 11 } },
+    series: [
+      {
+        name: '平均流速（实际）',
+        type: 'line',
+        smooth: true,
+        data: rows.map((r) => r.averageVelocity),
+        itemStyle: { color: '#0ea5e9' },
+        lineStyle: { color: '#0ea5e9' },
+        markLine: {
+          symbol: 'none',
+          label: {
+            formatter: '{c} m/s',
+            position: 'insideEndTop',
+            fontSize: 13,
+            fontWeight: 'bold',
+            color: '#ef4444',
+          },
+          lineStyle: { color: '#ef4444', type: 'dashed', width: 2 },
+          data: [{ yAxis: targetVelocity.value }],
+        },
+      },
+    ],
+  }, true)
+}
+
+watch([averageChartRows, targetVelocity, pumpVelocityTrackingChartRef], () => {
+  nextTick(() => {
+    if (pumpVelocityTrackingChartRef.value) renderPumpVelocityTrackingChart()
+  })
+}, { deep: true })
+
 // ==================== 设备状态时间线（水泵/加热开关阶梯图） ====================
 const showDeviceStateChart = computed(() => {
   if (historyChartsConfig.value.showDeviceStateChart === false) return false
@@ -936,6 +1016,8 @@ function disposeAllCharts() {
   flowPressureChartInstance = null
   pidTrackingChartInstance?.dispose()
   pidTrackingChartInstance = null
+  pumpVelocityTrackingChartInstance?.dispose()
+  pumpVelocityTrackingChartInstance = null
   deviceStateChartInstance?.dispose()
   deviceStateChartInstance = null
   cumulativeFlowChartInstance?.dispose()

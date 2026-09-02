@@ -113,6 +113,28 @@ async function getNumberValue(prefix, deviceNo, fallback, hardFallback) {
   return Number.isFinite(fb) ? fb : hardFallback
 }
 
+/**
+ * 把管路流量读数换算成管内平均流速（m/s），换算不出来时返回 null。
+ *   v = Q / A
+ * 单位链条（跟 t_sensor_field_mapper 里 field3 声明的 L/min、以及
+ * service/computedMetrics/computedMetrics.js 的"平均流速 v = Q / A"完全一致）：
+ *   流量 L/min --÷60--> L/s --÷1000--> m³/s
+ *   管道横截面积 cm² --÷10000--> m²
+ * 管道横截面积来自配置中心 COMPUTED_METRICS.pipeAreaCm2；没配置或填了 0 时算不出
+ * 流速，这里返回 null，由调用方决定怎么处理（恒流速控制会因此整轮不动作，
+ * 而不是拿一个错误的流速去开关水泵）。
+ * @param {number|null} flowLPerMin 管路流量读数（L/min）
+ * @returns {number|null} 流速（m/s）
+ */
+function toVelocity(flowLPerMin) {
+  if (flowLPerMin == null || !Number.isFinite(flowLPerMin)) return null
+  const areaCm2 = Number(systemConfig.getConfig().COMPUTED_METRICS?.pipeAreaCm2)
+  if (!Number.isFinite(areaCm2) || areaCm2 <= 0) return null
+  const qM3PerSec = (flowLPerMin / 60) / 1000
+  const areaM2 = areaCm2 / 10000
+  return Number((qM3PerSec / areaM2).toFixed(4))
+}
+
 /** 读目标温度：优先指令中心 target_temperature，否则用配置中心默认值。 */
 async function getTargetTemp(deviceNo, fallback) {
   return getNumberValue('target_temperature', deviceNo, fallback, 22)
@@ -156,6 +178,7 @@ module.exports = {
   readSwitchStates,
   findSwitchConfig,
   getTargetTemp,
+  toVelocity,
   setSwitch,
   canAct,
 }

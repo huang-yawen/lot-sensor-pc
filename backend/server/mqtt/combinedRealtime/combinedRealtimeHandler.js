@@ -11,6 +11,7 @@ const { evaluateSafety } = require('../../service/safety/safetyInterlock')
 const { evaluateLinkageRules } = require('../../service/linkageRules/linkageRules')
 const { evaluateFaultStatus } = require('../../service/faultStatus/faultStatus')
 const { evaluatePidHeating } = require('../../service/pidHeating/pidHeating')
+const { evaluatePumpVelocityControl } = require('../../service/pumpVelocityControl/pumpVelocityControl')
 const { evaluateQuantityShutdown } = require('../../service/quantityShutdown/quantityShutdown')
 const { compute: computeMetrics } = require('../../service/computedMetrics/computedMetrics')
 
@@ -75,8 +76,8 @@ async function handleMessage(topic, payload) {
     //   2. 本地告警规则（evaluateRules）：按阈值判断，只记录不动手。
     //   3. 安全联锁（evaluateSafety）→ 故障状态机（evaluateFaultStatus）：异常时强制关闭水泵和加热。
     //   4. 正常状况联动（evaluateLinkageRules，9 条独立规则自由勾选组合）→ PID 恒温
-    //      （evaluatePidHeating）→ 定量停机（evaluateQuantityShutdown）：按目标温度/流量
-    //      调节水泵和加热。
+    //      （evaluatePidHeating）→ 水泵恒流速（evaluatePumpVelocityControl）→ 定量停机
+    //      （evaluateQuantityShutdown）：按目标温度/流速/流量调节水泵和加热。
     //   5. 派生指标计算（computeMetrics）：计算首页展示用的派生指标，不涉及硬件控制。
     // 这几步共享同一个 try/catch：中间某一步抛异常，后面的步骤这一轮就不会再执行了
     // （比如 evaluateSafety 出错，后面的自动控制、PID 都会被跳过）。排查问题时如果发现
@@ -100,6 +101,9 @@ async function handleMessage(topic, payload) {
         // PID 恒温控制：仅接管加热这一个执行器，时间比例控制模拟 PWM 占空比。
         const pidActions = await evaluatePidHeating(info)
         if (pidActions.length) info._pidActions = pidActions
+        // 水泵恒流速控制：仅接管水泵这一个执行器，滞环通断或占空比二选一。
+        const pumpVelocityActions = await evaluatePumpVelocityControl(info)
+        if (pumpVelocityActions.length) info._pumpVelocityActions = pumpVelocityActions
         // 定量停机：累计流量达到目标后关闭水泵和加热。
         const qtyResult = await evaluateQuantityShutdown(info)
         if (qtyResult) info._quantityShutdown = qtyResult

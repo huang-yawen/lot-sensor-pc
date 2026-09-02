@@ -705,6 +705,49 @@ const defaultConfig = {
   },
 
   // --------------------------------------------------------------------------
+  // 12.4 水泵恒流速控制
+  // --------------------------------------------------------------------------
+  // 水泵只有开关量、没有变频调速，用两套互斥算法把"开关"逼近"恒定流速"：
+  //   hysteresis 滞环通断：流速低于"目标-回差"开泵，达到目标关泵，中间维持现状。
+  //                        简单、不用整定，但流速几乎没有惯性，必须靠最小开/关时长
+  //                        限制启停频率，否则会短循环（频繁启停烧电机）。
+  //   pid        占空比控制：固定周期内按 PID 算出的占空比决定水泵开多久关多久，
+  //                        调的是"周期内平均流速"。更平滑，但要整定 Kp/Ki/Kd。
+  // 被控量是管内平均流速 v = Q / A（m/s），由管路流量读数（field3，单位 L/min）和
+  // 下面 COMPUTED_METRICS.pipeAreaCm2 换算；管道横截面积没配置时算不出流速，
+  // 恒流速控制整轮不动作并打日志，不会拿错误的流速去开关水泵。
+  // 两套都只在平均意义上恒流速（泵开着是额定流速、关着是 0），瞬时流速始终是脉冲式的，
+  // 要让用水点感受到连续流速，依赖下游有缓冲容积（水箱/储液罐）把脉冲抹平。
+  // 启用后接管水泵，LINKAGE_RULES 里控制水泵的规则自动让位；故障状态和安全联锁是
+  // 更高优先级的独立保护层，触发后照样强制关泵。
+  //   enabled              - 兜底总开关（仅在指令中心两个算法开关都没配置时才看这里）
+  //   mode                 - 兜底算法：'hysteresis' 滞环通断 / 'pid' 占空比
+  //   defaultTargetVelocity- 目标流速兜底值（m/s），两套算法共用的唯一设定值；
+  //                          现场实时调整请用指令中心的"目标流速"（preffix=target_velocity）
+  //   hysteresis           - 滞环回差（m/s），滞环通断专用
+  //   minOnMs/minOffMs     - 最小开启/关闭时长（ms），两套算法共用的水泵防短循环保护
+  //   windowMs             - 占空比控制周期（ms），实际不低于 10000（水泵启停冲击大）
+  //   kp/ki/kd             - 占空比控制的 PID 参数，误差 = 目标流速 - 当前流速
+  //   deadband             - 流速死区（m/s），误差小于它就保持上一次占空比
+  //   dutyMin/dutyMax      - 占空比上下限（%）
+  // 以上每个数值参数在指令中心都有对应指令项，指令项优先；删掉指令项就退回这里的值。
+  PUMP_VELOCITY_CONTROL: {
+    enabled: false,
+    mode: 'hysteresis',
+    defaultTargetVelocity: 1,
+    hysteresis: 0.1,
+    minOnMs: 15000,
+    minOffMs: 15000,
+    windowMs: 30000,
+    kp: 100,
+    ki: 5,
+    kd: 0,
+    deadband: 0.02,
+    dutyMin: 0,
+    dutyMax: 100,
+  },
+
+  // --------------------------------------------------------------------------
   // 13. 需要计算的数据（首页专用展示板块）
   // --------------------------------------------------------------------------
   // 每个指标可用布尔值独立控制是否在首页展示；enabled 是总开关。
@@ -754,6 +797,7 @@ const defaultConfig = {
   //   showPidTrackingChart    - 显示"PID跟踪对比"（目标温度参考线 + 温度2 实际值）
   //   showDeviceStateChart    - 显示"设备状态时间线"（水泵/加热开关阶梯图）
   //   showDerivedMetricCharts - 显示"公式与图表"里勾选了"历史图表"的自定义指标
+  //   showPumpVelocityTrackingChart - 显示"恒流速跟踪对比"（目标流速参考线 + 平均流速实际值）
   HISTORY_CHARTS: {
     pointLimit: 300,
     showCumulative: true,
@@ -762,6 +806,7 @@ const defaultConfig = {
     showTempChart: true,
     showFlowPressureChart: true,
     showPidTrackingChart: true,
+    showPumpVelocityTrackingChart: true,
     showDeviceStateChart: true,
     showDerivedMetricCharts: true,
     showTempFlowScatter: true,
@@ -1094,6 +1139,23 @@ function validate(config) {
   if (autoTune.result !== null && (typeof autoTune.result !== 'object' || Array.isArray(autoTune.result))) {
     throw new Error('PID_AUTOTUNE.result 必须是 null 或 JSON 对象')
   }
+  const pumpVelocity = config.PUMP_VELOCITY_CONTROL
+  if (!pumpVelocity || typeof pumpVelocity !== 'object' || Array.isArray(pumpVelocity)) throw new Error('PUMP_VELOCITY_CONTROL 必须是 JSON 对象')
+  if (typeof pumpVelocity.enabled !== 'boolean') throw new Error('PUMP_VELOCITY_CONTROL.enabled 必须是布尔值')
+  if (!['pid', 'hysteresis'].includes(pumpVelocity.mode)) throw new Error("PUMP_VELOCITY_CONTROL.mode 只能是 'pid' 或 'hysteresis'")
+  for (const key of ['defaultTargetVelocity', 'hysteresis', 'kp', 'ki', 'kd', 'deadband']) {
+    if (!Number.isFinite(pumpVelocity[key])) throw new Error(`PUMP_VELOCITY_CONTROL.${key} 必须是数字`)
+  }
+  // 时长类必须为正：填 0 或负数等于取消保护，会让水泵失去防短循环的最后一道闸。
+  for (const key of ['minOnMs', 'minOffMs', 'windowMs']) {
+    if (!Number.isFinite(pumpVelocity[key]) || pumpVelocity[key] <= 0) throw new Error(`PUMP_VELOCITY_CONTROL.${key} 必须是大于 0 的数字`)
+  }
+  for (const key of ['dutyMin', 'dutyMax']) {
+    if (!Number.isFinite(pumpVelocity[key]) || pumpVelocity[key] < 0 || pumpVelocity[key] > 100) {
+      throw new Error(`PUMP_VELOCITY_CONTROL.${key} 必须是 0~100 之间的数字`)
+    }
+  }
+  if (pumpVelocity.dutyMin > pumpVelocity.dutyMax) throw new Error('PUMP_VELOCITY_CONTROL.dutyMin 不能大于 dutyMax')
   const computed = config.COMPUTED_METRICS
   if (!computed || typeof computed !== 'object' || Array.isArray(computed)) throw new Error('COMPUTED_METRICS 必须是 JSON 对象')
   for (const key of ['enabled', 'resistanceK', 'pressureDropRate', 'tempChangeRate', 'heatExchangeEfficiency', 'eerHeatBalance', 'flowPressureCurve', 'cumulativeFlow', 'averageVelocity', 'waterLevel', 'averageTempChart', 'averageVelocityChart']) {
@@ -1104,7 +1166,7 @@ function validate(config) {
   }
   const historyCharts = config.HISTORY_CHARTS
   if (!historyCharts || typeof historyCharts !== 'object' || Array.isArray(historyCharts)) throw new Error('HISTORY_CHARTS 必须是 JSON 对象')
-  for (const key of ['showCumulative', 'showTimeWindow', 'showAverageChart', 'showTempChart', 'showFlowPressureChart', 'showPidTrackingChart', 'showDeviceStateChart', 'showDerivedMetricCharts', 'showTempFlowScatter']) {
+  for (const key of ['showCumulative', 'showTimeWindow', 'showAverageChart', 'showTempChart', 'showFlowPressureChart', 'showPidTrackingChart', 'showPumpVelocityTrackingChart', 'showDeviceStateChart', 'showDerivedMetricCharts', 'showTempFlowScatter']) {
     if (typeof historyCharts[key] !== 'boolean') throw new Error(`HISTORY_CHARTS.${key} 必须是布尔值`)
   }
   if (!Number.isInteger(historyCharts.pointLimit) || historyCharts.pointLimit < 10 || historyCharts.pointLimit > 2000) {

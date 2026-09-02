@@ -7,11 +7,13 @@
  * 平均温度/平均流速的公式跟 service/computedMetrics/computedMetrics.js 里实时计算用的
  * 完全一致，区别是那边是内存里的实时滚动缓冲区（最多 60 点，不认时间范围）；这里改成
  * 按时间范围直接查数据库，供历史图表页面的时间选择器使用。
- * 【配置中心关联】COMPUTED_METRICS.pipeAreaCm2 用于计算平均流速，每次查询实时读取。
+ * 【配置中心关联】COMPUTED_METRICS.pipeAreaCm2 用于计算平均流速，
+ * PUMP_VELOCITY_CONTROL.defaultTargetVelocity 用作目标流速兜底，每次查询实时读取。
  */
 const promisePool = require('../../config/dbPool')
 const systemConfig = require('../../config/systemConfig')
 const { getTargetTemp } = require('../pidHeating/pidHeating')
+const { getTargetVelocity } = require('../pumpVelocityControl/pumpVelocityControl')
 const { calcBucketSeconds } = require('../../utils/timeRange')
 const { getDefaultDeviceId } = require('../../utils/mappedData')
 
@@ -29,9 +31,11 @@ async function queryAverageChart(options = {}) {
 
   const areaCm2 = Number(systemConfig.getConfig().COMPUTED_METRICS?.pipeAreaCm2)
   const hasArea = Number.isFinite(areaCm2) && areaCm2 > 0
-  // 跟 computedMetrics.js 一致：L/s -> m³/s 除以 1000，管道面积 cm² -> m² 除以 10000。
+  // 跟 computedMetrics.js 的"平均流速 v = Q / A"完全一致的单位链条：
+  // field3 管路流量按 t_sensor_field_mapper 的声明是 L/min，先 /60 转 L/s，
+  // 再 /1000 转 m³/s；管道面积 cm² -> m² 除以 10000。
   const velocityExpr = hasArea
-    ? `ROUND((CAST(NULLIF(field3, '') AS DECIMAL(20,6)) / 1000) / (${areaCm2} / 10000), 4)`
+    ? `ROUND(((CAST(NULLIF(field3, '') AS DECIMAL(20,6)) / 60) / 1000) / (${areaCm2} / 10000), 4)`
     : 'NULL'
 
   const conditions = []
@@ -95,4 +99,21 @@ async function getCurrentTargetTemp(d_no) {
   return getTargetTemp(resolvedDNo, fallback)
 }
 
-module.exports = { queryAverageChart, getCurrentTargetTemp }
+/**
+ * 当前生效的目标流速（恒流速跟踪对比图用作水平参考线）。跟目标温度一样，指令中心
+ * 只存"当前值"没有历史，只能取当前值画一条参考线。
+ * 恒流速控制的两套算法（滞环通断/占空比）共用这一个设定值，来源也只有这一处
+ * （指令中心 target_velocity，没配就退回 PUMP_VELOCITY_CONTROL.defaultTargetVelocity）。
+ * @param {string} [d_no] 单设备模式下忽略传入值，改用真实默认设备号——指令中心保存
+ *   目标流速时用的是真实设备号，拿 null 去查会一直查空，误以为没配置。
+ * @returns {Promise<number>}
+ */
+async function getCurrentTargetVelocity(d_no) {
+  const resolvedDNo = systemConfig.getConfig().SINGLE_DEVICE_MODE === true
+    ? await getDefaultDeviceId()
+    : d_no
+  const fallback = systemConfig.getConfig().PUMP_VELOCITY_CONTROL?.defaultTargetVelocity
+  return getTargetVelocity(resolvedDNo, fallback)
+}
+
+module.exports = { queryAverageChart, getCurrentTargetTemp, getCurrentTargetVelocity }

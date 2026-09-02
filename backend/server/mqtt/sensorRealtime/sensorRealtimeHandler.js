@@ -7,6 +7,7 @@ const { evaluateSafety } = require('../../service/safety/safetyInterlock')
 const { evaluateLinkageRules } = require('../../service/linkageRules/linkageRules')
 const { evaluateFaultStatus } = require('../../service/faultStatus/faultStatus')
 const { evaluatePidHeating } = require('../../service/pidHeating/pidHeating')
+const { evaluatePumpVelocityControl } = require('../../service/pumpVelocityControl/pumpVelocityControl')
 const { evaluateQuantityShutdown } = require('../../service/quantityShutdown/quantityShutdown')
 const { compute: computeMetrics } = require('../../service/computedMetrics/computedMetrics')
 
@@ -84,6 +85,8 @@ async function handleMessage(topic, payload) {
         if (linkageActions.length) info._linkageActions = linkageActions
         const pidActions = await evaluatePidHeating(info)
         if (pidActions.length) info._pidActions = pidActions
+        const pumpVelocityActions = await evaluatePumpVelocityControl(info)
+        if (pumpVelocityActions.length) info._pumpVelocityActions = pumpVelocityActions
         const qtyResult = await evaluateQuantityShutdown(info)
         if (qtyResult) info._quantityShutdown = qtyResult
         await computeMetrics(info)

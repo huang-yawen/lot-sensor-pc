@@ -34,6 +34,7 @@ const systemConfig = require('../../config/systemConfig')
 const { resolveDeviceNo } = require('../../utils/mappedData')
 const { getCurrentMode } = require('../directData/getControlMode')
 const { isPidEnabled, readSwitchOn } = require('../pidHeating/pidHeating')
+const { isPumpVelocityControlEnabled } = require('../pumpVelocityControl/pumpVelocityControl')
 const { isLockedByFault, isAnyLocked } = require('../faultStatus/faultStatus')
 const {
   ABNORMAL_MAX,
@@ -228,6 +229,11 @@ async function evaluateLinkageRules(info) {
   // 不会报错。两个都开时 PID 优先，滞回带规则整条不计算，加热完全交给 pidHeating.js。
   const pidEnabled = await isPidEnabled(deviceNo)
   const hysteresisEnabled = !pidEnabled && (await readSwitchOn('heater_hysteresis_enabled', deviceNo)) === true
+  // 水泵恒流速控制（滞环通断/占空比）启用后由 pumpVelocityControl.js 独占水泵，这里
+  // 涉及水泵的规则照常参与计算（合并结论和日志还要用），只是最后不下发水泵指令，
+  // 避免两个控制器抢同一个执行器。跟上面加热让位给 PID 是完全对称的处理。
+  // 两个恒流速开关都被删除时 isPumpVelocityControlEnabled 返回 false，水泵回到联动规则控制。
+  const pumpVelocityEnabled = await isPumpVelocityControlEnabled(deviceNo)
 
   const pumpCandidates = []
   const heaterCandidates = []
@@ -268,7 +274,8 @@ async function evaluateLinkageRules(info) {
   const actions = []
   const result = { targetTemp, faults, sensors }
 
-  if (pumpDesired && states.pumpOn !== undefined && states.pumpOn !== (pumpDesired === 'on') && canAct(deviceNo, 'pump')) {
+  if (pumpDesired && !pumpVelocityEnabled
+    && states.pumpOn !== undefined && states.pumpOn !== (pumpDesired === 'on') && canAct(deviceNo, 'pump')) {
     await setSwitch('pump', '水泵', pumpDesired, deviceNo, 'linkage_rules')
     actions.push({ device: 'pump', action: pumpDesired })
   }

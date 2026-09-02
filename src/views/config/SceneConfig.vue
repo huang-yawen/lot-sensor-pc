@@ -203,6 +203,11 @@
         <PidHeatingConfig class="embedded-config" />
       </el-tab-pane>
 
+      <el-tab-pane label="恒流速控制" name="pumpvelocity">
+        <el-alert type="info" :closable="false" show-icon title="水泵恒流速控制：水泵只有开关量，用滞环通断或占空比控制把开关逼近恒定流速。只接管水泵，与“联动控制”里的水泵下发互斥。" />
+        <PumpVelocityControlConfig class="embedded-config" />
+      </el-tab-pane>
+
       <el-tab-pane label="智能判定" name="judgment">
         <el-alert type="info" :closable="false" show-icon title="配置怎么把选中的历史数据发给现场判定服务、怎么解析返回结果。请求体格式（json/form-data）、请求方法（GET/POST）、响应格式（json/text）、同步/异步任务模式都能在这里切换，赛场拿到接口文档后改配置即可，不用改代码。" />
         <IntelligentJudgmentConfig class="embedded-config" />
@@ -246,6 +251,7 @@ import FaultStatusConfig from '@/views/config/FaultStatusConfig.vue'
 import QuantityShutdownConfig from '@/views/config/QuantityShutdownConfig.vue'
 import ComputedMetricsConfig from '@/views/config/ComputedMetricsConfig.vue'
 import PidHeatingConfig from '@/views/config/PidHeatingConfig.vue'
+import PumpVelocityControlConfig from '@/views/config/PumpVelocityControlConfig.vue'
 import IntelligentJudgmentConfig from '@/views/config/IntelligentJudgmentConfig.vue'
 import {
   CONNECTION_MODES,
@@ -267,6 +273,7 @@ const PAGE_OWNED_CONFIG_KEYS = [
   'FAULT_STATUS', 'QUANTITY_SHUTDOWN',
   'COMPUTED_METRICS', 'SWITCH_DURATION_DISPLAY',
   'PID_HEATING', 'PID_AUTOTUNE',
+  'PUMP_VELOCITY_CONTROL',
   'INTELLIGENT_JUDGMENT',
   'CUMULATIVE_METRICS', 'TIME_WINDOW_METRICS', 'HISTORY_CHARTS',
 ]
@@ -297,7 +304,7 @@ const directMappings = ref([])
 const mappingSaving = ref(false)
 const route = useRoute()
 const router = useRouter()
-const validTabs = ['guide', 'scene', 'mapping', 'formula', 'aggregation', 'safety', 'controlmode', 'fault', 'quantity', 'computed', 'pid', 'judgment', 'reference']
+const validTabs = ['guide', 'scene', 'mapping', 'formula', 'aggregation', 'safety', 'controlmode', 'fault', 'quantity', 'computed', 'pid', 'pumpvelocity', 'judgment', 'reference']
 const activeTab = ref(validTabs.includes(route.query.tab) ? route.query.tab : 'guide')
 const systemStore = useSystemConfigStore()
 const connectionMode = ref(getConnectionMode())
