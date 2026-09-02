@@ -519,18 +519,28 @@ const defaultConfig = {
     tempHigh: true,
     tempDiff: true,
     tempDiffThreshold: 3,
-    // 流量剧烈波动（疑似水锤/湍流）：最近 10 个读数里最大值-最小值超过这个阈值就触发，
-    // 窗口大小固定跟 TIME_WINDOW_METRICS 的 flow_volatility 指标一致。跟温差阈值一样是
-    // 纯配置中心维护，没有走"指令中心优先"那套（这个指标本来就是新引入的，指令中心
-    // 还没有对应的指令项）。
+    // 流量剧烈波动（疑似水锤/湍流）：最近 flowVolatilityWindow 个读数里最大值-最小值
+    // 超过这个阈值就触发。跟温差阈值一样是纯配置中心维护，没有走"指令中心优先"那套
+    // （这个指标本来就是新引入的，指令中心还没有对应的指令项）。
     flowVolatility: true,
     flowVolatilityThreshold: 20,
+    // 流量波动判定的滑动窗口点数，默认 10；跟"累计与滑动统计"页里 flow_volatility
+    // 这个历史图表指标各自独立维护，不是同一份状态（那边是查数据库算历史曲线，这里
+    // 是实时联锁用内存滑动窗口判断），两边窗口大小不要求必须相同。
+    flowVolatilityWindow: 10,
     manualMode: true,
     sensorOffline: true,
     heaterWithoutPump: true,
     requirePumpBeforeHeater: true,
     alarmCooldownMs: 30000,
     showOnErrorPage: true,
+    // 传感器读数异常/掉线判定的哨兵值：读数达到或超过它视为异常（比如传感器故障时
+    // 卡死在量程最大值）。安全联锁和联动控制（linkageRules.js）共用这一处配置，不再
+    // 各自维护一份；默认 9999，现场传感器满量程不是 9999 时改这里。
+    abnormalMax: 9999,
+    // 掉线监测定时器多久检测一次（毫秒），默认 5000。在后端启动时读取一次，
+    // 改动后需要重启后端才会生效（不是"保存即生效"的那一类配置）。
+    monitorIntervalMs: 5000,
   },
 
   // --------------------------------------------------------------------------
@@ -762,7 +772,10 @@ const defaultConfig = {
   //   waterLevel               - 液位（基于两水箱初始水量与累计流量）
   // 计算参数：
   //   heaterRatedPower（W）、pipeAreaCm2（水管横截面积）、
-  //   initialWaterTank1/2（两水箱初始水量 L）、tankAreaCm2（水箱横截面积，用于液位高度）
+  //   initialWaterTank1/2（两水箱初始水量 L）、tankAreaCm2（水箱横截面积，用于液位高度）、
+  //   waterDensity（介质密度 kg/m³）、waterSpecificHeat（介质比热容 J/(kg·℃)）——
+  //     换热效率/能效比/热平衡三个指标用得到；默认是水的物性参数，现场介质不是纯水
+  //     （比如乙二醇防冻液、盐水）时改这两个值，这三个指标才算得准
   COMPUTED_METRICS: {
     enabled: true,
     resistanceK: true,
@@ -781,6 +794,8 @@ const defaultConfig = {
     initialWaterTank1: 5,
     initialWaterTank2: 5,
     tankAreaCm2: 100,
+    waterDensity: 1000,
+    waterSpecificHeat: 4200,
   },
 
   // --------------------------------------------------------------------------
@@ -1096,6 +1111,9 @@ function validate(config) {
   if (!Number.isFinite(safety.tempDiffThreshold)) throw new Error('SAFETY_INTERLOCK.tempDiffThreshold 必须是数字')
   if (!Number.isFinite(safety.flowVolatilityThreshold) || safety.flowVolatilityThreshold < 0) throw new Error('SAFETY_INTERLOCK.flowVolatilityThreshold 必须是大于等于 0 的数字')
   if (!Number.isFinite(safety.alarmCooldownMs) || safety.alarmCooldownMs < 0) throw new Error('SAFETY_INTERLOCK.alarmCooldownMs 必须是大于等于 0 的数字')
+  if (!Number.isFinite(safety.abnormalMax) || safety.abnormalMax <= 0) throw new Error('SAFETY_INTERLOCK.abnormalMax 必须是大于 0 的数字')
+  if (!Number.isInteger(safety.flowVolatilityWindow) || safety.flowVolatilityWindow < 2) throw new Error('SAFETY_INTERLOCK.flowVolatilityWindow 必须是大于等于 2 的整数')
+  if (!Number.isFinite(safety.monitorIntervalMs) || safety.monitorIntervalMs < 1000) throw new Error('SAFETY_INTERLOCK.monitorIntervalMs 必须是大于等于 1000 的数字')
   if (!Number.isFinite(config.DEFAULT_TARGET_TEMP)) throw new Error('DEFAULT_TARGET_TEMP 必须是数字')
   const linkage = config.LINKAGE_RULES
   if (!linkage || typeof linkage !== 'object' || Array.isArray(linkage)) throw new Error('LINKAGE_RULES 必须是 JSON 对象')
@@ -1161,7 +1179,7 @@ function validate(config) {
   for (const key of ['enabled', 'resistanceK', 'pressureDropRate', 'tempChangeRate', 'heatExchangeEfficiency', 'eerHeatBalance', 'flowPressureCurve', 'cumulativeFlow', 'averageVelocity', 'waterLevel', 'averageTempChart', 'averageVelocityChart']) {
     if (typeof computed[key] !== 'boolean') throw new Error(`COMPUTED_METRICS.${key} 必须是布尔值`)
   }
-  for (const key of ['heaterRatedPower', 'pipeAreaCm2', 'initialWaterTank1', 'initialWaterTank2', 'tankAreaCm2']) {
+  for (const key of ['heaterRatedPower', 'pipeAreaCm2', 'initialWaterTank1', 'initialWaterTank2', 'tankAreaCm2', 'waterDensity', 'waterSpecificHeat']) {
     if (!Number.isFinite(computed[key]) || computed[key] < 0) throw new Error(`COMPUTED_METRICS.${key} 必须是大于等于 0 的数字`)
   }
   const historyCharts = config.HISTORY_CHARTS

@@ -66,11 +66,23 @@
         <el-form-item label="温差阈值（℃，兜底默认值）">
           <el-input-number v-model="form.tempDiffThreshold" :min="0" :step="0.5" :disabled="!form.enabled" />
         </el-form-item>
-        <el-form-item label="流量波动阈值（最近10个读数最大值-最小值）">
+        <el-form-item label="流量波动阈值（最近N个读数最大值-最小值）">
           <el-input-number v-model="form.flowVolatilityThreshold" :min="0" :step="1" :disabled="!form.enabled" />
+        </el-form-item>
+        <el-form-item label="流量波动判定窗口（点数）">
+          <el-input-number v-model="form.flowVolatilityWindow" :min="2" :step="1" :disabled="!form.enabled" />
+          <div class="hint">流量波动阈值判定基于最近这么多个读数的最大值-最小值，默认 10。</div>
         </el-form-item>
         <el-form-item label="告警冷却时间（毫秒）">
           <el-input-number v-model="form.alarmCooldownMs" :min="0" :step="1000" :disabled="!form.enabled" />
+        </el-form-item>
+        <el-form-item label="异常读数哨兵值">
+          <el-input-number v-model="form.abnormalMax" :min="1" :step="1" :disabled="!form.enabled" />
+          <div class="hint">传感器读数达到或超过这个值视为掉线/短路异常，默认 9999；现场传感器满量程不是 9999 时改这里。安全联锁和联动控制共用这一个值。</div>
+        </el-form-item>
+        <el-form-item label="掉线监测周期（毫秒）">
+          <el-input-number v-model="form.monitorIntervalMs" :min="1000" :step="1000" :disabled="!form.enabled" />
+          <div class="hint">多久检测一次设备是否掉线，默认 5000。修改后需要重启后端才会生效，不是保存即时生效的一类配置。</div>
         </el-form-item>
       </el-form>
     </section>
@@ -109,12 +121,15 @@ const defaultForm = () => ({
   tempDiffThreshold: 3,
   flowVolatility: true,
   flowVolatilityThreshold: 20,
+  flowVolatilityWindow: 10,
   manualMode: true,
   sensorOffline: true,
   heaterWithoutPump: true,
   requirePumpBeforeHeater: true,
   alarmCooldownMs: 30000,
   showOnErrorPage: true,
+  abnormalMax: 9999,
+  monitorIntervalMs: 5000,
 })
 
 const form = reactive(defaultForm())
@@ -199,5 +214,6 @@ load()
 .cond-desc { margin-top: 4px; color: #64748b; font-size: 12px; }
 .muted { color: #c0c4cc; }
 .safety-form { margin-top: 6px; }
+.hint { color: #94a3b8; font-size: 12px; margin-top: 4px; }
 .save-bar { display: flex; gap: 10px; margin-top: 16px; }
 </style>

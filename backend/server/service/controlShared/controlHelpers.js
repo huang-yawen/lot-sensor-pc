@@ -10,8 +10,16 @@ const { resolveFieldAliases } = require('../../utils/mappedData')
 const { getDirectValue, saveDirectData } = require('../directData/saveDirectConfig')
 const { saveOperationHistory } = require('../operationHistory/saveOperationHistory')
 
-/** 异常最大值哨兵：超过此值视为传感器异常（掉线/短路）。 */
-const ABNORMAL_MAX = 9999
+/**
+ * 异常最大值哨兵：读数达到或超过它视为传感器异常（掉线/短路，比如传感器故障时
+ * 卡死在量程最大值）。可在配置中心 SAFETY_INTERLOCK.abnormalMax 调整（现场传感器
+ * 满量程不是 9999 时会用到）；没配置或不是正数时退回硬常量 9999。
+ * safetyInterlock.js 和 linkageRules.js 共用这一处判断，不再各自维护一份。
+ */
+function getAbnormalMax() {
+  const v = Number(systemConfig.getConfig().SAFETY_INTERLOCK?.abnormalMax)
+  return Number.isFinite(v) && v > 0 ? v : 9999
+}
 
 /** 阈值槽位（优先 preffix，其次中文名）。 */
 const THRESHOLD_SLOTS = {
@@ -167,7 +175,7 @@ function canAct(deviceNo, key, minIntervalMs = 3000) {
 }
 
 module.exports = {
-  ABNORMAL_MAX,
+  getAbnormalMax,
   THRESHOLD_SLOTS,
   resolveConfigIdByPrefix,
   resolveThresholdConfigId,

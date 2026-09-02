@@ -37,7 +37,7 @@ const { isPidEnabled, readSwitchOn } = require('../pidHeating/pidHeating')
 const { isPumpVelocityControlEnabled } = require('../pumpVelocityControl/pumpVelocityControl')
 const { isLockedByFault, isAnyLocked } = require('../faultStatus/faultStatus')
 const {
-  ABNORMAL_MAX,
+  getAbnormalMax,
   getThresholdValue,
   getNumberValue,
   readSensors,
@@ -78,7 +78,7 @@ async function detectFaults(sensors, deviceNo, states) {
 
 /** 流量是否处于"正常"区间：非空、非 0、未到异常最大值哨兵、在下上限之间。 */
 function isFlowNormal(flow, flowLow, flowHigh) {
-  if (flow == null || flow === 0 || flow >= ABNORMAL_MAX) return false
+  if (flow == null || flow === 0 || flow >= getAbnormalMax()) return false
   if (flowLow != null && flow < flowLow) return false
   if (flowHigh != null && flow > flowHigh) return false
   return true
@@ -96,8 +96,8 @@ function mergeDecision(...values) {
 
 function rulePumpAlwaysOn(sensors, faults) {
   const allNormal = faults.length === 0
-    && sensors.flow != null && sensors.flow !== 0 && sensors.flow < ABNORMAL_MAX
-    && sensors.pressure != null && sensors.pressure !== 0 && sensors.pressure < ABNORMAL_MAX
+    && sensors.flow != null && sensors.flow !== 0 && sensors.flow < getAbnormalMax()
+    && sensors.pressure != null && sensors.pressure !== 0 && sensors.pressure < getAbnormalMax()
   if (faults.length > 0) return { pump: 'off', heater: null }
   if (allNormal) return { pump: 'on', heater: null }
   return { pump: null, heater: null }

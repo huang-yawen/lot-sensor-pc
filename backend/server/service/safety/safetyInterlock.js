@@ -32,13 +32,12 @@ const { getCurrentMode } = require('../directData/getControlMode')
 const { saveOperationHistory } = require('../operationHistory/saveOperationHistory')
 const { nowLocalDateTime } = require('../../utils/helper')
 // 流量波动阈值支持现场在指令中心调（preffix=flow_volatility），删掉就退回配置中心。
-const { getNumberValue } = require('../controlShared/controlHelpers')
+const { getNumberValue, getAbnormalMax } = require('../controlShared/controlHelpers')
 
 // 传感器掉线或短路时，很多硬件驱动不会直接不上报数据，而是把读数钳位成一个固定的
 // 极端大值（比如 9999）。这里用这个哨兵值单独识别"掉线/短路"这种情况，跟"读数超过
-// 正常阈值"区分开。
-/** 异常最大值哨兵：超过此值视为传感器异常（掉线/短路）。 */
-const ABNORMAL_MAX = 9999
+// 正常阈值"区分开。哨兵值本身在 controlHelpers.js/getAbnormalMax() 统一维护
+// （可在配置中心 SAFETY_INTERLOCK.abnormalMax 调），linkageRules.js 也用同一处。
 
 /** 各阈值对应的 t_direct_config 标识（优先 preffix，其次中文名）。 */
 const THRESHOLD_SLOTS = {
@@ -57,26 +56,32 @@ const lastFired = new Map()
 
 /** 每个设备最近若干个流量读数的滑动窗口，用于判断流量波动幅度（疑似水锤/湍流）。 */
 const flowWindowMap = new Map()
-/** 窗口大小跟配置中心 TIME_WINDOW_METRICS 里 flow_volatility 指标保持一致，
- * 同样的"最近 10 个点算一次波动幅度"口径，历史图表和实时联锁看到的是同一套标准。 */
-const FLOW_VOLATILITY_WINDOW = 10
 
-/** 追加一个新读数到滑动窗口，超出窗口大小就丢弃最早的一个；窗口还没填满 10 个点时
+/** 窗口大小（点数）：默认 10，可在配置中心 SAFETY_INTERLOCK.flowVolatilityWindow 调整；
+ * 没配置或不是 >=2 的整数时退回默认值 10。跟"累计与滑动统计"页里 flow_volatility
+ * 这个历史图表指标各自独立维护，不是同一份状态（那边查数据库算历史曲线，这里是
+ * 实时联锁用内存滑动窗口判断），窗口大小不要求两边一致。 */
+function getFlowVolatilityWindow() {
+  const v = Number(systemConfig.getConfig().SAFETY_INTERLOCK?.flowVolatilityWindow)
+  return Number.isInteger(v) && v >= 2 ? v : 10
+}
+
+/** 追加一个新读数到滑动窗口，超出窗口大小就丢弃最早的一个；窗口还没填满设定的点数时
  * 返回 null（数据不够，不判断，避免设备刚上线就误报），填满后返回窗口内最大值-
  * 最小值，即这段时间流量的波动幅度。 */
 function trackFlowVolatility(deviceNo, flow) {
   const key = deviceNo || 'global'
   if (!flowWindowMap.has(key)) flowWindowMap.set(key, [])
   const window = flowWindowMap.get(key)
+  const windowSize = getFlowVolatilityWindow()
   window.push(flow)
-  if (window.length > FLOW_VOLATILITY_WINDOW) window.shift()
-  if (window.length < FLOW_VOLATILITY_WINDOW) return null
+  if (window.length > windowSize) window.shift()
+  if (window.length < windowSize) return null
   return Math.max(...window) - Math.min(...window)
 }
 
 /** 掉线监测定时器（条件 6）。 */
 let monitorTimer = null
-const MONITOR_INTERVAL_MS = 5000
 
 /* ============================ 工具函数 ============================ */
 
@@ -238,7 +243,7 @@ async function evaluateValueConditions(info, deviceNo, safetyConfig) {
   // 1. 流量低于下限阈值或流量为 0（含异常最大值）。
   if (safetyConfig.flowLow && sensors.flow != null) {
     const flowLow = await getThresholdValue('flowLow', deviceNo)
-    if (sensors.flow === 0 || sensors.flow >= ABNORMAL_MAX || (flowLow != null && sensors.flow < flowLow)) {
+    if (sensors.flow === 0 || sensors.flow >= getAbnormalMax() || (flowLow != null && sensors.flow < flowLow)) {
       triggers.push({
         id: 'flow_low',
         name: '流量异常（低于下限/为0/掉线）',
@@ -250,7 +255,7 @@ async function evaluateValueConditions(info, deviceNo, safetyConfig) {
   // 2. 压力高于上限阈值或压力为 0（含异常最大值）。
   if (safetyConfig.pressureHigh && sensors.pressure != null) {
     const pressureHigh = await getThresholdValue('pressureHigh', deviceNo)
-    if (sensors.pressure === 0 || sensors.pressure >= ABNORMAL_MAX || (pressureHigh != null && sensors.pressure > pressureHigh)) {
+    if (sensors.pressure === 0 || sensors.pressure >= getAbnormalMax() || (pressureHigh != null && sensors.pressure > pressureHigh)) {
       triggers.push({
         id: 'pressure_high',
         name: '压力异常（高于上限/为0/掉线）',
@@ -264,7 +269,7 @@ async function evaluateValueConditions(info, deviceNo, safetyConfig) {
     const tempHigh = await getThresholdValue('tempHigh', deviceNo)
     for (const [key, label] of [['temp1', '温度1（进水）'], ['temp2', '温度2（出水）']]) {
       const v = sensors[key]
-      if (v != null && (v >= ABNORMAL_MAX || (tempHigh != null && v > tempHigh))) {
+      if (v != null && (v >= getAbnormalMax() || (tempHigh != null && v > tempHigh))) {
         triggers.push({
           id: 'temp_high',
           name: '任一温度高于上限',
@@ -293,7 +298,7 @@ async function evaluateValueConditions(info, deviceNo, safetyConfig) {
       triggers.push({
         id: 'flow_volatility',
         name: '流量剧烈波动（疑似水锤/湍流）',
-        detail: `最近${FLOW_VOLATILITY_WINDOW}个读数波动幅度=${volatility.toFixed(2)} > ${threshold}`,
+        detail: `最近${getFlowVolatilityWindow()}个读数波动幅度=${volatility.toFixed(2)} > ${threshold}`,
       })
     }
   }
@@ -375,16 +380,20 @@ async function monitorOffline() {
   }
 }
 
-/** 启动掉线监测定时器（在服务启动时调用一次）。 */
+/** 启动掉线监测定时器（在服务启动时调用一次）。检测周期在启动时读取一次配置中心
+ * SAFETY_INTERLOCK.monitorIntervalMs（默认 5000ms，没配置/小于 1000 时退回默认值），
+ * 属于"保存后需要重启后端才生效"的一类配置，不是热更新。 */
 function startMonitor() {
   if (monitorTimer) return
+  const configured = Number(systemConfig.getConfig().SAFETY_INTERLOCK?.monitorIntervalMs)
+  const intervalMs = Number.isFinite(configured) && configured >= 1000 ? configured : 5000
   monitorTimer = setInterval(async () => {
     try {
       await monitorOffline()
     } catch (err) {
       console.error('[SafetyInterlock] 掉线监测失败:', err.message)
     }
-  }, MONITOR_INTERVAL_MS)
+  }, intervalMs)
   monitorTimer.unref?.()
 }
 

@@ -5,7 +5,7 @@
  *   1. 系统阻力系数 K = ΔP / Q²（管路结垢/堵塞黄金指标）
  *   2. 压力陡降速率 V = dP/dt（吸入空气紧急停泵判定）
  *   3. 温度变化率 dT/dt（传感器断线/开路/短路判定）
- *   4. 换热效率 η = ρ·Cp·Q·ΔT / P_heater
+ *   4. 换热效率 η = ρ·Cp·Q·ΔT / P_heater（ρ/Cp 默认水的物性参数，可在配置中心改）
  *   5. 系统能效比（COP）与热平衡
  *   6. 流量-压力特性曲线拟合（线性回归斜率）
  *   7. 累计流量（上一时刻总流量 + 瞬时流量 × 时间）
@@ -20,9 +20,6 @@ const promisePool = require('../../config/dbPool')
 const { firstValue } = require('../../utils/protocol')
 const { resolveDeviceNo, resolveFieldAliases } = require('../../utils/mappedData')
 
-/** 水密度 1000 kg/m³，定压比热容 4200 J/(kg·℃)。 */
-const WATER_DENSITY = 1000
-const WATER_CP = 4200
 
 /** 每个设备的滚动状态。 */
 const stateMap = new Map()
@@ -193,8 +190,12 @@ async function compute(info, timestampMs = Date.now()) {
   const deltaT = temp1 != null && temp2 != null ? Math.abs(temp2 - temp1) : null
   const powerW = Number(config.heaterRatedPower)
   if (flowLPerSec != null && deltaT != null && switches.heatOn === true && powerW > 0) {
+    // 介质密度/比热容默认是水的物性参数，配置中心没配或不是正数时退回这两个默认值，
+    // 现场介质不是纯水（乙二醇防冻液、盐水等）时在"计算数据"页调整即可。
+    const waterDensity = Number(config.waterDensity) > 0 ? Number(config.waterDensity) : 1000
+    const waterSpecificHeat = Number(config.waterSpecificHeat) > 0 ? Number(config.waterSpecificHeat) : 4200
     const qM3PerSec = flowLPerSec / 1000 // L/s -> m³/s
-    const heatTransferredW = WATER_DENSITY * WATER_CP * qM3PerSec * deltaT
+    const heatTransferredW = waterDensity * waterSpecificHeat * qM3PerSec * deltaT
     const efficiency = safeDivide(heatTransferredW, powerW)
     result.heatExchangeEfficiency = {
       value: efficiency == null ? null : Number(efficiency.toFixed(3)),

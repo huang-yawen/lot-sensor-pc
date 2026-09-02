@@ -59,6 +59,14 @@
         <el-form-item label="水箱横截面积（cm²）">
           <el-input-number v-model="form.tankAreaCm2" :min="0" :step="10" />
         </el-form-item>
+        <el-form-item label="介质密度（kg/m³）">
+          <el-input-number v-model="form.waterDensity" :min="0" :step="10" />
+          <div class="hint">默认是水的密度 1000，现场介质不是纯水（乙二醇防冻液、盐水等）时改这里，影响换热效率/能效比/热平衡三个指标。</div>
+        </el-form-item>
+        <el-form-item label="介质比热容（J/(kg·℃)）">
+          <el-input-number v-model="form.waterSpecificHeat" :min="0" :step="100" />
+          <div class="hint">默认是水的比热容 4200。</div>
+        </el-form-item>
       </el-form>
     </section>
 
@@ -105,6 +113,8 @@ const defaultForm = () => ({
   initialWaterTank1: 5,
   initialWaterTank2: 5,
   tankAreaCm2: 100,
+  waterDensity: 1000,
+  waterSpecificHeat: 4200,
 })
 
 const form = reactive(defaultForm())
@@ -163,5 +173,6 @@ load()
 .section-heading p { margin: 0; color: #64748b; }
 .desc { color: #64748b; font-size: 12px; }
 .cfg-form { margin-top: 6px; max-width: 520px; }
+.hint { color: #94a3b8; font-size: 12px; margin-top: 4px; }
 .save-bar { display: flex; gap: 10px; margin-top: 16px; }
 </style>
