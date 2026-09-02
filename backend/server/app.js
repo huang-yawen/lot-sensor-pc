@@ -84,6 +84,10 @@ app.get('/api/current-temp', currentTempController)
 const deviceStateTrendController = require('./controllers/computedMetrics/deviceStateTrendController')
 app.get('/api/device-state-trend', deviceStateTrendController)
 
+// 加热能耗分析接口（瞬时实际加热功率、累计耗电量、累计换热量、单位流量能耗，历史图表页面专用）
+const heaterEnergyController = require('./controllers/computedMetrics/heaterEnergyController')
+app.get('/api/heater-energy', heaterEnergyController)
+
 // 首页开关运行时长接口（水泵/加热的累计运行时长 + 本次已运行时长）
 const switchDurationController = require('./controllers/switchDuration/switchDurationController')
 app.get('/api/switch-duration', switchDurationController)

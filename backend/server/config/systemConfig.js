@@ -811,6 +811,9 @@ const defaultConfig = {
   //   showFlowPressureChart   - 显示"瞬时流量与压力"
   //   showPidTrackingChart    - 显示"PID跟踪对比"（目标温度参考线 + 温度2 实际值）
   //   showDeviceStateChart    - 显示"设备状态时间线"（水泵/加热开关阶梯图）
+  //   showHeaterEnergyChart   - 显示"加热能耗分析"（瞬时实际加热功率、累计耗电量与
+  //     累计换热量对比、单位流量能耗），需要 COMPUTED_METRICS.heaterRatedPower 配置为
+  //     正数才会有数据，加热额定功率没配置时这张图查询直接返回空
   //   showDerivedMetricCharts - 显示"公式与图表"里勾选了"历史图表"的自定义指标
   //   showPumpVelocityTrackingChart - 显示"恒流速跟踪对比"（目标流速参考线 + 平均流速实际值）
   HISTORY_CHARTS: {
@@ -823,6 +826,7 @@ const defaultConfig = {
     showPidTrackingChart: true,
     showPumpVelocityTrackingChart: true,
     showDeviceStateChart: true,
+    showHeaterEnergyChart: true,
     showDerivedMetricCharts: true,
     showTempFlowScatter: true,
   },
@@ -1184,7 +1188,7 @@ function validate(config) {
   }
   const historyCharts = config.HISTORY_CHARTS
   if (!historyCharts || typeof historyCharts !== 'object' || Array.isArray(historyCharts)) throw new Error('HISTORY_CHARTS 必须是 JSON 对象')
-  for (const key of ['showCumulative', 'showTimeWindow', 'showAverageChart', 'showTempChart', 'showFlowPressureChart', 'showPidTrackingChart', 'showPumpVelocityTrackingChart', 'showDeviceStateChart', 'showDerivedMetricCharts', 'showTempFlowScatter']) {
+  for (const key of ['showCumulative', 'showTimeWindow', 'showAverageChart', 'showTempChart', 'showFlowPressureChart', 'showPidTrackingChart', 'showPumpVelocityTrackingChart', 'showDeviceStateChart', 'showHeaterEnergyChart', 'showDerivedMetricCharts', 'showTempFlowScatter']) {
     if (typeof historyCharts[key] !== 'boolean') throw new Error(`HISTORY_CHARTS.${key} 必须是布尔值`)
   }
   if (!Number.isInteger(historyCharts.pointLimit) || historyCharts.pointLimit < 10 || historyCharts.pointLimit > 2000) {

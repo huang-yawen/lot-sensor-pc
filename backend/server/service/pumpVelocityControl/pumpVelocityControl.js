@@ -184,14 +184,38 @@ function decideByDuty(state, now, velocity, targetVelocity, params) {
 
     // 死区：误差很小时保持上一次占空比，不让传感器噪声推着占空比来回跳。
     if (state.hasLastError && Math.abs(error) < deadband) {
+      // 死区（deadband）：误差小到可以忽略时，什么都不算、直接沿用上一次的占空比。
+      // 目的是防止传感器读数的正常抖动（比如流速在 0.99~1.01 之间跳）被 PID 当成
+      // "真的偏离目标了"，从而没完没了地微调占空比、让水泵继电器一直在细微切换。
       state.lastError = error
       console.log(`[PumpVelocityControl] PWM窗口#${state.cycleIndex} 死区激活 | 流速=${velocity}m/s 误差=${error.toFixed(4)} < 死区${deadband} | 保持占空比=${state.lastDuty}%`)
     } else {
+      // ============================================================
+      // PID 三项各自负责什么（error = 目标流速 - 当前流速，正数=流速不够要加大占空比）：
+      //   P（比例项，pTerm = kp * error）
+      //     -"现在差多少就修正多少"，误差越大占空比调整越猛，反应最快但单独用会有
+      //      "永远差一点点补不平"的稳态误差（比如占空比刚好稳定在能让水泵转起来但
+      //      流速还差 0.05 的位置，P 项这时算出来的修正量很小，不足以推它到目标）。
+      //   I（积分项，ki * state.integral，state.integral 是历史误差的累加和）
+      //     -专门补 P 项留下的"差一点点"：只要误差还没消灭，积分项就一直在长大，
+      //      直到把占空比顶到刚好能消除稳态误差为止。代价是反应比 P 项慢，如果
+      //      调太大容易让系统在目标值附近来回冲过头（振荡）。
+      //   D（微分项，dTerm = kd * 误差变化速度）
+      //     -"看误差变化得有多快"，提前刹车：误差正在快速缩小时先减小修正力度，
+      //      避免冲过头。跟温度控制不同，流速信号本身噪声更明显，所以这个项默认
+      //      给 0（不用），确实需要更快响应再打开。
       const pTerm = kp * error
       const dTerm = state.hasLastError ? kd * ((error - state.lastError) / dtSec) : 0
 
-      // 条件积分抗饱和：占空比已经顶到上/下限、且继续累加积分只会更出界时暂停累加，
-      // 否则积分项会在限幅期间越滚越大，等误差反向时要很久才能"退烧"（积分饱和）。
+      // 条件积分抗饱和（anti-windup）：先说清楚"积分饱和"是什么问题——如果水泵已经
+      // 开到 100% 占空比、流速还是不够（比如水泵本身功率不够大），积分项会因为
+      // "误差一直存在"而无限累加下去，越滚越大。等哪天流速终于够了甚至超了，
+      // 误差变成负数，这个已经滚得很大的积分项要花很长时间才能"退烧"到合理范围，
+      // 期间占空比会一直卡在高位下不来，导致水泵长时间超调。
+      // 解决办法：先分别算出"不让积分累加"和"让积分累加"这两种情况下的占空比会是
+      // 多少（dutyBefore / dutyAfter），如果发现占空比已经顶到了上限或下限、且继续
+      // 累加积分只会让它更加顶死不动（误差方向跟顶住的方向一致），就暂停累加，把
+      // 积分项"冻结"在当前值——只有当占空比不再顶边、或者误差反向了，才恢复累加。
       const rawIntegral = state.integral + error * dtSec
       const uBefore = pTerm + ki * state.integral + dTerm
       const uAfter = pTerm + ki * rawIntegral + dTerm
@@ -201,6 +225,8 @@ function decideByDuty(state, now, velocity, targetVelocity, params) {
       const saturatedLow = dutyBefore <= dutyMin && dutyAfter <= dutyMin && error < 0
       if (!saturatedHigh && !saturatedLow) state.integral = rawIntegral
 
+      // 三项相加得到最终输出 u，再夹在 [占空比下限, 占空比上限] 之间——即使
+      // PID 算出来是负数或者超过 100%，实际下发的占空比也不会越界。
       const u = pTerm + ki * state.integral + dTerm
       const duty = Math.max(dutyMin, Math.min(dutyMax, u))
 

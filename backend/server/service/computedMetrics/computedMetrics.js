@@ -187,6 +187,17 @@ async function compute(info, timestampMs = Date.now()) {
   }
 
   // ---- 4 & 5. 换热效率 η 与 能效比/热平衡 ----
+  // 换热效率的物理意思：加热器每秒钟往电路里花的电（powerW，额定功率），
+  // 有多少真正变成了水带走的热量（heatTransferredW），两者的比值就是效率。
+  // "水带走了多少热"怎么算：想象每秒钟有 Q（m³）体积的水流过，从进水温度升到
+  // 出水温度，温差是 ΔT。这些水本身的质量是 ρ×Q（密度×体积=质量），把这些水
+  // 加热 ΔT 度需要的热量是"质量×比热容×温差"——比热容（Cp）就是"让 1kg 这种
+  // 液体升高 1℃需要多少焦耳"，水的比热容比大多数液体都大，也是水常被用来
+  // 做冷却/加热介质的原因。合起来就是：
+  //     每秒传递的热功率 = 密度ρ × 比热容Cp × 每秒流过的体积Q × 温差ΔT
+  // 这也是为什么现场如果不是拿纯水做介质（比如实验用了乙二醇防冻液、盐水），
+  // 必须把下面这两个参数改成对应介质的真实物性值——密度、比热容用错了，
+  // 这里算出来的"效率"就跟实际不是一回事。
   const deltaT = temp1 != null && temp2 != null ? Math.abs(temp2 - temp1) : null
   const powerW = Number(config.heaterRatedPower)
   if (flowLPerSec != null && deltaT != null && switches.heatOn === true && powerW > 0) {
@@ -195,7 +206,11 @@ async function compute(info, timestampMs = Date.now()) {
     const waterDensity = Number(config.waterDensity) > 0 ? Number(config.waterDensity) : 1000
     const waterSpecificHeat = Number(config.waterSpecificHeat) > 0 ? Number(config.waterSpecificHeat) : 4200
     const qM3PerSec = flowLPerSec / 1000 // L/s -> m³/s
+    // ρ × Cp × Q × ΔT：见上方注释里的公式，算出来的单位是瓦特（W），
+    // 因为 kg/m³ × J/(kg·℃) × m³/s × ℃ 约分后正好剩下 J/s = W。
     const heatTransferredW = waterDensity * waterSpecificHeat * qM3PerSec * deltaT
+    // 效率 = 实际传给水的热功率 ÷ 加热器额定功率，理论上不该超过 100%（超过了
+    // 说明额定功率填错了，或者传感器读数有问题——这里不做上限裁剪，方便发现异常）。
     const efficiency = safeDivide(heatTransferredW, powerW)
     result.heatExchangeEfficiency = {
       value: efficiency == null ? null : Number(efficiency.toFixed(3)),

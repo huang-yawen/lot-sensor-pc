@@ -107,6 +107,27 @@
       </div>
     </section>
 
+    <!-- ==================== 加热能耗分析（瞬时实际功率 / 累计电耗与换热量 / 单位流量能耗） ==================== -->
+    <!-- 三张图各自独立开关判断（有数据才画），整节由 showHeaterEnergyChart 一个总开关控制，
+         跟"PID跟踪对比"/"恒流速跟踪对比"一样，不做成逐条更细的开关，避免赛场配置项爆炸。 -->
+    <section v-if="showHeaterEnergyChart" class="chart-section">
+      <h2 class="section-title">加热能耗分析</h2>
+      <div class="chart-grid" style="grid-template-columns: repeat(3, 1fr);">
+        <div class="chart-card">
+          <div class="chart-card-header"><h3>瞬时实际加热功率</h3></div>
+          <div ref="actualPowerChartRef" class="chart-el"></div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-card-header"><h3>累计耗电量 / 累计换热量</h3></div>
+          <div ref="heatEnergyChartRef" class="chart-el"></div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-card-header"><h3>单位流量能耗（比能耗 SEC）</h3></div>
+          <div ref="secChartRef" class="chart-el"></div>
+        </div>
+      </div>
+    </section>
+
     <!-- ==================== 设备状态时间线（水泵/加热开关阶梯图） ==================== -->
     <section v-if="showDeviceStateChart" class="chart-section">
       <h2 class="section-title">设备状态时间线</h2>
@@ -148,7 +169,7 @@
     </section>
 
     <el-empty
-      v-if="!loading && !cumulativeEntries.length && !timeWindowEntries.length && !showAverageChart && !showTempFlowScatter && !showTempChart && !showFlowPressureChart && !showPidTrackingChart && !showDeviceStateChart && !cumulativeFlowEntry && !switchDurationEntries.length && !derivedMetricEntries.length"
+      v-if="!loading && !cumulativeEntries.length && !timeWindowEntries.length && !showAverageChart && !showTempFlowScatter && !showTempChart && !showFlowPressureChart && !showPidTrackingChart && !showDeviceStateChart && !showHeaterEnergyChart && !cumulativeFlowEntry && !switchDurationEntries.length && !derivedMetricEntries.length"
       description="所选时间范围内暂无数据，或配置中心还没启用相关图表"
     />
   </div>
@@ -186,6 +207,7 @@ const historyChartsConfig = computed(() => ({
   showFlowPressureChart: true,
   showPidTrackingChart: true,
   showDeviceStateChart: true,
+  showHeaterEnergyChart: true,
   showDerivedMetricCharts: true,
   showTempFlowScatter: true,
   ...systemStore.config.HISTORY_CHARTS,
@@ -199,6 +221,7 @@ const targetVelocity = ref(null)
 const scatterRows = ref([])
 const deviceStateRows = ref([])
 const derivedMetricData = ref({})
+const heaterEnergyRows = ref([])
 
 /** 统一的时间轴格式化，三张图共用。 */
 function formatTimes(rows) {
@@ -228,13 +251,14 @@ async function loadAll() {
   loading.value = true
   try {
     const params = currentRangeParams()
-    const [cumRes, twRes, avgRes, stateRes, derivedRes, scatterRes] = await Promise.allSettled([
+    const [cumRes, twRes, avgRes, stateRes, derivedRes, scatterRes, energyRes] = await Promise.allSettled([
       api.get('/api/cumulative', { params }),
       api.get('/api/time-window', { params }),
       api.get('/api/average-chart', { params }),
       api.get('/api/device-state-trend', { params }),
       api.get('/api/derived-metrics/history', { params }),
       api.get('/api/temp-flow-scatter', { params }),
+      api.get('/api/heater-energy', { params }),
     ])
     cumulativeData.value = cumRes.status === 'fulfilled' ? (cumRes.value.data?.data || {}) : {}
     timeWindowData.value = twRes.status === 'fulfilled' ? (twRes.value.data?.data || {}) : {}
@@ -244,6 +268,7 @@ async function loadAll() {
     deviceStateRows.value = stateRes.status === 'fulfilled' ? (stateRes.value.data?.data || []) : []
     derivedMetricData.value = derivedRes.status === 'fulfilled' ? (derivedRes.value.data?.data || {}) : {}
     scatterRows.value = scatterRes.status === 'fulfilled' ? (scatterRes.value.data?.data || []) : []
+    heaterEnergyRows.value = energyRes.status === 'fulfilled' ? (energyRes.value.data?.data?.rows || []) : []
   } finally {
     loading.value = false
   }
@@ -771,6 +796,142 @@ watch([averageChartRows, targetVelocity, pumpVelocityTrackingChartRef], () => {
   })
 }, { deep: true })
 
+// ==================== 加热能耗分析（瞬时实际功率 / 累计电耗与换热量 / 单位流量能耗） ====================
+// 数据来自独立接口 /api/heater-energy（heaterEnergyRows），不跟 averageChartRows 混用——
+// 后端要联合 t_sensor_data（温度/流量）和 t_behavior_data（加热开关状态）两张表才能算出
+// 这几个指标，是单独一次查询，具体公式见后端 heaterEnergyQuery.js 的详细注释。
+// 三张图共用同一批行数据，只是各自取不同的列，所以只需要一个"有没有数据"的总开关；
+// 后端在"加热额定功率没配置"时直接返回空数组（见 heaterEnergyQuery.js），所以这里
+// 只需要判断 heaterEnergyRows 是否有数据，不用像 PID 跟踪对比那样额外判断目标值存在。
+const showHeaterEnergyChart = computed(() => {
+  if (historyChartsConfig.value.showHeaterEnergyChart === false) return false
+  return heaterEnergyRows.value.length > 0
+})
+
+// ---- 瞬时实际加热功率（W）：单线图，直观看出加热器什么时候真的在通电、通了多久 ----
+const actualPowerChartRef = ref(null)
+let actualPowerChartInstance = null
+
+function renderActualPowerChart() {
+  const rows = heaterEnergyRows.value
+  const el = actualPowerChartRef.value
+  if (!rows.length || !el || el.offsetWidth === 0) {
+    if (el) setTimeout(renderActualPowerChart, 50)
+    return
+  }
+  if (actualPowerChartInstance) actualPowerChartInstance.dispose()
+  const chart = echarts.init(el)
+  actualPowerChartInstance = chart
+
+  const times = formatTimes(rows)
+  chart.setOption({
+    tooltip: { trigger: 'axis' },
+    grid: { left: 14, right: 20, top: 20, bottom: 50 },
+    xAxis: { type: 'category', data: times, axisLabel: { rotate: 15, fontSize: 10 } },
+    yAxis: { type: 'value', name: 'W', nameTextStyle: { fontSize: 11 } },
+    series: [{
+      name: '瞬时实际功率',
+      type: 'line',
+      // step: 'end' 画成阶梯线而不是 smooth 平滑曲线：加热器只有开/关两个状态，真实的
+      // 功率变化就是"突然从 0 跳到额定功率、又突然跳回 0"，画成平滑曲线反而会制造出
+      // "功率在缓慢爬升/下降"这种不存在的假象，阶梯线才如实反映通断的瞬间性。
+      step: 'end',
+      data: rows.map((r) => r.actualPower),
+      itemStyle: { color: '#f59e0b' },
+      lineStyle: { color: '#f59e0b' },
+      areaStyle: { color: '#f59e0b', opacity: 0.12 },
+    }],
+  }, true)
+}
+
+watch([heaterEnergyRows, actualPowerChartRef], () => {
+  nextTick(() => { if (actualPowerChartRef.value) renderActualPowerChart() })
+}, { deep: true })
+
+// ---- 累计耗电量 / 累计换热量（Wh）：两条线画在同一张图，两条线的高度差直观体现
+// "花的电"和"传给水的热"之间的差距，本质就是换热效率 η 的可视化版本 ----
+const heatEnergyChartRef = ref(null)
+let heatEnergyChartInstance = null
+
+function renderHeatEnergyChart() {
+  const rows = heaterEnergyRows.value
+  const el = heatEnergyChartRef.value
+  if (!rows.length || !el || el.offsetWidth === 0) {
+    if (el) setTimeout(renderHeatEnergyChart, 50)
+    return
+  }
+  if (heatEnergyChartInstance) heatEnergyChartInstance.dispose()
+  const chart = echarts.init(el)
+  heatEnergyChartInstance = chart
+
+  const times = formatTimes(rows)
+  chart.setOption({
+    tooltip: { trigger: 'axis' },
+    legend: { data: ['累计耗电量', '累计换热量'], top: 0 },
+    grid: { left: 14, right: 20, top: 40, bottom: 50 },
+    xAxis: { type: 'category', data: times, axisLabel: { rotate: 15, fontSize: 10 } },
+    yAxis: { type: 'value', name: 'Wh', nameTextStyle: { fontSize: 11 } },
+    series: [
+      {
+        name: '累计耗电量',
+        type: 'line',
+        smooth: true,
+        data: rows.map((r) => r.cumulativeElectric),
+        itemStyle: { color: '#ef4444' },
+        lineStyle: { color: '#ef4444' },
+      },
+      {
+        name: '累计换热量',
+        type: 'line',
+        smooth: true,
+        data: rows.map((r) => r.cumulativeHeatEnergy),
+        itemStyle: { color: '#10b981' },
+        lineStyle: { color: '#10b981' },
+      },
+    ],
+  }, true)
+}
+
+watch([heaterEnergyRows, heatEnergyChartRef], () => {
+  nextTick(() => { if (heatEnergyChartRef.value) renderHeatEnergyChart() })
+}, { deep: true })
+
+// ---- 单位流量能耗 SEC（Wh/L）：每处理 1L 水花了多少电，数值越低说明系统能效越高 ----
+const secChartRef = ref(null)
+let secChartInstance = null
+
+function renderSecChart() {
+  const rows = heaterEnergyRows.value
+  const el = secChartRef.value
+  if (!rows.length || !el || el.offsetWidth === 0) {
+    if (el) setTimeout(renderSecChart, 50)
+    return
+  }
+  if (secChartInstance) secChartInstance.dispose()
+  const chart = echarts.init(el)
+  secChartInstance = chart
+
+  const times = formatTimes(rows)
+  chart.setOption({
+    tooltip: { trigger: 'axis' },
+    grid: { left: 14, right: 20, top: 20, bottom: 50 },
+    xAxis: { type: 'category', data: times, axisLabel: { rotate: 15, fontSize: 10 } },
+    yAxis: { type: 'value', name: 'Wh/L', nameTextStyle: { fontSize: 11 } },
+    series: [{
+      name: '单位流量能耗',
+      type: 'line',
+      smooth: true,
+      data: rows.map((r) => r.sec),
+      itemStyle: { color: '#8b5cf6' },
+      lineStyle: { color: '#8b5cf6' },
+    }],
+  }, true)
+}
+
+watch([heaterEnergyRows, secChartRef], () => {
+  nextTick(() => { if (secChartRef.value) renderSecChart() })
+}, { deep: true })
+
 // ==================== 设备状态时间线（水泵/加热开关阶梯图） ====================
 const showDeviceStateChart = computed(() => {
   if (historyChartsConfig.value.showDeviceStateChart === false) return false
@@ -1018,6 +1179,12 @@ function disposeAllCharts() {
   pidTrackingChartInstance = null
   pumpVelocityTrackingChartInstance?.dispose()
   pumpVelocityTrackingChartInstance = null
+  actualPowerChartInstance?.dispose()
+  actualPowerChartInstance = null
+  heatEnergyChartInstance?.dispose()
+  heatEnergyChartInstance = null
+  secChartInstance?.dispose()
+  secChartInstance = null
   deviceStateChartInstance?.dispose()
   deviceStateChartInstance = null
   cumulativeFlowChartInstance?.dispose()
