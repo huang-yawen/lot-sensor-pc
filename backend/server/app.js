@@ -3,6 +3,12 @@
  * 负责创建 Express 服务、配置跨域和静态前端、挂载业务路由，并把配置中心、MQTT
  * 和 WebSocket 推送链路在同一进程中启动。
  *
+ * 所有业务 API 路由统一放在 routes/sensorRoutes.js 里集中管理，本文件只做：
+ *   1. Express 基础配置（CORS、JSON 解析、静态文件）
+ *   2. 挂载路由入口（app.use('/', sensorRoutes)）
+ *   3. WebSocket + MQTT 集成（广播、节流、事件监听）
+ *   4. 初始化逻辑（启动安全联锁、恢复故障态、MQTT 诊断）
+ *
  * 【配置中心关联】MQTT_URL 用于启动诊断日志；REALTIME_REFRESH_INTERVAL 控制
  * 实时推送定时器，保存配置后会动态生效。MQTT 的实际连接热更新由 mqtt/index.js 处理。
  * 【环境变量】PORT、HOST、CORS_ORIGINS、FRONTEND_DIST_PATH 只控制部署环境，修改后需重启。
@@ -15,11 +21,10 @@ const { WebSocketServer } = require('ws');
 require('./config/env');
 const sensorRoutes = require('./routes/sensorRoutes');
 const systemConfig = require('./config/systemConfig');
-const configController = require('./controllers/system/configController');
 const { startMonitor: startSafetyMonitor } = require('./service/safety/safetyInterlock');
 const { initFaultStateFromDb, onFault } = require('./service/faultStatus/faultStatus');
-const { getLatest: getLatestComputed, refreshFromDB: refreshComputedFromDB } = require('./service/computedMetrics/computedMetrics');
 const mqttClient = require('./mqtt/index')
+
 const app = express();
 const port = Number(process.env.PORT) || 3000;
 // 电脑端默认仅监听本机，避免未认证的设备控制接口暴露到局域网或公网。
@@ -38,81 +43,13 @@ app.use(cors({
   }
 }));
 app.use(express.json({ limit: '1mb' }));
-      
+
 // 所有业务接口统一挂载到同一个路由入口，便于集中维护。
+// 具体路由定义见 routes/sensorRoutes.js，app 层不再直接写路由。
 app.use('/', sensorRoutes);
 
-// ==================== 系统配置 API ====================
-// 全局配置中心，支持热更新、导出/导入
-app.get('/api/system-config', configController.getConfig)
-app.post('/api/system-config', configController.updateConfig)
-app.post('/api/system-config/reset', configController.resetConfig)
-app.get('/api/system-config/export', configController.exportConfig)
-app.post('/api/system-config/import', configController.importConfig)
-
-// MQTT 连接状态诊断接口
-app.get('/api/mqtt/status', (req, res) => {
-    res.json({
-        success: true,
-        data: {
-            isConnected: mqttClient.isConnected,
-            clientInitialized: !!mqttClient.client,
-            url: mqttClient.config?.url || 'mqtt://localhost:1883'
-        }
-    })
-});
-
-// 累计派生指标接口（窗口函数累加计算）
-const cumulativeController = require('./controllers/cumulative/cumulativeController')
-app.get('/api/cumulative', cumulativeController)
-
-// 时间窗口派生指标接口（滑动平均/波动/变化率）
-const timeWindowController = require('./controllers/timeWindow/timeWindowController')
-app.get('/api/time-window', timeWindowController)
-
-// 平均温度/平均流速历史图表接口（历史图表页面专用，按时间范围查数据库）
-const averageChartController = require('./controllers/computedMetrics/averageChartController')
-app.get('/api/average-chart', averageChartController)
-
-const scatterChartController = require('./controllers/computedMetrics/scatterChartController')
-app.get('/api/temp-flow-scatter', scatterChartController)
-
-const currentTempController = require('./controllers/computedMetrics/currentTempController')
-app.get('/api/current-temp', currentTempController)
-
-// 设备状态时间线接口（水泵/加热开关历史，历史图表页面专用）
-const deviceStateTrendController = require('./controllers/computedMetrics/deviceStateTrendController')
-app.get('/api/device-state-trend', deviceStateTrendController)
-
-// 加热能耗分析接口（瞬时实际加热功率、累计耗电量、累计换热量、单位流量能耗，历史图表页面专用）
-const heaterEnergyController = require('./controllers/computedMetrics/heaterEnergyController')
-app.get('/api/heater-energy', heaterEnergyController)
-
-// 首页开关运行时长接口（水泵/加热的累计运行时长 + 本次已运行时长）
-const switchDurationController = require('./controllers/switchDuration/switchDurationController')
-app.get('/api/switch-duration', switchDurationController)
-
-// PID 自整定：把自整定算出的建议 Kp/Ki/Kd 写入指令中心
-const { applyAutoTuneResult } = require('./controllers/system/pidAutoTuneController')
-app.post('/api/pid-autotune/apply', applyAutoTuneResult)
-
-// 设备状态只来源于 DeviceManager 对 t_device 的同步结果。
-app.get('/api/device-status', async (req, res) => {
-    await mqttClient.waitForDeviceSync();
-    res.json({ success: true, data: mqttClient.getAllDeviceStatus() });
-});
-
-// 首页“需要计算的数据”板块：返回后端实时计算出的工程指标。
-// 尚无实时 MQTT 数据时，从数据库历史数据回放一次，保证板块有值可显示。
-app.get('/api/computed-metrics', async (req, res) => {
-    try {
-        await refreshComputedFromDB();
-    } catch (err) {
-        console.error('[ComputedMetrics] 数据库回放失败:', err.message);
-    }
-    res.json({ success: true, data: getLatestComputed() });
-});
-        
+// ==================== 静态前端托管 ====================
+// 前端构建产物 dist/ 由后端 express.static 直接提供，不需要单独前端服务器。
 const distPath = process.env.FRONTEND_DIST_PATH
   ? path.resolve(process.env.FRONTEND_DIST_PATH)
   : path.join(__dirname, '../../dist');
@@ -123,10 +60,12 @@ app.get('/', (req, res) => {
 });
 console.log('Dist Path:', distPath);
 
+// ==================== MQTT 初始化 ====================
 console.log('正在初始化 MQTT 连接...');
 console.log('MQTT Broker URL:', systemConfig.getConfig().MQTT_URL);
 
 // ==================== WebSocket 服务器 ====================
+// 和 HTTP 共用同一个 http.Server，避免多进程端口冲突。
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server, path: '/ws' });
 
@@ -272,6 +211,7 @@ setInterval(() => {
     broadcast('device_status', deviceStatus);
 }, 2000);
 
+// ==================== MQTT 重连诊断 ====================
 // 监听 MQTT 重连失败事件，优雅降级
 mqttClient.on('reconnect_failed', () => {
     console.warn('⚠️  MQTT 重连失败，已停止重连。WebSocket 仍可正常提供 API 服务。');
@@ -287,6 +227,7 @@ setTimeout(() => {
     }
 }, 5000);
 
+// ==================== 服务启动初始化 ====================
 // 启动安全联锁掉线监测（条件 6：传感器长时间无数据上报）。
 startSafetyMonitor();
 
