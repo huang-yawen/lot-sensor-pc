@@ -13,7 +13,16 @@
         <el-option label="本地模拟" value="mock" />
         <el-option label="失败" value="failed" />
       </el-select>
-      <el-button type="primary" @click="load">查询</el-button>
+      <el-date-picker
+        v-model="dateRange"
+        type="datetimerange"
+        start-placeholder="开始时间"
+        end-placeholder="结束时间"
+        format="YYYY-MM-DD HH:mm:ss"
+        value-format="YYYY-MM-DD HH:mm:ss"
+        :clearable="true"
+      />
+      <el-button type="primary" @click="page = 1; load()">查询</el-button>
     </div>
     <div class="table-wrapper">
       <el-table
@@ -65,6 +74,10 @@ const page = ref(1)
 const pageSize = ref(10)
 const deviceNo = ref('')
 const status = ref('')
+// 跟"历史数据查询"（TableContainer.vue）同样的时间范围筛选，精确到秒；
+// 不选时间就不传 startTime/endTime，后端 /intelligent/records 接口本来就支持
+// 这两个参数（见 controllers/intelligent/records.js），只是这个页面之前没接上。
+const dateRange = ref([])
 const loading = ref(false)
 const systemStore = useSystemConfigStore()
 const displayStore = DisplayStore()
@@ -73,7 +86,10 @@ const pageSizeOptions = computed(() => [...new Set([pageSize.value, 5, 10, 20, 5
 async function load() {
   loading.value = true
   try {
-    const response = await api.get('/intelligent/records', { params: { page: page.value, pageSize: pageSize.value, d_no: deviceNo.value, status: status.value } })
+    const [startTime, endTime] = dateRange.value || []
+    const response = await api.get('/intelligent/records', {
+      params: { page: page.value, pageSize: pageSize.value, d_no: deviceNo.value, status: status.value, startTime, endTime },
+    })
     rows.value = response.data.data.list
     total.value = response.data.data.total
   } catch (error) {

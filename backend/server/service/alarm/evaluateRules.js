@@ -1,8 +1,14 @@
 /** 【文件职责】告警规则评估与自动联锁服务。故障状态触发、指令页面锁定期间，
  *   自动联锁动作会被跳过（告警记录仍照常写入），避免绕过锁定改写 t_direct。
+ * 触发一条告警时会 emit 一个 'alarm' 事件（见文件底部 onAlarm），供 app.js 转成
+ * WebSocket 广播（alarm_triggered），前端 AlarmNotifier.vue 订阅后弹出提示——
+ * 这跟 faultStatus.js 的 onFault/fault_triggered 是完全对称的两套机制：那边是
+ * 5 种系统级硬故障（严重、低频、需要手动复位，用模态弹窗），这边是本页面自由配置
+ * 的普通阈值规则（可能频繁触发、只是提示，不需要用户处理，所以用非阻塞通知）。
  * 【配置中心关联】ALARM_RULES（enabled/autoInterlockEnabled/rules）每次评估读取。 */
 const promisePool = require('../../config/dbPool')
 const systemConfig = require('../../config/systemConfig')
+const EventEmitter = require('events')
 const { firstValue, getTopic, toWireValue, buildSwitchPayload } = require('../../utils/protocol')
 const { resolveDeviceNo, resolveFieldAliases } = require('../../utils/mappedData')
 const { saveDirectData, getDirectValue } = require('../directData/saveDirectConfig')
@@ -12,6 +18,8 @@ const { isLockedByFault, isAnyLocked } = require('../faultStatus/faultStatus')
 
 const lastTriggered = new Map()
 const latestState = new Map()
+/** 告警事件总线，跟 faultStatus.js 里 fault 事件的用法一致，见文件底部 onAlarm。 */
+const events = new EventEmitter()
 
 const OPERATORS = {
   '>': (a, b) => a > b,
@@ -117,12 +125,19 @@ async function evaluateRules(info) {
         }
       }
     }
-    alarms.push({ id: rule.id, name: rule.name, actual, threshold, message, interlock })
+    const alarm = { id: rule.id, name: rule.name, actual, threshold, message, interlock, deviceNo: deviceNo === 'default' ? null : deviceNo }
+    alarms.push(alarm)
+    // 立即广播，不等这条 MQTT 消息处理完（app.js 里的 onAlarm 会转成 WebSocket
+    // 推给前端），跟故障触发的实时性要求一致：告警的意义就在于"马上让人看到"。
+    events.emit('alarm', alarm)
   }
   return alarms
 }
 
-module.exports = { evaluateRules }
+module.exports = {
+  evaluateRules,
+  onAlarm: (listener) => events.on('alarm', listener),
+}
 /** 【文件职责】告警规则计算与可选自动联锁服务。
  * 【配置中心关联】ALARM_RULES（enabled/autoInterlockEnabled/rules）、CONTROL_VALUE_MAP；
  * 每次评估都读取最新配置，自动联锁默认应保持关闭。 */

@@ -74,7 +74,41 @@ async function resolveConfigIdByPrefix(prefix) {
   return rows[0]?.id ?? null
 }
 
-/** 没有 preffix 的本地参数（Kp/Ki/Kd/控制周期/占空比上下限）按 t_name 精确匹配查 id。 */
+/**
+ * PID 参数槽位定义：每个槽位的 preffix（唯一标识符，代码用这个定位指令项）和
+ * t_name（前端显示名，仅作向后兼容兜底）。新增参数时在此加一行即可。
+ * 数据库里有值的（如 kp/ki/kd/dutyMin 等）prefox 已在 init/fix_pid_prefix.js 补好；
+ * 尚未建指令项的（deadband/derivativeFilter/dutyRampLimit/kff）prefox 已预留，
+ * 前端创建后自动生效。
+ */
+const PID_PARAM_SLOTS = {
+  windowMs:         { prefix: 'pid_window_ms',         name: 'PID控制周期(ms)' },
+  kp:               { prefix: 'pid_kp',                name: 'Kp（比例系数）' },
+  ki:               { prefix: 'pid_ki',                name: 'Ki（积分系数）' },
+  kd:               { prefix: 'pid_kd',                name: 'Kd（微分系数）' },
+  dutyMin:          { prefix: 'pid_duty_min',          name: '占空比下限(%)' },
+  dutyMax:          { prefix: 'pid_duty_max',          name: '占空比上限(%)' },
+  deadband:         { prefix: 'pid_deadband',         name: '死区(℃)' },
+  derivativeFilter: { prefix: 'pid_derivative_filter', name: '微分滤波系数' },
+  dutyRampLimit:    { prefix: 'pid_duty_ramp_limit',    name: '占空比斜率限制(%/周期)' },
+  kff:              { prefix: 'pid_kff',               name: '前馈系数' },
+}
+
+/** 按槽位名查 PID 参数指令项的 config_id：prefox 优先，找不到再用 t_name 兜底。 */
+async function resolveParamConfigId(slot) {
+  const def = PID_PARAM_SLOTS[slot]
+  if (!def) return null
+  const byPrefix = await resolveConfigIdByPrefix(def.prefix)
+  if (byPrefix != null) return byPrefix
+  // t_name 兜底：历史数据库可能还没补 preffix，保证向后兼容
+  const [rows] = await promisePool.query(
+    'SELECT id FROM t_direct_config WHERE t_name = ? ORDER BY id ASC LIMIT 1',
+    [def.name]
+  )
+  return rows[0]?.id ?? null
+}
+
+/** 导出：按 preffix 查 config_id 的通用函数（给 pidAutoTuneController 等外部复用）。 */
 async function resolveConfigIdByName(name) {
   const [rows] = await promisePool.query(
     'SELECT id FROM t_direct_config WHERE t_name = ? ORDER BY id ASC LIMIT 1',
@@ -120,9 +154,12 @@ async function isPidEnabled(deviceNo) {
   return master === true && pid === true
 }
 
-/** 读取一个按 t_name 匹配的本地数值参数（Kp/Ki/Kd/控制周期/占空比上下限），没配置就用兜底默认值。 */
-async function getPidNumber(name, deviceNo, fallback) {
-  const configId = await resolveConfigIdByName(name)
+/**
+ * 读一个 PID 参数槽位（按 PID_PARAM_SLOTS 定义）：先查指令中心，查不到回退到调用方传的兜底值。
+ * config_id 定位走 preffix 优先 + t_name 兜底，确保指令项改名后仍能找到。
+ */
+async function getPidNumber(slot, deviceNo, fallback) {
+  const configId = await resolveParamConfigId(slot)
   const value = configId != null
     ? await toNumber(await getDirectValue({ config_id: configId, d_no: deviceNo }))
     : null
@@ -164,18 +201,20 @@ async function readHeatOn(info) {
   return null
 }
 
-async function findSwitchConfig(prefix, name) {
-  const byPrefix = await resolveConfigIdByPrefix(prefix)
+/** 按 preffix 找开关类（f_type=1）配置。所有开关都有 preffix，不再需要 t_name LIKE 兜底。 */
+async function findSwitchConfig(prefix) {
+  const configId = await resolveConfigIdByPrefix(prefix)
+  if (configId == null) return null
   const [rows] = await promisePool.query(
     `SELECT id, t_name, preffix, wire_template, wire_on_payload, wire_off_payload, f_type FROM t_direct_config
-     WHERE f_type = '1' AND (id = ? OR t_name LIKE ?) ORDER BY (id = ?) DESC, id ASC LIMIT 1`,
-    [byPrefix ?? -1, `%${name}%`, byPrefix ?? -1]
+     WHERE id = ? AND f_type = '1' LIMIT 1`,
+    [configId]
   )
   return rows[0] || null
 }
 
 async function setHeater(value, deviceNo, source) {
-  const conf = await findSwitchConfig('heater', '加热')
+  const conf = await findSwitchConfig('heater')
   if (!conf) return false
   const mqttClient = require('../../mqtt')
   const payload = buildSwitchPayload(conf, value)
@@ -263,26 +302,26 @@ async function evaluatePidHeating(info) {
 
   const targetTemp = await getTargetTemp(deviceNo, rootConfig.DEFAULT_TARGET_TEMP)
 
-  // PID 参数读取
-  const windowMsRaw = await getPidNumber('PID控制周期(ms)', deviceNo, fallback.windowMs ?? 10000)
+  // PID 参数读取（全部按 preffix 定位，t_name 仅做兜底）
+  const windowMsRaw = await getPidNumber('windowMs', deviceNo, fallback.windowMs ?? 10000)
   const windowMs = Math.max(MIN_PID_WINDOW_MS, Number.isFinite(windowMsRaw) && windowMsRaw > 0 ? windowMsRaw : 10000)
-  const kp = Number(await getPidNumber('Kp（比例系数）', deviceNo, fallback.kp ?? 0)) || 0
-  const ki = Number(await getPidNumber('Ki（积分系数）', deviceNo, fallback.ki ?? 0)) || 0
-  const kd = Number(await getPidNumber('Kd（微分系数）', deviceNo, fallback.kd ?? 0)) || 0
-  const dutyMinRaw = Number(await getPidNumber('占空比下限(%)', deviceNo, 0)) || 0
-  const dutyMaxRaw = Number(await getPidNumber('占空比上限(%)', deviceNo, 100)) || 100
+  const kp = Number(await getPidNumber('kp', deviceNo, fallback.kp ?? 0)) || 0
+  const ki = Number(await getPidNumber('ki', deviceNo, fallback.ki ?? 0)) || 0
+  const kd = Number(await getPidNumber('kd', deviceNo, fallback.kd ?? 0)) || 0
+  const dutyMinRaw = Number(await getPidNumber('dutyMin', deviceNo, 0)) || 0
+  const dutyMaxRaw = Number(await getPidNumber('dutyMax', deviceNo, 100)) || 100
   const dutyMin = Math.max(0, Math.min(100, Math.min(dutyMinRaw, dutyMaxRaw)))
   const dutyMax = Math.max(0, Math.min(100, Math.max(dutyMinRaw, dutyMaxRaw)))
 
   // 精准控制增强参数（有兜底默认值，未配置时自动启用合理值）
   // 死区：误差绝对值小于此值时保持上一次 duty，避免微小误差导致继电器抖动
-  const deadband = Number(await getPidNumber('死区(℃)', deviceNo, fallback.deadband ?? 0.2)) || 0
+  const deadband = Number(await getPidNumber('deadband', deviceNo, fallback.deadband ?? 0.2)) || 0
   // 微分滤波系数 0~1：越大越跟踪原始值，越小滤波越强（0.3 = 70% 滤波）
-  const derivativeFilter = Math.max(0, Math.min(1, Number(await getPidNumber('微分滤波系数', deviceNo, fallback.derivativeFilter ?? 0.3)) || 0.3))
+  const derivativeFilter = Math.max(0, Math.min(1, Number(await getPidNumber('derivativeFilter', deviceNo, fallback.derivativeFilter ?? 0.3)) || 0.3))
   // 输出斜率限制(%/周期)：duty 单次最大变化幅度，防止阶跃跳变
-  const dutyRampLimit = Math.max(0, Number(await getPidNumber('占空比斜率限制(%/周期)', deviceNo, fallback.dutyRampLimit ?? 15)) || 0)
+  const dutyRampLimit = Math.max(0, Number(await getPidNumber('dutyRampLimit', deviceNo, fallback.dutyRampLimit ?? 15)) || 0)
   // 前馈系数：进水温度变化时提前调整 duty，补偿热惯性
-  const kff = Number(await getPidNumber('前馈系数', deviceNo, fallback.kff ?? 0)) || 0
+  const kff = Number(await getPidNumber('kff', deviceNo, fallback.kff ?? 0)) || 0
 
   const state = getState(deviceNo)
   const now = Date.now()
@@ -449,6 +488,7 @@ async function evaluatePidHeating(info) {
   return actions
 }
 
-// readTempOut/getTargetTemp/setHeater/resolveConfigIdByName 额外导出给 pidAutoTune.js 复用，
+// readTempOut/getTargetTemp/setHeater 额外导出给 pidAutoTune.js 复用，
 // 避免自整定服务重复实现同一套字段读取/指令下发逻辑。
-module.exports = { evaluatePidHeating, isPidEnabled, readSwitchOn, readTempOut, getTargetTemp, setHeater, resolveConfigIdByName }
+// resolveConfigIdByPrefix 导出给外部按 preffix 定位指令项（pidAutoTune 写 Kp/Ki/Kd 时用）。
+module.exports = { evaluatePidHeating, isPidEnabled, readSwitchOn, readTempOut, getTargetTemp, setHeater, resolveConfigIdByPrefix, resolveParamConfigId }

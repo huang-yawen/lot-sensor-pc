@@ -44,12 +44,14 @@ async function toNumber(raw) {
   return Number.isFinite(n) ? n : null
 }
 
-async function findSwitchConfig(prefix, name) {
-  const byPrefix = await resolveConfigIdByPrefix(prefix)
+/** 按 preffix 找开关类（f_type=1）配置。所有开关都有 preffix，不再需要 t_name LIKE 兜底。 */
+async function findSwitchConfig(prefix) {
+  const configId = await resolveConfigIdByPrefix(prefix)
+  if (configId == null) return null
   const [rows] = await promisePool.query(
     `SELECT id, t_name, preffix, wire_template, wire_on_payload, wire_off_payload, f_type FROM t_direct_config
-     WHERE f_type = '1' AND (id = ? OR t_name LIKE ?) ORDER BY (id = ?) DESC, id ASC LIMIT 1`,
-    [byPrefix ?? -1, `%${name}%`, byPrefix ?? -1]
+     WHERE id = ? AND f_type = '1' LIMIT 1`,
+    [configId]
   )
   return rows[0] || null
 }
@@ -64,8 +66,8 @@ async function readFlow(info) {
 async function shutDown(deviceNo) {
   const mqttClient = require('../../mqtt')
   const targets = await Promise.all([
-    findSwitchConfig('pump', '水泵'),
-    findSwitchConfig('heater', '加热'),
+    findSwitchConfig('pump'),
+    findSwitchConfig('heater'),
   ])
   let published = 0
   for (const conf of targets.filter(Boolean)) {

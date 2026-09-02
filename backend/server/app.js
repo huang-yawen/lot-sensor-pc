@@ -23,6 +23,7 @@ const sensorRoutes = require('./routes/sensorRoutes');
 const systemConfig = require('./config/systemConfig');
 const { startMonitor: startSafetyMonitor } = require('./service/safety/safetyInterlock');
 const { initFaultStateFromDb, onFault } = require('./service/faultStatus/faultStatus');
+const { onAlarm } = require('./service/alarm/evaluateRules');
 const mqttClient = require('./mqtt/index')
 
 const app = express();
@@ -202,6 +203,13 @@ app.set('wsBroadcast', broadcast);
 // 新故障触发时立即广播（不走节流），前端收到后弹窗提示当前故障情况。
 onFault((trigger) => {
     broadcast('fault_triggered', trigger);
+});
+
+// 自定义阈值告警规则（ALARM_RULES）触发时立即广播（不走节流）——这些规则可能比
+// 硬故障触发得频繁得多，前端用非阻塞通知展示（AlarmNotifier.vue），不用像故障
+// 弹窗那样打断操作、要求用户复位。
+onAlarm((alarm) => {
+    broadcast('alarm_triggered', alarm);
 });
 
 // ==================== 设备在线状态定时广播 ====================

@@ -94,18 +94,11 @@ async function resolveConfigIdByPrefix(prefix) {
   return rows[0]?.id ?? null
 }
 
-// 先按 preffix 查，查不到再按中文名（比如"温度上限阈值"）查一次：只要指令中心里
-// 用 preffix 或者中文名任一种方式能对上号，就能拿到这个阈值的 id。
+/** 按 preffix 查阈值指令项的 config_id。所有指令项都有 preffix，不再需要 t_name 兜底。 */
 async function resolveThresholdConfigId(slot) {
   const def = THRESHOLD_SLOTS[slot]
   if (!def) return null
-  const byPrefix = await resolveConfigIdByPrefix(def.prefix)
-  if (byPrefix != null) return byPrefix
-  const [rows] = await promisePool.query(
-    'SELECT id FROM t_direct_config WHERE t_name = ? ORDER BY id ASC LIMIT 1',
-    [def.name]
-  )
-  return rows[0]?.id ?? null
+  return resolveConfigIdByPrefix(def.prefix)
 }
 
 async function toNumber(raw) {
@@ -144,13 +137,14 @@ async function readSwitchStates(info) {
   return { pumpOn: toOn(firstValue(info, pumpAliases)), heatOn: toOn(firstValue(info, heatAliases)) }
 }
 
-/** 按 preffix/名称找开关类（f_type=1）配置。名称用 LIKE 兼容“水泵/水泵开关”等写法。 */
-async function findSwitchConfig(prefix, name) {
-  const byPrefix = await resolveConfigIdByPrefix(prefix)
+/** 按 preffix 找开关类（f_type=1）配置。所有开关都有 preffix，不再需要 t_name LIKE 兜底。 */
+async function findSwitchConfig(prefix) {
+  const configId = await resolveConfigIdByPrefix(prefix)
+  if (configId == null) return null
   const [rows] = await promisePool.query(
     `SELECT id, t_name, preffix, wire_template, wire_on_payload, wire_off_payload, f_type FROM t_direct_config
-     WHERE f_type = '1' AND (id = ? OR t_name LIKE ?) ORDER BY (id = ?) DESC, id ASC LIMIT 1`,
-    [byPrefix ?? -1, `%${name}%`, byPrefix ?? -1]
+     WHERE id = ? AND f_type = '1' LIMIT 1`,
+    [configId]
   )
   return rows[0] || null
 }
@@ -175,8 +169,8 @@ async function recordAlarm(deviceNo, trigger, interlocked) {
 async function closePumpHeater(deviceNo, triggerId) {
   const mqttClient = require('../../mqtt')
   const targets = await Promise.all([
-    findSwitchConfig('pump', '水泵'),
-    findSwitchConfig('heater', '加热'),
+    findSwitchConfig('pump'),
+    findSwitchConfig('heater'),
   ])
   let published = 0
   for (const conf of targets.filter(Boolean)) {

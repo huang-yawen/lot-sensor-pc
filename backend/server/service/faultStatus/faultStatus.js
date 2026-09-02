@@ -133,18 +133,11 @@ async function resolveConfigIdByPrefix(prefix) {
   return rows[0]?.id ?? null
 }
 
-// 先按 preffix 查一次，查不到再按中文名（t_name）查一次，两种方式任一种查到
-// 就返回对应的 config_id。
+/** 按 preffix 查阈值指令项的 config_id。所有指令项都有 preffix，不再需要 t_name 兜底。 */
 async function resolveThresholdConfigId(slot) {
   const def = THRESHOLD_SLOTS[slot]
   if (!def) return null
-  const byPrefix = await resolveConfigIdByPrefix(def.prefix)
-  if (byPrefix != null) return byPrefix
-  const [rows] = await promisePool.query(
-    'SELECT id FROM t_direct_config WHERE t_name = ? ORDER BY id ASC LIMIT 1',
-    [def.name]
-  )
-  return rows[0]?.id ?? null
+  return resolveConfigIdByPrefix(def.prefix)
 }
 
 function toNumber(raw) {
@@ -186,12 +179,14 @@ async function readSwitchStates(info) {
   }
 }
 
-async function findSwitchConfig(prefix, name) {
-  const byPrefix = await resolveConfigIdByPrefix(prefix)
+/** 按 preffix 找开关类（f_type=1）配置。所有开关都有 preffix，不再需要 t_name LIKE 兜底。 */
+async function findSwitchConfig(prefix) {
+  const configId = await resolveConfigIdByPrefix(prefix)
+  if (configId == null) return null
   const [rows] = await promisePool.query(
     `SELECT id, t_name, preffix, wire_template, wire_on_payload, wire_off_payload, f_type FROM t_direct_config
-     WHERE f_type = '1' AND (id = ? OR t_name LIKE ?) ORDER BY (id = ?) DESC, id ASC LIMIT 1`,
-    [byPrefix ?? -1, `%${name}%`, byPrefix ?? -1]
+     WHERE id = ? AND f_type = '1' LIMIT 1`,
+    [configId]
   )
   return rows[0] || null
 }
@@ -202,7 +197,7 @@ async function findSwitchConfig(prefix, name) {
  * 用于故障触发时"硬件断电但页面保持故障前开关状态"。
  */
 async function setSwitch(prefix, name, value, deviceNo, source, skipPersist = false) {
-  const conf = await findSwitchConfig(prefix, name)
+  const conf = await findSwitchConfig(prefix)
   if (!conf) return false
   const mqttClient = require('../../mqtt')
   const payload = buildSwitchPayload(conf, value)

@@ -10,13 +10,14 @@
 const systemConfig = require('../../config/systemConfig')
 const { getDirectValue, saveDirectData } = require('../../service/directData/saveDirectConfig')
 const { saveOperationHistory } = require('../../service/operationHistory/saveOperationHistory')
-const { resolveConfigIdByName } = require('../../service/pidHeating/pidHeating')
+const { resolveConfigIdByPrefix } = require('../../service/pidHeating/pidHeating')
 const { getDefaultDeviceId } = require('../../utils/mappedData')
 
-const PARAM_NAMES = {
-  kp: 'Kp（比例系数）',
-  ki: 'Ki（积分系数）',
-  kd: 'Kd（微分系数）',
+// PID 自整定结果写入指令中心时用 preffix 定位指令项（数据库已在 init/fix_pid_prefix.js 补好）
+const PARAM_PREFIXES = {
+  kp: 'pid_kp',
+  ki: 'pid_ki',
+  kd: 'pid_kd',
 }
 
 const applyAutoTuneResult = async (req, res) => {
@@ -32,8 +33,8 @@ const applyAutoTuneResult = async (req, res) => {
     const dNo = config.SINGLE_DEVICE_MODE === true ? await getDefaultDeviceId() : (req.body?.d_no ?? null)
 
     const applied = {}
-    for (const [key, name] of Object.entries(PARAM_NAMES)) {
-      const configId = await resolveConfigIdByName(name)
+    for (const [key, prefix] of Object.entries(PARAM_PREFIXES)) {
+      const configId = await resolveConfigIdByPrefix(prefix)
       if (configId == null) continue
       const value = String(result[key])
       const oldValue = await getDirectValue({ config_id: configId, d_no: dNo })
@@ -43,7 +44,7 @@ const applyAutoTuneResult = async (req, res) => {
     }
 
     if (!Object.keys(applied).length) {
-      return res.status(500).json({ success: false, message: '指令中心未找到 Kp/Ki/Kd 对应的指令项，无法应用' })
+      return res.status(500).json({ success: false, message: '指令中心未找到 Kp/Ki/Kd 对应的指令项（preffix=pid_kp/ki/kd），无法应用' })
     }
 
     res.json({ success: true, message: '自整定建议值已写入指令中心，立即生效', data: applied })
