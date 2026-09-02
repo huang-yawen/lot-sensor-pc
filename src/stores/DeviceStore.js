@@ -20,7 +20,7 @@ export const DeviceStore = defineStore('deviceStore', () => {
         try {
             console.log('[deviceStore] 发送搜索请求，参数:', params);
             // 设备管理页按关键字拉取列表，同时加时间戳避开浏览器缓存。
-            const response = await api.get('/deviceData', {
+            const response = await api.get('/api/deviceData', {
                 params: {
                     currentPage: params.currentPage || 1,
                     pageSize: params.pageSize || 5,
@@ -69,15 +69,15 @@ export const DeviceStore = defineStore('deviceStore', () => {
     };
 
     const handleDelete = async (id) => {
-        return await api.post('/deviceData/delete', { id });
+        return await api.post('/api/deviceData/delete', { id });
     };
 
     const handleAdd = async (item) => {
-        return await api.post('/deviceData/add', item);
+        return await api.post('/api/deviceData/add', item);
     };
 
     const handleUpdate = async (item) => {
-        return await api.post('/deviceData/update', item);
+        return await api.post('/api/deviceData/update', item);
     };
 
     return {

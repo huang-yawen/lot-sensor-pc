@@ -72,7 +72,7 @@ const SWITCH_FIELD_MAP = { pump: "水泵", heater: "加热" };
 // 不用手动刷新。只同步这两个开关字段，不影响用户正在编辑的其他参数。
 const syncSwitchStates = async () => {
   try {
-    const res = await api.get("/dataByType", { params: { type: "behavior", pageSize: 1, page: 1 } });
+    const res = await api.get("/api/dataByType", { params: { type: "behavior", pageSize: 1, page: 1 } });
     const latest = res.data?.data?.list?.[0];
     if (!latest) return;
     prop.storeData.forEach((node) => {

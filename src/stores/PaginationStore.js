@@ -36,7 +36,7 @@ export const PaginationStore = defineStore("paginationStore", () => {
             if (params.startTime) queryParams.startTime = params.startTime
             if (params.endTime) queryParams.endTime = params.endTime
 
-            const response = await api.get('/dataByType', { params: queryParams })
+            const response = await api.get('/api/dataByType', { params: queryParams })
             if (response.data.success) {
                 paginationData.value = response.data.data.list || []
                 fieldUnits.value = response.data.data.fieldUnits || {}

@@ -41,7 +41,7 @@ export const ErrorStore = defineStore("ErrorStore", () => {
     loading.value = true;
     try {
       // 故障列表支持关键字、时间范围和分页筛选，时间先转成后端可比较的字符串。
-      const response = await api.get("/errData", {
+      const response = await api.get("/api/errData", {
         params: {
           page: params.currentPage || 1,
           keyword: params.keyword || "",
@@ -76,7 +76,7 @@ export const ErrorStore = defineStore("ErrorStore", () => {
   const fetchSafetyData = async (params = {}) => {
     safetyLoading.value = true;
     try {
-      const response = await api.get("/errData", {
+      const response = await api.get("/api/errData", {
         params: {
           category: "safety",
           page: params.currentPage || 1,
@@ -113,7 +113,7 @@ export const ErrorStore = defineStore("ErrorStore", () => {
         startTime: formatDateTime(params.startTime),
         endTime: formatDateTime(params.endTime),
       };
-      const response = await api.get("/errTypeStats", { params: query });
+      const response = await api.get("/api/errTypeStats", { params: query });
 
       const res = response.data;
       if (res.success) {
@@ -135,7 +135,7 @@ export const ErrorStore = defineStore("ErrorStore", () => {
         startTime: formatDateTime(params.startTime),
         endTime: formatDateTime(params.endTime),
       };
-      const response = await api.get("/errTypeStats", { params: query });
+      const response = await api.get("/api/errTypeStats", { params: query });
 
       const res = response.data;
       if (res.success) {

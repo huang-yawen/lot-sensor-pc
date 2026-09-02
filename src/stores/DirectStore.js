@@ -17,7 +17,7 @@ export const DirectStore = defineStore("DirectStore", () => {
   const fetchDirectData = async () => {
     loading.value = true;
     try {
-      const res = await api.get("/directData");
+      const res = await api.get("/api/directData");
       if (res.data.success) {
         data.value = res.data.data || [];
         console.log("[DirectStore] 指令数据加载成功");
@@ -31,7 +31,7 @@ export const DirectStore = defineStore("DirectStore", () => {
 
   const handleRender = async (d_no) => {
     try {
-      const res = await api.get("/directRender", { params: { d_no } });
+      const res = await api.get("/api/directRender", { params: { d_no } });
       if (res.data.success) {
         renderData.value = res.data.data || [];
         return {
@@ -51,7 +51,7 @@ export const DirectStore = defineStore("DirectStore", () => {
       console.log("[DirectStore] 开始更新数据:", { id, value, d_no });
 
       // 以后端响应为准：在线设备立即发送，离线设备仅暂存，组件不能自行二次发布 MQTT。
-      const res = await api.post("/directData/update", {
+      const res = await api.post("/api/directData/update", {
         config_id: id,
         value,
         d_no

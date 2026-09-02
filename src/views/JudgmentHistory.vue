@@ -87,7 +87,7 @@ async function load() {
   loading.value = true
   try {
     const [startTime, endTime] = dateRange.value || []
-    const response = await api.get('/intelligent/records', {
+    const response = await api.get('/api/intelligent/records', {
       params: { page: page.value, pageSize: pageSize.value, d_no: deviceNo.value, status: status.value, startTime, endTime },
     })
     rows.value = response.data.data.list

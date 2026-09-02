@@ -84,7 +84,7 @@ const handleRecognize = async () => {
   recognizing.value = true
   try {
     const ids = selectedRows.value.map(item => item.id)
-    const res = await api.post('/intelligent/judge', {
+    const res = await api.post('/api/intelligent/judge', {
       type: 'behavior',
       ids: ids
     })

@@ -198,8 +198,8 @@ function findConfigId(nodes, preffix) {
 async function loadCommandTargetTemp() {
   try {
     const [treeRes, renderRes] = await Promise.all([
-      api.get('/directData'),
-      api.get('/directRender', { params: { d_no: 'null' } }),
+      api.get('/api/directData'),
+      api.get('/api/directRender', { params: { d_no: 'null' } }),
     ])
     const configId = findConfigId(treeRes.data?.data, 'target_temperature')
     const hit = (renderRes.data?.data || []).find(item => item.config_id === configId)

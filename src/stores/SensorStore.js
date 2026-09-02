@@ -19,7 +19,7 @@ export const SensorStore = defineStore('sensorStore', () => {
         loading.value = true
         try {
             // 实时页按在线状态过滤；不传 online 时请求全部实时概览数据。
-            const response = await api.get('/data', {
+            const response = await api.get('/api/data', {
                 params: online ? { online } : {}
             })
             sensorData.value = response.data

@@ -163,8 +163,8 @@ function flattenConfigIds(nodes, map) {
 async function loadThresholds() {
   try {
     const [treeRes, renderRes] = await Promise.all([
-      api.get('/directData'),
-      api.get('/directRender', { params: { d_no: 'null' } }),
+      api.get('/api/directData'),
+      api.get('/api/directRender', { params: { d_no: 'null' } }),
     ])
     const idByPreffix = new Map()
     flattenConfigIds(treeRes.data?.data, idByPreffix)
