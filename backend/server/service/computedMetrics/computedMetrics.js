@@ -24,6 +24,9 @@ const { resolveDeviceNo, resolveFieldAliases } = require('../../utils/mappedData
 /** 每个设备的滚动状态。 */
 const stateMap = new Map()
 
+/** 每个设备状态的初始值：cumulativeFlowL 累计流量供指标 7/9 用；last 记上
+ * 一次读数供指标 2/3（差分类）算变化率用；curve/kHistory 分别是指标 6/1 的
+ * 滚动历史窗口；series 是首页小趋势图用的最近 60 个点。 */
 function initialState() {
   return {
     cumulativeFlowL: 0,
@@ -35,11 +38,13 @@ function initialState() {
   }
 }
 
+/** 取（或首次创建）一个设备的滚动状态，每个 deviceNo 各自独立一份，互不影响。 */
 function getState(deviceNo) {
   if (!stateMap.has(deviceNo)) stateMap.set(deviceNo, initialState())
   return stateMap.get(deviceNo)
 }
 
+/** 把原始字符串/数字转成有限数字，转不出来统一返回 null，不会把 NaN 带进后面的计算。 */
 async function toNumber(raw) {
   if (raw == null || raw === '') return null
   const n = Number(raw)
@@ -71,6 +76,8 @@ async function readSwitchStates(info) {
   }
 }
 
+/** 除法的安全版本：除数是 0/null/非有限数，或者被除数不是有限数，统一
+ * 返回 null，不会算出 Infinity/NaN 混进展示结果里。 */
 function safeDivide(num, den) {
   if (den == null || den === 0 || !Number.isFinite(den) || num == null || !Number.isFinite(num)) return null
   const value = num / den
@@ -147,6 +154,10 @@ async function compute(info, timestampMs = Date.now()) {
   if (averageTemp != null) result.averageTemp = { value: Number(averageTemp.toFixed(2)), unit: '℃' }
 
   // ---- 1. 系统阻力系数 K = ΔP / Q²（Q 单位 L/s，避开 Q=0） ----
+  // 物理依据：管路水流阻力跟流量的平方成正比（这是流体力学里常见的紊流
+  // 阻力关系），K 就是这个比例系数，只反映管路本身"通不通畅"，不随瞬时
+  // 流量大小变化——管路结垢、局部堵塞会让内径变小、阻力变大，K 就会持续
+  // 走高，所以拿它最近 3 天的变化趋势（kTrend）提示"该清洗管路了"。
   if (flowLPerSec != null && flowLPerSec !== 0 && pressure != null) {
     const k = safeDivide(pressure, flowLPerSec ** 2)
     if (k != null) {
@@ -161,6 +172,10 @@ async function compute(info, timestampMs = Date.now()) {
   }
 
   // ---- 2. 压力陡降速率 V = dP/dt ----
+  // 正常运行时压力变化是平缓的；水泵吸入空气（比如水箱快抽空、管路密封
+  // 不严进气）会让压力在很短时间内断崖式下跌——这种"跌得极快"跟"正常慢慢
+  // 降压"在数值上差异很明显，dropInHalfSecond 单独标记"0.5 秒内骤降"，
+  // 比只盯着压力绝对值本身更早发现吸空气这种需要紧急处理的情况。
   if (state.last && pressure != null && state.last.pressure != null) {
     const dtSec = (nowMs - state.last.timestamp) / 1000
     if (dtSec > 0) {
@@ -173,6 +188,9 @@ async function compute(info, timestampMs = Date.now()) {
   }
 
   // ---- 3. 温度变化率 dT/dt ----
+  // 正常加热/降温时温度是连续、平缓变化的；传感器断线通常会让读数卡死在
+  // 一个固定值不动（变化率趋近 0），短路则可能让读数瞬间冲高或掉底——靠
+  // "变化率是否符合物理常理"，比只盯着温度绝对值本身更快发现传感器异常。
   if (state.last) {
     const dtSec = (nowMs - state.last.timestamp) / 1000
     if (dtSec > 0) {
@@ -260,6 +278,10 @@ async function compute(info, timestampMs = Date.now()) {
   }
 
   // ---- 9. 液位（基于两水箱初始水量与累计流量） ----
+  // 隐含的物理布局假设：水从水箱 1 被抽出、流经管路和加热器，最终流进水箱 2
+  // （所以水箱 1 的水量是"初始量 - 累计流量"、水箱 2 是"初始量 + 累计流量"）。
+  // 这不是靠液位传感器实测出来的，是纯粹靠累计流量反推的估算值——现场如果
+  // 循环方向不是"1 抽到 2"，或者中途有额外补水/排水，这个估算会跟实际不符。
   const tankAreaCm2 = Number(config.tankAreaCm2)
   if (tankAreaCm2 > 0) {
     const initial1 = Number(config.initialWaterTank1)

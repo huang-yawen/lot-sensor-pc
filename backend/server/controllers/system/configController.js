@@ -37,6 +37,14 @@ function validateFieldMapperRows(table, rows) {
   })
 }
 
+/**
+ * 校验 t_direct_config（指令配置树）整体的合法性：id 不能重复、t_name 不能
+ * 为空、f_type 只能是这四种类型之一、preffix（MQTT 字段名）不能重复（但
+ * 允许为空——有些指令项只在本地使用，不需要下发）、wire_template/
+ * wire_on_payload/wire_off_payload 这几个可选的自定义协议字段格式必须是
+ * 合法 JSON、ref_id（父级指令）如果填了必须指向一个真实存在的 id。任意
+ * 一项不满足就直接抛错，中断整个导入流程，不会导入到一半就报错。
+ */
 function validateDirectMappings(rows) {
   if (!Array.isArray(rows) || rows.length === 0) throw new Error('t_direct_config 至少需要一条指令映射')
   const ids = new Set()
@@ -90,6 +98,8 @@ function validateDirectMappings(rows) {
   }
 }
 
+/** 从数据库读出全部元数据表（字段映射表 + 指令配置树 + 自定义指标定义），
+ * 供导出配置时一并打包进备份文件。 */
 async function readMetadata(connection = promisePool) {
   const metadata = {}
   for (const table of METADATA_TABLES) {
@@ -99,6 +109,16 @@ async function readMetadata(connection = promisePool) {
   return metadata
 }
 
+/**
+ * 用导入数据整个替换掉数据库里的元数据表：先校验（指令树/字段映射表各自
+ * 有各自的合法性规则），校验通过才会真的动数据库——每张表都是"先清空再
+ * 逐行插入"，不是逐行比对做增量更新，简单直接，代价是导入过程中这张表
+ * 会短暂为空（这也是外层调用方要用数据库事务包起来的原因：真正失败时能
+ * 整体回滚，不会留下"表已经清空、但还没插完新数据"这种中间状态）。
+ * 插入时只挑这张表数据库里实际存在的列（DESCRIBE 查出来的 allowed 集合），
+ * 备份文件里带的多余字段会被过滤掉，不会因为带了旧版本已经删除的字段就
+ * 插入失败。
+ */
 async function replaceMetadata(connection, metadata) {
   if (!metadata) return
   for (const table of METADATA_TABLES) {
@@ -191,6 +211,11 @@ const exportConfig = async (req, res) => {
 }
 
 // POST /api/system-config/import — 导入配置
+// 数据库元数据表和内存里的 systemConfig 是两套独立的存储，不在同一个事务里，
+// 所以这里做了双重保险：数据库那边用真正的事务（beginTransaction/commit/
+// rollback）；内存这边先记下 previous（导入前的配置快照），如果数据库
+// 事务失败，紧接着把内存配置也强制改回 previous——避免出现"数据库已经
+// 回滚、但内存里的配置已经被 importConfig 改成新值"这种两边不一致的情况。
 const importConfig = async (req, res) => {
   try {
     const config = req.body

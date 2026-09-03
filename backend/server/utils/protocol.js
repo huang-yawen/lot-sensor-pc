@@ -2,6 +2,16 @@
  * 【配置中心关联】DEVICE_ID_FIELDS、TIME_FIELDS、CONTROL_VALUE_MAP、MQTT_TOPICS 动态读取。 */
 const systemConfig = require('../config/systemConfig')
 
+/**
+ * 从一个对象里按候选字段名列表依次找第一个"有效值"（不是 undefined/null/
+ * 空字符串），大小写不敏感。设备上报的字段名可能是各种写法（d_no、D_NO、
+ * deviceNo...），candidates 通常来自配置中心的别名列表（比如
+ * DEVICE_ID_FIELDS、字段映射表里的多别名字符串），不用为每种大小写写法
+ * 各判断一次。
+ * @param {Object} source - 要从里面找值的对象（比如一条 MQTT 消息）
+ * @param {Array<string>} candidates - 候选字段名，按顺序找，第一个命中的就用
+ * @returns {*} 找到的值；都没找到，或者对象本身不合法，返回 null
+ */
 function firstValue(source, candidates = []) {
   if (!source || typeof source !== 'object') return null
   const lookup = new Map(Object.entries(source).map(([key, value]) => [String(key).toLowerCase(), value]))
@@ -12,34 +22,52 @@ function firstValue(source, candidates = []) {
   return null
 }
 
+/** 从上报消息里解析出设备编号，候选字段名来自配置中心 DEVICE_ID_FIELDS。 */
 function getDeviceNo(info) {
   return firstValue(info, systemConfig.getConfig().DEVICE_ID_FIELDS)
 }
 
+/** 从上报消息里解析出设备上报时间，候选字段名来自配置中心 TIME_FIELDS。 */
 function getReportedTime(info) {
   return firstValue(info, systemConfig.getConfig().TIME_FIELDS)
 }
 
+/** 按角色（sensor/behavior/control/heartbeat）查对应的 MQTT 主题名，主题名
+ * 本身在配置中心 MQTT_TOPICS 里维护，改了主题不用改代码。 */
 function getTopic(role) {
   return systemConfig.getConfig().MQTT_TOPICS[role]
 }
 
+/**
+ * 把"页面/代码里用的值"转换成"设备线上实际认的值"。多数情况下两者是同一个
+ * 东西（页面上点"开"、线上传的也是 'on'），但有些设备协议线上传的是别的
+ * 值（比如数字 1/0），这种映射关系配置在 CONTROL_VALUE_MAP 里，没配置映射
+ * 的值原样透传，不强制要求所有值都配一遍映射。
+ */
 function toWireValue(value) {
   const mapping = systemConfig.getConfig().CONTROL_VALUE_MAP || {}
   const key = String(value)
   return Object.prototype.hasOwnProperty.call(mapping, key) ? mapping[key] : value
 }
 
+/** toWireValue 的反向操作：把设备上报的线上值转换回页面/代码里用的值，
+ * 在映射表里反查不到时原样返回（说明设备上报的就是可以直接使用的值）。 */
 function fromWireValue(value) {
   const mapping = systemConfig.getConfig().CONTROL_VALUE_MAP || {}
   const hit = Object.entries(mapping).find(([, wire]) => String(wire) === String(value))
   return hit ? hit[0] : value
 }
 
+/** 把字段映射表里用 "|" 或 "," 分隔的多别名字符串（比如
+ * "d_no|device_id,deviceNo"）拆成数组，去掉多余空白和空字符串项，
+ * 供 firstValue 的 candidates 参数使用。 */
 function aliases(value) {
   return String(value || '').split(/[|,]/).map(item => item.trim()).filter(Boolean)
 }
 
+/** 把指令配置里存的 wire_template/wire_on_payload/wire_off_payload 这类 JSON
+ * 字符串解析成对象，格式不对时抛出带具体指令名称的错误，方便一眼看出是
+ * 哪条指令的哪个字段在配置中心填错了。 */
 function parseWirePayload(config, raw, label) {
   let parsed
   try {

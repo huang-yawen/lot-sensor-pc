@@ -5,10 +5,22 @@ const promisePool = require('../../config/dbPool')
 const systemConfig = require('../../config/systemConfig')
 const { calcBucketSeconds } = require('../../utils/timeRange')
 
+/** 取出配置中心已启用的所有时间窗口指标（TIME_WINDOW_METRICS 里 enabled=true 的那些）。 */
 function getEnabledTimeWindowMetrics() {
   return (systemConfig.getConfig().TIME_WINDOW_METRICS || []).filter(metric => metric.enabled)
 }
 
+/**
+ * 把一条时间窗口指标翻译成对应的 SQL 窗口函数片段，三种聚合类型分别对应：
+ *   avg        滑动平均：最近 window_size 个点（含当前行）算一次平均值。
+ *   volatility 波动幅度：最近 window_size 个点里最大值减最小值，数值越大
+ *              说明这段时间读数抖动得越厉害（比如疑似水锤/湍流）。
+ *   rate       相邻变化量：这一行的值减上一行的值，反映"这一步比上一步
+ *              变化了多少"，不需要 window_size（固定就是跟前一行比）。
+ * ROWS ${preceding} PRECEDING 表示"窗口往前数 preceding 行"，preceding
+ * 算的是 window_size - 1（窗口本身包含当前这一行，凑够 window_size 个点），
+ * 用 Math.max(1, ...) 兜底，避免 window_size 配置成 0 或负数时窗口函数语法出错。
+ */
 function aggregationSql(metric) {
   const value = `CAST(NULLIF(\`${metric.source_field}\`, '') AS DECIMAL(20,6))`
   const preceding = Math.max(1, (metric.window_size || 5) - 1)
@@ -24,6 +36,16 @@ function aggregationSql(metric) {
   throw new Error(`不支持的聚合类型: ${metric.aggregation}`)
 }
 
+/**
+ * 查询单条时间窗口指标的历史数据，供历史图表页面画图。
+ * @param {Object} metric - 一条 TIME_WINDOW_METRICS 配置
+ * @param {Object} [options]
+ * @param {string} [options.d_no]
+ * @param {number} [options.limit=300]
+ * @param {string} [options.startTime]
+ * @param {string} [options.endTime]
+ * @returns {Array<{c_time, value}>}
+ */
 async function querySingleTimeWindow(metric, options = {}) {
   const { d_no, limit = 300, startTime, endTime } = options
   const precision = metric.precision ?? 2
@@ -62,6 +84,10 @@ async function querySingleTimeWindow(metric, options = {}) {
   return rows
 }
 
+/**
+ * 批量查询所有已启用的时间窗口指标。每条指标单独 catch，某一条查询失败
+ * 只是那一条返回空数组、打一行错误日志，不会连累其它指标也查不出来。
+ */
 async function queryAllTimeWindow(options = {}) {
   const results = {}
   await Promise.all(getEnabledTimeWindowMetrics().map(async metric => {
@@ -75,6 +101,16 @@ async function queryAllTimeWindow(options = {}) {
   return results
 }
 
+/**
+ * 给"实时数据表格"内联展示用：把 mode 是 inline/both 的指标翻译成一段可以
+ * 直接拼进主查询 SELECT 列表的 SQL 片段，让表格在展示原始字段的同时，
+ * 额外多几列"滑动平均"这类派生值，不需要页面再单独发一次请求去查。
+ * mode 只有 standalone（只在历史图表页面单独查）/ inline（只内嵌进表格）/
+ * both（两处都要）三种，这里只挑 inline 和 both 的。
+ * @param {string} sourceTable - 只处理这张表的指标（一次查询只属于一张表）
+ * @returns {{selectFragment: string, metrics: Array}} selectFragment 为空
+ *   字符串时表示没有指标需要内嵌，调用方直接跳过拼接
+ */
 function buildInlineTimeWindowSql(sourceTable) {
   const metrics = getEnabledTimeWindowMetrics()
     .filter(metric => (metric.mode === 'inline' || metric.mode === 'both') && metric.source_table === sourceTable)

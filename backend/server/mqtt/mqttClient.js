@@ -21,6 +21,14 @@
 const mqtt = require('mqtt')
 const EventEmitter = require('events')
 
+/**
+ * 继承 EventEmitter，对外会发出这几种事件：
+ *   'connected'        - 连接成功（含首次连接和每次重连成功）
+ *   'message'          - 收到一条 MQTT 消息，参数 (topic, payload)，交给
+ *                        messageRouter 按主题分发给具体的业务处理器
+ *   'reconnect_failed' - 重连次数用完了，彻底放弃，等人工介入（比如手动
+ *                        调用 reconnect() 或者检查 Broker 是不是没启动）
+ */
 class MqttClient extends EventEmitter {
   /**
    * @param {Object} config - MQTT 配置
@@ -68,6 +76,10 @@ class MqttClient extends EventEmitter {
       this.isConnected = false
     })
 
+    // close 和 offline 都要重连，虽然触发场景不完全一样：close 是底层网络连接
+    // 彻底断开（比如 Broker 主动踢掉、TCP 连接断了）；offline 是 mqtt.js 自己
+    // 判定"一段时间没能保持住连接"，这时候库内部有可能还在尝试，但业务层面
+    // 都算作"现在连不上"，两种情况都需要走同一套重连调度，不需要区分对待。
     this.client.on('close', () => {
       this.isConnected = false
       console.log('[MQTT] 连接已关闭')

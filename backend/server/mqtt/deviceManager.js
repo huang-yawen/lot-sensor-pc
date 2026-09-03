@@ -260,6 +260,12 @@ class DeviceManager {
     this._loaded = true
   }
 
+  /**
+   * 从跟踪表里彻底移除一个设备：数据库里被删掉的设备、或者重复编号产生的
+   * 占位 key（见 refreshDevicesFromDB 里 __missing_number__/__duplicate_number__
+   * 这类临时 key）需要清理时调用。清掉心跳记录、离线定时器、元数据、暂存
+   * 指令，并把暂存指令的变化落盘，避免磁盘上残留一份指向已删除设备的指令。
+   */
   removeDevice(deviceId) {
     const normalized = String(deviceId ?? '').trim()
     if (!normalized) return
@@ -273,6 +279,12 @@ class DeviceManager {
     this._persistPendingCommands()
   }
 
+  /**
+   * 给设备改编号（比如设备管理页面修改了 d_no）：新旧编号相同就只是刷新一下
+   * 元数据；不同的话要先彻底移除旧编号的跟踪记录，再用新编号重新注册——
+   * 不能只改 key 不清理，否则内存里会同时留着新旧两份记录，造成状态混乱
+   * （旧编号的心跳/离线定时器还在跑，但已经没有意义了）。
+   */
   renameDevice(oldDeviceId, newDeviceId, metadata = {}) {
     const oldId = String(oldDeviceId ?? '').trim()
     const newId = String(newDeviceId ?? '').trim()
@@ -339,6 +351,12 @@ class DeviceManager {
     console.log(`[DeviceManager] 设备 ${deviceId} 指令暂存 (config_id=${configId})`)
   }
 
+  /**
+   * 服务启动时从磁盘读回上次没发完的暂存指令，接上继续等设备上线后发送
+   * （对应构造函数里 this._loadPendingCommands() 的调用，文件头部有"为什么
+   * 要落盘"的说明：后端重启不能让还没送达设备的指令凭空消失）。文件不存在
+   * （第一次启动）或者解析失败都直接忽略，不影响正常启动流程。
+   */
   _loadPendingCommands() {
     try {
       if (!fs.existsSync(this._pendingFile)) return
@@ -354,6 +372,14 @@ class DeviceManager {
     }
   }
 
+  /**
+   * 把当前内存里的暂存指令整个写回磁盘。先写到一个 .tmp 临时文件，写成功后
+   * 再用 rename 做原子替换——不直接覆盖正式文件，是为了防止"正好写到一半
+   * 进程被杀掉"这种情况：如果直接写正式文件，半截的 JSON 在下次启动时会
+   * 解析失败，暂存指令就全部丢了；先写临时文件再 rename，要么这次写入完全
+   * 没发生（正式文件保持上一次的完整内容），要么完全生效，不会有"写一半"
+   * 的中间状态。
+   */
   _persistPendingCommands() {
     try {
       const content = Object.fromEntries(this._pendingCommands)

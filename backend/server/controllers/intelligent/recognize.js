@@ -8,8 +8,11 @@ const promisePool = require('../../config/dbPool')
 const systemConfig = require('../../config/systemConfig')
 const { getDeviceNo } = require('../../utils/protocol')
 
+/** 判定的数据来源类型 -> 对应的原始数据表，请求体里的 type 只能是这两个之一。 */
 const TYPE_TABLES = { sensor: 't_sensor_data', behavior: 't_behavior_data' }
 
+/** 判定记录表懒建表：每次请求前调用一次，表已经存在时 CREATE TABLE IF NOT EXISTS
+ * 直接跳过，不会报错也不会重复建。 */
 async function ensureTable() {
   await promisePool.query(`CREATE TABLE IF NOT EXISTS t_judgment_record (
     id BIGINT NOT NULL AUTO_INCREMENT,
@@ -50,6 +53,13 @@ function renderTemplate(template, context) {
   return template.replace(/\{\{\s*([\w.]+)\s*\}\}/g, (_, key) => String(readPath(context, key) ?? ''))
 }
 
+/**
+ * 智能判定服务还没配置/没启用时的本地兜底：不真的发请求，纯粹按数值简单
+ * 判断——记录里任意一个字段的绝对值超过 10000，就认为是异常数据（对应
+ * 传感器读数被钳位在异常最大值哨兵的情况），否则算正常。这只是让"现场
+ * 还没接上真实判定服务时也能跑通整条流程、看到界面效果"的占位逻辑，不是
+ * 真正的智能判定，结果会用 status='mock' 标记，跟真实判定结果区分开。
+ */
 function mockResult(records) {
   return records.map(record => {
     const values = Object.values(record).map(Number).filter(Number.isFinite)
@@ -262,6 +272,12 @@ function summarize(responseData, rawText, config) {
   return { results: extracted, ...extractOne(first, config) }
 }
 
+/**
+ * 把一次判定的请求、响应、结论都落库到 t_judgment_record，供"智能判定记录"
+ * 页面查询。d_no 从第一条被判定的记录里解析（一次判定通常是同一台设备的
+ * 一批数据，取第一条代表整批就够了）；error 信息截到 1000 字符，避免异常
+ * 堆栈太长把数据库字段撑爆。
+ */
 async function saveRecord({ type, ids, records, requestBody, responseBody, conclusion, confidence, status, error }) {
   await ensureTable()
   await promisePool.execute(
@@ -272,6 +288,17 @@ async function saveRecord({ type, ids, records, requestBody, responseBody, concl
   )
 }
 
+/**
+ * 智能判定接口主流程：
+ *   1. 校验请求参数（type 必须是 sensor/behavior，ids 必须是非空整数数组，
+ *      去重且最多取 100 个，防止一次判定的数据量失控）。
+ *   2. 按 ids 把原始记录从对应表里查出来，一条都查不到就直接返回 404。
+ *   3. 调用 callService 发起判定（内部会视配置走同步/异步、mock/真实服务）。
+ *   4. 把响应汇总成统一的 { results, conclusion, confidence } 结构（mock 和
+ *      真实服务两条路径的汇总方式不一样，分别处理）。
+ *   5. 不管成功还是失败都落一条记录到 t_judgment_record（失败时在 catch 里
+ *      单独存一条 status='failed' 的记录，方便排查是哪批数据判定失败了）。
+ */
 module.exports = async (req, res) => {
   const type = req.body?.type
   const ids = Array.isArray(req.body?.ids) ? [...new Set(req.body.ids.map(Number).filter(Number.isInteger))].slice(0, 100) : []

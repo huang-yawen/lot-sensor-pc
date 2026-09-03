@@ -17,10 +17,17 @@ const { formatLocalDateTime } = require('../../utils/helper')
 const { isLockedByFault, isAnyLocked } = require('../faultStatus/faultStatus')
 
 const lastTriggered = new Map()
+/** 每个设备最近看到过的完整字段快照，跨消息累积合并（不是每次替换）。
+ * 用途：一条规则可能要求"字段 A 满足前置条件才检查字段 B"，但 A、B 不一定
+ * 出现在同一条 MQTT 消息里（比如分开上报模式下，一条是传感器消息一条是
+ * 行为消息）——latestState 把历史上收到过的所有字段值都合并存一份，
+ * requirementMet 判断前置条件时不会因为"这条消息恰好没带那个字段"就误判
+ * 条件不满足。 */
 const latestState = new Map()
 /** 告警事件总线，跟 faultStatus.js 里 fault 事件的用法一致，见文件底部 onAlarm。 */
 const events = new EventEmitter()
 
+/** 告警规则里各种比较运算符对应的 JS 判断函数。 */
 const OPERATORS = {
   '>': (a, b) => a > b,
   '>=': (a, b) => a >= b,
@@ -45,6 +52,11 @@ async function resolveFieldNames(spec) {
   return spec.field ? [spec.field] : []
 }
 
+/**
+ * 判断一条规则的前置条件（require）是否满足：前置条件本身也是"某个字段的值
+ * 要落在允许的列表里"，没配置前置条件（requirement 为 null/undefined）视为
+ * 直接满足，不用额外检查。
+ */
 async function requirementMet(info, requirement) {
   if (!requirement) return true
   const candidates = await resolveFieldNames(requirement)
@@ -52,6 +64,18 @@ async function requirementMet(info, requirement) {
   return (requirement.values || []).some(value => String(value).toLowerCase() === String(actual).toLowerCase())
 }
 
+/**
+ * 评估一条设备上报消息，对照 ALARM_RULES.rules 里配置的每一条规则依次检查：
+ *   1. 规则本身有没有启用，运算符是不是认识的（OPERATORS 里有对应实现）。
+ *   2. 前置条件（require）满不满足，不满足直接跳过这条规则。
+ *   3. 拿这条规则关心的字段的实际值跟阈值比较，比较结果不成立就跳过。
+ *   4. 冷却判断：同一个"设备+规则"短时间内已经触发过就跳过，避免高频重复告警。
+ * 命中的规则会记一条告警（写库 + emit 事件供前端弹窗），如果这条规则还配置了
+ * 自动联锁动作（autoInterlockEnabled 且 rule.action.field 有值），还会尝试
+ * 下发一次指令——这部分逻辑更复杂，在下面 for 循环里单独有详细说明。
+ * @param {Object} info - 已解析的设备上报数据
+ * @returns {Promise<Array>} 本次命中的告警列表
+ */
 async function evaluateRules(info) {
   const config = systemConfig.getConfig()
   if (!config.ALARM_RULES?.enabled) return []

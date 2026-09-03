@@ -3,10 +3,15 @@
 const promisePool = require('../config/dbPool')
 const { getDeviceNo, aliases } = require('./protocol')
 
+// 数据表能写入的字段槽位白名单：field1~field10。字段映射表里配置的 db_name
+// 如果不在这个名单里，saveMappedData 会直接跳过，不会往表里塞一个不存在的列名。
 const ALLOWED_DATA_FIELDS = new Set(
   Array.from({ length: 10 }, (_, index) => `field${index + 1}`)
 )
 
+/** 把上报数据里的 online 字段转成中文展示标签，这里只是"存进数据库的标签
+ * 值"，跟"实时数据/保存数据"真正的判定逻辑（看是不是这张表最新一条记录，
+ * 见 utils/realtimeFilter.js）是两回事，不要混淆。 */
 function getOnlineLabel(value) {
   return String(value).trim() === '1' || value === true ? '实时数据' : '保存数据'
 }
@@ -84,6 +89,7 @@ async function getAllDeviceIds() {
   }
 }
 
+/** 数据表 -> 对应的字段映射表，两张数据表各自维护一份独立的映射配置。 */
 const MAPPER_TABLE_BY_DATA_TABLE = {
   t_sensor_data: 't_sensor_field_mapper',
   t_behavior_data: 't_behavior_field_mapper',

@@ -29,6 +29,7 @@ const shutdownDone = new Map()
 /** 每个设备上一次评估时“定量停机”开关是否启用（用于识别开关切换，重置计量周期）。 */
 const lastEnabled = new Map()
 
+/** 按 preffix 精确查 t_direct_config 的 id，查不到返回 null。 */
 async function resolveConfigIdByPrefix(prefix) {
   if (!prefix) return null
   const [rows] = await promisePool.query(
@@ -38,6 +39,7 @@ async function resolveConfigIdByPrefix(prefix) {
   return rows[0]?.id ?? null
 }
 
+/** 把原始字符串/数字转成有限数字，转不出来统一返回 null，不会把 NaN 带进后面的累加计算。 */
 async function toNumber(raw) {
   if (raw == null || raw === '') return null
   const n = Number(raw)
@@ -56,6 +58,7 @@ async function findSwitchConfig(prefix) {
   return rows[0] || null
 }
 
+/** 从这条上报消息里读出瞬时流量（field3，单位 L/min）。 */
 async function readFlow(info) {
   const aliases = await resolveFieldAliases('t_sensor_data', FLOW_FIELD)
   const raw = firstValue(info, aliases)
@@ -88,9 +91,21 @@ async function shutDown(deviceNo) {
 }
 
 /**
- * 主评估：累计流量并判断是否定量停机。
+ * 主评估：累计流量并判断是否定量停机。这是个简单的四阶段状态机，每个设备
+ * 独立走自己的一份状态（flowAccumulator/shutdownDone/lastEnabled 三个 Map
+ * 都按 deviceNo 存）：
+ *   ① 关闭：定量停机开关是关的，什么都不做，只在"刚从开变成关"那一刻清零
+ *      累计流量、解除停机锁定，为下次重新打开做准备。
+ *   ② 开启：开关从关变成开的那一刻，清零累计流量、解除锁定，开始新一轮计量。
+ *   ③ 累计中：开关一直开着、还没达到目标，每条消息读一次瞬时流量，按时间
+ *      累加进 flowAccumulator。
+ *   ④ 达标：累计流量到达目标值，关闭水泵和加热，并且把 shutdownDone 标记为
+ *      true——这个标记会让后续所有消息在③直接被跳过，不会因为水泵关了、
+ *      流量归零又重新开始计量，也不会来一条消息就重复下发一次关闭指令，
+ *      直到用户把开关关掉再打开，才会回到②重新开始一轮。
  * @param {Object} info - 已解析的设备上报数据
- * @returns {Object|null} 本次评估结果
+ * @returns {Object|null} 本次评估结果（{deviceNo, accumulated, target, reached,
+ *   shutdown?}），开关关闭、目标值无效时返回 null（代表这次不参与判断）
  */
 async function evaluateQuantityShutdown(info) {
   const config = systemConfig.getConfig().QUANTITY_SHUTDOWN || {}

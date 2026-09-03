@@ -15,6 +15,11 @@
  * （用于处理单条实时 MQTT 消息，见 computedMetrics.js）。两个函数各自独立遍历同一棵
  * AST，互不调用。
  */
+// 公式里允许调用的函数白名单。min/max 是这个函数能接受的参数个数范围（比如
+// round 可以是 round(x) 也可以是 round(x, 小数位)，所以 min:1 max:2）；sql 是
+// 这个函数翻译成 SQL 时对应的数据库内置函数名——JS 的 min/max 是变长参数比
+// 大小，翻到 SQL 里对应的是 LEAST/GREATEST，不是同名的 MIN/MAX（那两个是
+// SQL 里的聚合函数，语义完全不同，不能直接照搬名字）。
 const FUNCTION_RULES = {
   abs: { min: 1, max: 1, sql: 'ABS' },
   round: { min: 1, max: 2, sql: 'ROUND' },

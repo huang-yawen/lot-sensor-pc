@@ -10,12 +10,16 @@ const { buildInlineCumulativeSql } = require('../cumulative/cumulativeService')
 const { buildInlineTimeWindowSql } = require('../timeWindow/timeWindowService')
 const { buildRecencyFilter, REALTIME_LABEL, HISTORY_LABEL } = require('../../utils/realtimeFilter')
 
+// 校验时间字符串格式：支持 "YYYY-MM-DD"、"YYYY-MM-DD HH:MM"、"YYYY-MM-DD HH:MM:SS"
+// 三种精度，空值直接放行（代表用户没填这个时间条件，不参与过滤）。
 const isValidDateTime = (dateStr) => {
     if (!dateStr) return true
     const regex = /^\d{4}-\d{2}-\d{2}( \d{2}:\d{2}(:\d{2})?)?$/
     return regex.test(dateStr)
 }
 
+// 前端时间选择器精确到分钟时传来的是 "YYYY-MM-DD HH:MM"（缺秒），这里补上
+// ":00"，保证跟数据库 c_time 字段的精度对齐，避免比较时出现细微的秒级偏差。
 const formatDateTime = (dateStr) => {
     if (!dateStr) return null
     if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(dateStr)) {
@@ -24,6 +28,8 @@ const formatDateTime = (dateStr) => {
     return dateStr
 }
 
+// 检查开始时间不晚于结束时间；只要有一个没填就不检查（半个区间是合法的，
+// 比如只填开始时间表示"这个时间点之后的全部数据"）。
 const validateDateRange = (startTime, endTime) => {
     if (!startTime || !endTime) return true
     const start = new Date(startTime)
@@ -31,7 +37,24 @@ const validateDateRange = (startTime, endTime) => {
     return start <= end
 }
 
-// 查询传感器或行为汇总数据，并返回格式化后的列表和字段信息。
+/**
+ * 查询传感器或行为汇总数据，是"汇总数据"页面表格的唯一数据来源，用一份
+ * 通用逻辑同时服务两张表（type='sensor' 查 t_sensor_data，'behavior' 查
+ * t_behavior_data），整体分五步：
+ *   1. 确定查哪张表、哪张字段映射表，解析分页/关键词/时间范围参数并校验。
+ *   2. 按字段映射表动态拼出 SELECT 列表（数据库物理字段名 -> 中文展示名），
+ *      不是写死的列名，字段映射表改了这里自动跟着变。
+ *   3. 传感器类型的表格额外拼上用户在"公式与图表"配置的自定义指标列，以及
+ *      "累计与滑动统计"里设置成内嵌模式（inline/both）的派生列——都是直接
+ *      拼进同一条 SQL 的 SELECT 列表，跟原始字段一起返回，不需要多发请求。
+ *   4. 算出"实时数据"还是"保存数据"：规则是这张表当前最新一条记录算实时，
+ *      其余全部算保存数据（不依赖设备上报是否自带 online 字段，见
+ *      buildRecencyFilter），再根据前端传的筛选值决定要不要按这个条件过滤。
+ *   5. 用同一套过滤条件跑两次查询：一次要数据（带分页），一次只要总数
+ *      （用于分页组件），两次的 WHERE 条件必须完全一致，总数才对得上。
+ * @param {Object} query - 请求参数（type/online/page/pageSize/keyword/startTime/endTime）
+ * @returns {Promise<Object>} { success, data: { list, fieldUnits, chartSettings, total, page, size } }
+ */
 module.exports = async function getHistoryDataByType(query) {
     const type = query.type || 'sensor'
     const onlineFilter = query.online || null
@@ -80,6 +103,9 @@ module.exports = async function getHistoryDataByType(query) {
         if (map) valueMaps[item.db_name] = map
     })
 
+    // searchMapper 是最终 SELECT 列表的各个列，从这里开始逐步往里拼：先是主键，
+    // 再是按字段映射表转出来的中文列名，然后视情况追加自定义公式列、累计/滑动
+    // 统计内嵌列，最后是固定的时间列和数据类型列。
     const searchMapper = ['id']
     if(dataTable=='t_sensor_data'){
         searchMapper.push('d_no as 设备编号')
@@ -87,6 +113,8 @@ module.exports = async function getHistoryDataByType(query) {
     for (const key in fieldMapping) {
         searchMapper.push(`${key} AS \`${fieldMapping[key]}\``)
     }
+    // 自定义公式指标（DERIVED_METRICS）只在传感器类型的表格里显示——公式引用的
+    // field1~field10 目前只映射到 t_sensor_data，放进行为数据表格里跑不通。
     let derivedMetrics = []
     if (type === 'sensor') {
         derivedMetrics = await getEnabledMetrics('history')
@@ -97,6 +125,9 @@ module.exports = async function getHistoryDataByType(query) {
             fieldUnit[metric.metric_key] = metric.unit || ''
         }
     }
+    // 累计统计（cumulativeService）和滑动统计（timeWindowService）里勾选了
+    // "内嵌模式"的指标，同样直接拼列进这条 SQL，两类服务各自负责生成自己的
+    // SQL 片段，这里只管拼接、不关心内部怎么算的。
     const cumulative = buildInlineCumulativeSql(dataTable)
     const timeWindow = buildInlineTimeWindowSql(dataTable)
     const inlineMetrics = [...cumulative.metrics, ...timeWindow.metrics]

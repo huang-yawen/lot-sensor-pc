@@ -54,29 +54,59 @@ const lastTemp = new Map()
 
 /* ============================ 故障检测（所有规则共用的前置条件） ============================ */
 
-/** 故障检测：堵管 / 漏水 / 干烧。返回命中的故障名称数组。 */
+/**
+ * 故障检测：堵管 / 漏水 / 干烧，三种硬件级异常。这是所有规则运行前都要先看一眼
+ * 的"前提检查"，不算一条独立规则（不受 LINKAGE_RULES 里任何开关控制），联动
+ * 总开关一打开就一直生效，不需要单独勾选。检测到任何一种，后面各条规则都会
+ * 因为 faults 数组不为空而强制把加热关掉。
+ *
+ * 三种故障各自在检测什么、对应什么现实情况：
+ *   干烧：水泵和加热都开着，流量却低于下限——水几乎没流动，加热器在"空烧"，
+ *         是最危险的一种，加热管可能因此烧坏甚至起火。
+ *   堵管：压力冲到上限，流量却低于下限——水泵在使劲推水，但水推不出去，
+ *         说明管路某处堵住了。
+ *   漏水：压力直接掉到 0，流量也是 0 或很低——水泵在转但系统里几乎没有压力，
+ *         说明管路破了、接头松了，水都漏光了压不起来。
+ *
+ * @param {Object} sensors - 当前传感器读数（用到 flow 流量、pressure 压力）
+ * @param {string|null} deviceNo - 设备号，查阈值时用（阈值支持按设备单独配置）
+ * @param {Object} states - 当前开关上报状态（用到 pumpOn 水泵、heatOn 加热）
+ * @returns {Array<string>} 命中的故障名称列表，可能同时命中好几个；空数组=正常
+ */
 async function detectFaults(sensors, deviceNo, states) {
   const faults = []
   const flowLow = await getThresholdValue('flowLow', deviceNo)
   const pressureHigh = await getThresholdValue('pressureHigh', deviceNo)
 
-  // 干烧：水泵和加热均开启时，流量低于下限。
+  // 干烧：水泵和加热都开着，但流量却低于下限——水几乎不流动，加热器在空烧。
   if (states.pumpOn && states.heatOn && flowLow != null && sensors.flow != null && sensors.flow < flowLow) {
     faults.push('干烧')
   }
-  // 堵管：压力高于上限且流量低于下限。
+  // 堵管：压力高于上限、流量又低于下限——水泵使劲推却推不出去，管路被堵住了。
   if (pressureHigh != null && sensors.pressure != null && sensors.pressure > pressureHigh
     && flowLow != null && sensors.flow != null && sensors.flow < flowLow) {
     faults.push('堵管')
   }
-  // 漏水：压力为 0 且流量为 0 或低于下限。
+  // 漏水：压力直接是 0，流量也是 0 或低于下限——系统里压力根本起不来，多半是漏了。
   if (sensors.pressure === 0 && (sensors.flow === 0 || (flowLow != null && sensors.flow != null && sensors.flow < flowLow))) {
     faults.push('漏水')
   }
   return faults
 }
 
-/** 流量是否处于"正常"区间：非空、非 0、未到异常最大值哨兵、在下上限之间。 */
+/**
+ * 判断流量读数是不是"正常"，好几条规则会共用这个小工具函数。
+ * 要同时满足四个条件才算正常：
+ *   1. 读数不是 null（传感器确实有上报数据）
+ *   2. 读数不是 0（真的在流动，不是完全没流量）
+ *   3. 读数没有顶到异常最大值哨兵（顶到哨兵值通常代表传感器掉线/短路，
+ *      读数被硬件卡死在满量程，不是真实流量）
+ *   4. 读数落在配置的下限和上限之间（没配置对应阈值就跳过那一条检查）
+ * @param {number|null} flow - 流量读数
+ * @param {number|null} flowLow - 流量下限阈值，null 表示没配置，不检查这条
+ * @param {number|null} flowHigh - 流量上限阈值，null 表示没配置，不检查这条
+ * @returns {boolean}
+ */
 function isFlowNormal(flow, flowLow, flowHigh) {
   if (flow == null || flow === 0 || flow >= getAbnormalMax()) return false
   if (flowLow != null && flow < flowLow) return false
@@ -84,7 +114,17 @@ function isFlowNormal(flow, flowLow, flowHigh) {
   return true
 }
 
-/** 多个候选结论合并："关闭"优先于"打开"（fail-safe）。 */
+/**
+ * 把好几条规则各自给出的候选结论（比如"泵到底该开还是该关"）合并成最终一个
+ * 结论。合并原则很简单，也是这套系统安全设计的底线："关闭"永远优先于
+ * "打开"——只要有任意一条规则说该关，最终结果就是关，哪怕其它规则都说该开
+ * 也不行；只有全部候选都说开、且没有一条说关，最终才是开；如果所有规则都
+ * 没表态（都是 null），最终结果也是 null（不动作，维持现状）。
+ * 这跟"规则可以自由勾选、任意组合"是配套的：规则越叠越多，宁可保守——多关
+ * 一次没什么坏处，也不能因为某条规则漏判而"放行"了一个不该有的开启动作。
+ * @param {...('on'|'off'|null)} values - 各条规则给出的候选结论
+ * @returns {'on'|'off'|null}
+ */
 function mergeDecision(...values) {
   const list = values.filter(v => v === 'on' || v === 'off')
   if (list.includes('off')) return 'off'
@@ -94,6 +134,13 @@ function mergeDecision(...values) {
 
 /* ============================ 规则函数（每条都返回 { pump, heater }） ============================ */
 
+/**
+ * 水泵常开规则：这条最简单，完全不跟温度挂钩——只要没有故障、而且流量压力
+ * 读数都在正常范围（不是 0、没顶到异常哨兵），就让水泵保持开着；一旦命中
+ * 任意故障，直接关泵。读数不完整、或者两种情况都不满足时不表态（null），
+ * 留给其它规则或者维持现状。
+ * @returns {{pump: 'on'|'off'|null, heater: null}} 这条规则从不管加热，heater 恒为 null
+ */
 function rulePumpAlwaysOn(sensors, faults) {
   const allNormal = faults.length === 0
     && sensors.flow != null && sensors.flow !== 0 && sensors.flow < getAbnormalMax()
@@ -103,18 +150,72 @@ function rulePumpAlwaysOn(sensors, faults) {
   return { pump: null, heater: null }
 }
 
+/**
+ * 加热滞回带通断判定：跟恒流速控制里的滞环通断（pumpVelocityControl.js 的
+ * decideByHysteresis）是同一种思路——
+ *   出水温度 >= 目标温度：已经够热了，关。
+ *   出水温度 <  目标温度 - 回差：明显不够热，开。
+ *   中间这段（[目标-回差, 目标) 区间）：维持现状不动作，这正是"回差"存在的
+ *   意义——避免出水温度在目标值附近来回跨越同一条线，导致加热器像继电器
+ *   一样高频通断。
+ *
+ * 在这两条主判断之前，还有三层"保护性短路"，任何一层命中都直接强制关闭
+ * 加热，不管温度算出来该开还是该关：
+ *   ① 故障态：故障状态机（faultStatus.js）已经检测到干烧/堵管等异常，这里
+ *      不再画蛇添足去判断温度，直接关，交给故障保护流程处理。
+ *   ② 水泵没开 / 没有流量：加热器只能加热"流经它的水"，水泵不转或者流量
+ *      为 0 时还开着加热就是干烧，这条防的就是"温度算下来该开、但水根本
+ *      没在流动"这种情况。
+ *   ③ 进出水温差过大：正常情况下进出水温差应该在合理范围内，一旦超过阈值，
+ *      说明流量异常小、传感器读数不可信、或者管路可能有问题，保守起见先
+ *      关掉加热，不参与正常温控判断。
+ *
+ * @param {Object} sensors - 当前传感器读数（用到 temp1 进水、temp2 出水、flow 流量）
+ * @param {Object} states - 当前设备开关上报状态（用到 pumpOn 水泵是否已开启）
+ * @param {Array} faults - detectFaults() 检测到的故障名称列表，非空即命中①
+ * @param {number} targetTemp - 目标温度（℃），全项目统一的目标温度设定值
+ * @param {number} diffOpenThreshold - 进出水温差过大判定阈值（℃），对应③
+ * @param {number} hysteresis - 回差（℃），出水温度低于"目标-回差"才会重新开启加热
+ * @returns {{pump: null, heater: 'on'|'off'|null}} 这条规则只对 heater 表态，
+ *   pump 永远是 null（水泵的开关交给 pumpAlwaysOn 等其它规则决定）；heater 为
+ *   null 表示"这一轮不下结论"（滞回带内维持现状，或者出水温度暂时读不到），
+ *   由 mergeDecision 综合其它规则的结论。
+ */
 function ruleHeaterHysteresis(sensors, states, faults, targetTemp, diffOpenThreshold, hysteresis) {
   const temp2 = sensors.temp2
+  // 进出水温差：两个读数只要有一个缺失就算不出来。diff 为 null 时③不触发——
+  // 宁可不触发这层保护，也不能拿 NaN 去跟阈值比较（那样的比较结果永远是
+  // false，会悄悄绕过保护，看起来规则在生效实际上完全没生效）。
   const diff = (sensors.temp1 != null && sensors.temp2 != null) ? Math.abs(sensors.temp1 - sensors.temp2) : null
+
+  // ① 故障态短路：命中任意一种硬故障，直接强制关闭加热，不再往下判断温度。
   if (faults.length > 0) return { pump: null, heater: 'off' }
+  // ② 水泵未开启 / 流量为 0：这时候开加热就是干烧，强制关。
   if (states.pumpOn === false || (sensors.flow != null && sensors.flow === 0)) return { pump: null, heater: 'off' }
+  // ③ 进出水温差过大：读数不可信或者管路异常，保守起见先关。
   if (diff != null && diff > diffOpenThreshold) return { pump: null, heater: 'off' }
+  // 出水温度暂时读不到（传感器掉线/还没上报）：不知道该开该关，索性不表态，
+  // 不能瞎猜，交给其它规则或者维持上一轮状态。
   if (temp2 == null) return { pump: null, heater: null }
+  // 已经达到或超过目标温度：够热了，关。
   if (temp2 >= targetTemp) return { pump: null, heater: 'off' }
+  // 明显低于目标温度（掉出滞回带下沿）：不够热，开。
   if (temp2 < targetTemp - hysteresis) return { pump: null, heater: 'on' }
+  // 温度落在 [目标-回差, 目标) 这个滞回带区间内：维持现状不动作，避免温度在
+  // 目标值附近反复横跳、加热器高频通断。
   return { pump: null, heater: null }
 }
 
+/**
+ * 水泵-流量单层规则：只看流量这一个指标决定水泵开关。
+ *   流量读不到：不表态。
+ *   流量超过上限：可能水泵转太快、管路异常，关泵保护。
+ *   其余情况（含流量在正常区间、或者低于下限）：开泵——注意流量低于下限时
+ *   这条规则给的是"开泵"，是想让泵多出力把流量顶上去；这跟安全联锁那种
+ *   "流量太低说明堵管/漏水该关"的判断方向刚好相反，因为这条规则关心的是
+ *   "流量不够就该让泵使把劲"，不是在做故障保护（故障保护由 detectFaults 管）。
+ * @returns {{pump: 'on'|'off'|null, heater: null}}
+ */
 function ruleFlowSingle(sensors, flowLow, flowHigh) {
   const flow = sensors.flow
   if (flow == null) return { pump: null, heater: null }
@@ -122,6 +223,14 @@ function ruleFlowSingle(sensors, flowLow, flowHigh) {
   return { pump: 'on', heater: null }
 }
 
+/**
+ * 水泵/加热-压力单层规则：只看压力这一个指标。
+ *   压力低于下限：系统压力不够，开泵把压力顶上去。
+ *   压力高于上限：压力太高有风险（可能顶坏管路/接头），关泵，同时把加热也
+ *   一起关掉——反正泵都要关了，继续加热已经没意义，还会让风险叠加。
+ *   两个阈值都没触发、或者压力读不到：不表态。
+ * @returns {{pump: 'on'|'off'|null, heater: 'off'|null}}
+ */
 function rulePressureSingle(sensors, pressureLow, pressureHigh) {
   const pressure = sensors.pressure
   const result = { pump: null, heater: null }
@@ -134,6 +243,22 @@ function rulePressureSingle(sensors, pressureLow, pressureHigh) {
   return result
 }
 
+/**
+ * 加热-温度单层规则（带滞回）：跟加热滞回带通断（ruleHeaterHysteresis）思路
+ * 相似，但这条规则同时看进水、出水两个温度，而且开/关的临界点是拿"目标温度"
+ * 和"温度上下限阈值"两个设定一起算出来的：
+ *   开的临界点 openThreshold = max(目标温度, 温度下限) - 回差
+ *     —— 目标温度和下限阈值取较高的那个当"及格线"，没配置下限阈值时就只看
+ *        目标温度。取较高值意味着：只要低于目标温度就该开，除非专门配了一个
+ *        更高的下限阈值，那就以这个更严格的下限阈值为准。
+ *   关的临界点 closeThreshold = min(目标温度, 温度上限) + 回差
+ *     —— 同理，目标温度和上限阈值取较低的那个当"上限线"，取较低值意味着：
+ *        只要超过目标温度就该关，除非专门配了一个更低的上限阈值。
+ * 判断时进水、出水两个温度只要有一个超过关闭线就关（宁可错关，优先安全），
+ * 只要有一个低于开启线就开（宁可错开，优先把温度追上去）；两条都没触发就
+ * 不表态，维持现状。
+ * @returns {{pump: null, heater: 'on'|'off'|null}} 这条规则从不管水泵，pump 恒为 null
+ */
 function ruleTempSingle(sensors, targetTemp, tempLow, tempHigh, hysteresis) {
   const openThreshold = Math.max(targetTemp, tempLow ?? targetTemp) - hysteresis
   const closeThreshold = Math.min(targetTemp, tempHigh ?? targetTemp) + hysteresis
@@ -144,16 +269,42 @@ function ruleTempSingle(sensors, targetTemp, tempLow, tempHigh, hysteresis) {
   return result
 }
 
+/**
+ * 水泵-双温度融合规则：进出水温差过大时开泵。
+ * 温差变大通常说明水流动得不够快——加热器一直在加热，但水流速慢，还没被
+ * 充分带走热量的那部分水温度就已经升得比较高，进出口温差就会被拉大；这时候
+ * 开泵、加快水流，能更快把热量带走，帮温差缩小回正常范围。
+ * 这条规则只在乎"温差是不是太大"，不关心到底是进水更高还是出水更高，所以
+ * 用 Math.abs 取绝对值比较。
+ * @returns {{pump: 'on'|null, heater: null}} 只会给"开泵"或者不表态，从不主动关泵
+ */
 function ruleDualTemp(sensors, threshold) {
   if (sensors.temp1 == null || sensors.temp2 == null) return { pump: null, heater: null }
   return { pump: Math.abs(sensors.temp1 - sensors.temp2) > threshold ? 'on' : null, heater: null }
 }
 
+/**
+ * 水泵/加热-温度+流量融合规则：把温度和流量两个指标放一起看，而不是各自
+ * 独立判断。
+ *   条件一：有任一温度超过上限、且流量本身是正常的 → 关加热。流量正常
+ *     说明读数可信、不是因为流量异常才显得"温度虚高"，可以放心认为真的
+ *     够热了，该关。
+ *   条件二：有任一温度低于上限、且流量又低于下限 → 同时开加热、开泵。
+ *     流量太低时先把泵开起来保证水在流动，同时因为温度还没到上限，
+ *     加热可以继续开着。
+ * 这两个条件不是互斥的（不是 if/else），如果两个温度读数一个超上限一个没超，
+ * 两个条件可能同时命中——此时以后面这个条件（开）覆盖前面的结果（关），
+ * 因为代码是顺序执行、后面的赋值会覆盖前面的。
+ * @returns {{pump: 'on'|null, heater: 'on'|'off'|null}}
+ */
 function ruleTempFlow(sensors, flowNormal, tempHigh, flowLow) {
   const result = { pump: null, heater: null }
   const temps = [sensors.temp1, sensors.temp2].filter(v => v != null)
   if (temps.length === 0 || tempHigh == null) return result
+  // 条件一：任一温度超过上限、且流量正常 -> 关加热。
   if (temps.some(t => t > tempHigh) && flowNormal) result.heater = 'off'
+  // 条件二：任一温度还没到上限、且流量低于下限 -> 开加热、开泵。
+  // 跟条件一不互斥，两个都命中时这里会覆盖上面的判断。
   if (temps.some(t => t < tempHigh) && flowLow != null && sensors.flow != null && sensors.flow < flowLow) {
     result.heater = 'on'
     result.pump = 'on'
@@ -161,6 +312,20 @@ function ruleTempFlow(sensors, flowNormal, tempHigh, flowLow) {
   return result
 }
 
+/**
+ * 水泵-压力+流量融合规则：把压力和流量两个指标放一起看，判断水泵开关。
+ * 三种情况按顺序判断，命中第一个就不再看后面（跟 if/else if 一样是互斥的）：
+ *   1. 压力超过上限、且流量低于下限 -> 关泵。压力冲高但流量却出不去，
+ *      有点像堵管的前兆，先关泵保护。
+ *   2. 压力低于下限、且流量本身正常 -> 开泵。流量没问题说明不是堵了，
+ *      纯粹是泵没使劲，加把劲把压力顶上去。
+ *   3. 压力超过上限、且流量也超过上限 -> 关泵。压力流量都超标，说明泵开得
+ *      太猛了，关泵把两者都降下来。
+ * 第 1 条和第 3 条都是"压力超上限"，区别只在流量是偏低还是偏高——不管流量
+ * 往哪个方向异常，压力超标时都是关泵；只有流量恰好落在正常区间、压力又
+ * 偏低时（第 2 条），才会开泵。
+ * @returns {{pump: 'on'|'off'|null, heater: null}} 这条规则从不管加热，heater 恒为 null
+ */
 function rulePressureFlow(sensors, pressureLow, pressureHigh, flowLow, flowHigh, flowNormal) {
   const { pressure, flow } = sensors
   if (pressure == null) return { pump: null, heater: null }
@@ -171,15 +336,46 @@ function rulePressureFlow(sensors, pressureLow, pressureHigh, flowLow, flowHigh,
   return { pump, heater: null }
 }
 
+/**
+ * 水泵/加热-温度+压力融合规则：这条是所有规则里逻辑最绕的一条，分两段看。
+ *
+ * 第一段——压力高、且加热还在让温度往上冲，就关加热：
+ *   压力超过上限、且能读到进水温度时，跟上一次（上一条消息）记录的进水温度
+ *   比一比：如果这次比上次还高，说明温度是"正在持续上升"，而不是已经趋于
+ *   稳定或者在下降。这时候才关加热——只看"这一刻温度多高"是不够的，因为
+ *   压力高不一定是加热造成的（也可能是别的原因），只有确认温度确实在因为
+ *   持续加热而往上涨，才有必要为了给压力"降降火"而把加热关掉；如果温度已经
+ *   不涨了甚至在降，加热对当前的压力风险没有火上浇油，就不用管它。
+ *   "上一次的进水温度"存在模块顶部的 lastTemp 这个 Map 里，每次
+ *   evaluateLinkageRules 跑完都会更新，这里只负责读，不负责写。
+ *
+ * 第二段——压力低、温度也低，先开泵再开热：
+ *   压力低于下限、且配了温度下限阈值时，只要进水或出水任一个温度低于这个
+ *   下限，就要采取行动：如果水泵还没开，先开泵——水都没在流动，光加热没
+ *   意义；如果水泵已经开着了（说明"没流动"不是原因），那就转而开加热，
+ *   靠加热去改善偏低的温度和压力状况。
+ *   这里是"二选一"（if/else），同一轮不会又开泵又开热，是循序渐进的：
+ *   先保证水流动起来，流动起来了还不够，才轮到加热出手。
+ *
+ * @param {Object} sensors - 当前传感器读数
+ * @param {Object} states - 当前开关上报状态（用到 pumpOn）
+ * @param {number|null} pressureLow - 压力下限阈值
+ * @param {number|null} pressureHigh - 压力上限阈值
+ * @param {number|null} tempLow - 温度下限阈值
+ * @param {string|null} deviceNo - 设备号，用来在 lastTemp 里存取"上一次"的读数
+ * @returns {{pump: 'on'|null, heater: 'on'|'off'|null}}
+ */
 function ruleTempPressure(sensors, states, pressureLow, pressureHigh, tempLow, deviceNo) {
   const result = { pump: null, heater: null }
   const pressure = sensors.pressure
   if (pressure == null) return result
 
+  // 第一段：压力高 + 进水温度比上一次还高（持续上升）-> 关加热。
   if (pressureHigh != null && pressure > pressureHigh && sensors.temp1 != null) {
     const prev = lastTemp.get(deviceNo)
     if (prev != null && sensors.temp1 > prev) result.heater = 'off'
   }
+  // 第二段：压力低 + 有任一温度低于下限 -> 泵没开就先开泵，泵已经开着就改开加热。
   if (pressureLow != null && pressure < pressureLow && tempLow != null) {
     const temps = [sensors.temp1, sensors.temp2].filter(v => v != null)
     if (temps.some(t => t < tempLow)) {
@@ -192,6 +388,24 @@ function ruleTempPressure(sensors, states, pressureLow, pressureHigh, tempLow, d
 
 /* ============================ 主评估 ============================ */
 
+/**
+ * 每条传感器/合并实时消息都会走一次，整体执行顺序是：
+ *   1. 联动总开关、故障锁、手动模式——任意一个短路条件命中就直接返回空数组，
+ *      不往下算。
+ *   2. 读一遍当前传感器读数、开关状态、目标温度、各类阈值（一次性用
+ *      Promise.all 并发查完，避免一个一个串行查拖慢整条消息的处理）。
+ *   3. 按 LINKAGE_RULES 里的开关，把勾选了的规则逐条跑一遍，每条规则给出的
+ *      pump/heater 候选结论都塞进 pumpCandidates/heaterCandidates 这两个数组
+ *      （collect 这个小函数就是干这个的）。加热滞回带通断因为跟 PID 互斥，
+ *      不在这份"自由勾选"的清单里，是单独判断要不要跑。
+ *   4. 用 mergeDecision 把每个执行器收集到的所有候选结论合并成一个最终结论
+ *      （关优先）。
+ *   5. 拿最终结论跟设备当前实际开关状态比，不一样就真的下发一次指令；水泵
+ *      如果被恒流速控制接管了、加热如果被 PID 接管了，这里就不再插手，
+ *      避免两个控制器抢同一个执行器。
+ * @param {Object} info - 已解析的设备上报数据
+ * @returns {Promise<Array>} 本次实际下发的动作（没有任何变化就是空数组）
+ */
 async function evaluateLinkageRules(info) {
   const rootConfig = systemConfig.getConfig()
   const config = rootConfig.LINKAGE_RULES || {}
@@ -235,6 +449,8 @@ async function evaluateLinkageRules(info) {
   // 两个恒流速开关都被删除时 isPumpVelocityControlEnabled 返回 false，水泵回到联动规则控制。
   const pumpVelocityEnabled = await isPumpVelocityControlEnabled(deviceNo)
 
+  // 每条规则返回的都是 { pump, heater } 这样的候选结论，collect 负责把它们分别
+  // 塞进两个数组，等所有勾选的规则都跑完了，再用 mergeDecision 合并成最终结论。
   const pumpCandidates = []
   const heaterCandidates = []
   const collect = (r) => { pumpCandidates.push(r.pump); heaterCandidates.push(r.heater) }
@@ -274,6 +490,10 @@ async function evaluateLinkageRules(info) {
   const actions = []
   const result = { targetTemp, faults, sensors }
 
+  // 真正下发水泵指令要同时满足：①有明确结论（不是 null）；②没有被恒流速
+  // 控制接管；③设备当前开关状态是已知的（不是 undefined，即读到过行为上报）；
+  // ④结论跟当前实际状态不一样（已经是这个状态就不用重复下发）；⑤没有被防抖
+  // 拦住（canAct 保证同一个开关短时间内不会被反复切换）。五个条件缺一不可。
   if (pumpDesired && !pumpVelocityEnabled
     && states.pumpOn !== undefined && states.pumpOn !== (pumpDesired === 'on') && canAct(deviceNo, 'pump')) {
     await setSwitch('pump', '水泵', pumpDesired, deviceNo, 'linkage_rules')

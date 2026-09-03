@@ -101,6 +101,9 @@ async function resolveThresholdConfigId(slot) {
   return resolveConfigIdByPrefix(def.prefix)
 }
 
+/** 把原始字符串/数字统一转成有限数字，转不出来（空值、非数字字符串、NaN、
+ * Infinity）统一返回 null，方便后面直接用 != null 判断"有没有读到有效数值"，
+ * 不用到处写一遍 isNaN 判断。 */
 async function toNumber(raw) {
   if (raw == null || raw === '') return null
   const num = Number(raw)
@@ -151,6 +154,14 @@ async function findSwitchConfig(prefix) {
 
 /* ============================ 告警与联锁 ============================ */
 
+/**
+ * 把一次触发写进故障记录表 t_error_msg，供"故障记录"页面查看。
+ * interlocked 区分这次触发到底有没有真的去关闭执行器：
+ *   true  -> 已经强制关闭了水泵和加热，消息里注明"已执行安全联锁"，类型标记为
+ *            "安全联锁"（这套系统目前所有条件的 interlock 都传 true，预留
+ *            false 分支是给以后可能"只记录不动作"的告警类型用）。
+ *   false -> 只是记了一笔，没有真的去关执行器，类型标记为"安全告警"。
+ */
 async function recordAlarm(deviceNo, trigger, interlocked) {
   // 使用本地时区时间，避免 toISOString() 的 UTC 时差（8小时偏差）
   const time = nowLocalDateTime()
@@ -196,11 +207,14 @@ async function closePumpHeater(deviceNo, triggerId) {
   return published > 0
 }
 
+/** 判断某个"设备+故障类型"组合是不是还在冷却期内（cooldownMs 毫秒内已经
+ * 处理过一次），在的话 fire() 会直接跳过这次触发，不重复关执行器/写告警。 */
 function withinCooldown(key, cooldownMs) {
   const last = lastFired.get(key) || 0
   return Date.now() - last < cooldownMs
 }
 
+/** 记下这个"设备+故障类型"组合这一次的触发时间，供下一次 withinCooldown 判断用。 */
 function markFired(key) {
   lastFired.set(key, Date.now())
 }
@@ -229,6 +243,15 @@ async function fire(trigger, deviceNo, safetyConfig, { interlock }) {
 
 /* ============================ 条件评估 ============================ */
 
+/**
+ * 判断条件 1~4 和条件 7（编号对应文件头部的清单）：这几条的共同点是只需要看
+ * "这一条消息本身携带的数值"就能判断，不需要额外记住跨消息的状态、也不需要
+ * 单独起个定时器——这跟条件 5（进入手动模式，得记住上一次的模式才能判断出
+ * "切换"这个瞬间）和条件 6（掉线监测，完全没有消息进来时才要触发，必须靠
+ * 定时器主动查）是不同类型的判断，所以拆成单独一个函数、不跟它们混在一起。
+ * 命中的条件都会被塞进 triggers 数组一起返回，调用方 evaluateSafety 逐个拿去
+ * 走"冷却判断 -> 记录告警 -> 联锁关闭"这一整套流程（见 fire 函数）。
+ */
 async function evaluateValueConditions(info, deviceNo, safetyConfig) {
   const sensors = await readSensors(info)
   const states = await readSwitchStates(info)
