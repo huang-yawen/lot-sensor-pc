@@ -1,7 +1,8 @@
-/** 【文件职责】故障 / 安全联锁记录的 e_no -> 中文名称对照表，供告警历史查询和类型统计
- * 共用，避免 getErrorHistory.js / getErrorTypeStats.js 两处各维护一份、改名时漏改。
+/** 【文件职责】故障 / 安全联锁 / 联动控制记录的 e_no -> 中文名称对照表，供告警历史查询和
+ * 类型统计共用，避免 getErrorHistory.js / getErrorTypeStats.js 两处各维护一份、改名时漏改。
  * 【配置中心关联】无直接读取。 */
 const { FAULT_TYPES } = require('../faultStatus/faultStatus')
+const { LINKAGE_RULE_NAMES } = require('../linkageRules/linkageRules')
 
 /** 故障 e_no -> 中文名，直接复用 faultStatus.js 的定义，不重复写一份。 */
 const FAULT_NAMES = Object.fromEntries(FAULT_TYPES.map(f => [f.id, f.name]))
@@ -16,24 +17,31 @@ const SAFETY_TRIGGER_NAMES = {
   pressure_high: '压力异常（高于上限/为0/掉线）',
   temp_high: '任一温度高于上限',
   temp_diff: '温差过大',
+  flow_volatility: '流量剧烈波动（疑似水锤/湍流）',
   manual_mode: '进入手动模式（人工修复）',
   sensor_offline: '传感器掉线（无数据上报）',
   heater_without_pump: '未开水泵却开启加热',
 }
 
-/** category=fault（默认）只看真正的硬故障；category=safety 看安全联锁记录，两者互不混淆。 */
+/** category=fault（默认）只看真正的硬故障；category=safety 看安全联锁记录；
+ * category=linkage 看联动控制记录，三者互不混淆。 */
 const CATEGORY_TYPES = {
   fault: ['故障保护'],
   safety: ['安全联锁', '安全告警'],
+  linkage: ['联动控制'],
 }
 
 function resolveCategory(query) {
-  return query?.category === 'safety' ? 'safety' : 'fault'
+  if (query?.category === 'safety') return 'safety'
+  if (query?.category === 'linkage') return 'linkage'
+  return 'fault'
 }
 
 /** e_no 命中不了名称表时（比如历史脏数据），退回原始 type，不让记录丢分类。 */
 function friendlyName(category, eNo, fallbackType) {
-  const map = category === 'safety' ? SAFETY_TRIGGER_NAMES : FAULT_NAMES
+  const map = category === 'safety' ? SAFETY_TRIGGER_NAMES
+    : category === 'linkage' ? LINKAGE_RULE_NAMES
+    : FAULT_NAMES
   return (eNo && map[eNo]) || fallbackType || '未知类型'
 }
 

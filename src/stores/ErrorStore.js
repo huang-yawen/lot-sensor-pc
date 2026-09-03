@@ -22,6 +22,11 @@ export const ErrorStore = defineStore("ErrorStore", () => {
   const safetyLoading = ref(false);
   const safetyTypeStats = ref([]);
   const safetyTypeStatsAll = ref([]);
+  const linkageData = ref([]);
+  const linkageTotal = ref(0);
+  const linkageLoading = ref(false);
+  const linkageTypeStats = ref([]);
+  const linkageTypeStatsAll = ref([]);
 
   const formatDateTime = (value) => {
     if (!value) return "";
@@ -104,6 +109,39 @@ export const ErrorStore = defineStore("ErrorStore", () => {
     }
   };
 
+  // 联动控制记录：复用同一个 /errData 接口，传 category=linkage 只取联动控制类型，
+  // 跟故障记录、安全联锁记录表格各自分开分页、互不影响。
+  const fetchLinkageData = async (params = {}) => {
+    linkageLoading.value = true;
+    try {
+      const response = await api.get("/api/errData", {
+        params: {
+          category: "linkage",
+          page: params.currentPage || 1,
+          keyword: params.keyword || "",
+          pageSize: params.pageSize || 5,
+          startTime: formatDateTime(params.startTime),
+          endTime: formatDateTime(params.endTime),
+        },
+      });
+
+      const res = response.data;
+      if (res.success) {
+        const list = res.data?.list || [];
+        const displayStore = DisplayStore()
+        linkageData.value = list.map((item) => ({
+          ...item,
+          "报警时间": displayStore.formatTime(item["报警时间"]),
+        }));
+        linkageTotal.value = res.data?.total || list.length;
+      }
+    } catch (error) {
+      console.error("linkageData 请求失败:", error);
+    } finally {
+      linkageLoading.value = false;
+    }
+  };
+
   // scope='filtered'（默认）：复用列表筛选条件（关键字+时间范围），图表和表格看到同一批数据；
   // scope='all'：不带任何筛选条件，统计数据库里该类型的全部记录，存到单独一份 ref。
   const fetchErrTypeStats = async (params = {}, scope = "filtered") => {
@@ -147,11 +185,35 @@ export const ErrorStore = defineStore("ErrorStore", () => {
     }
   };
 
+  // 联动控制类型统计：复用同一个 /errTypeStats 接口，传 category=linkage 只统计联动控制
+  // 记录自己的数据，跟故障统计、安全联锁统计完全分开，互不影响。
+  const fetchLinkageTypeStats = async (params = {}, scope = "filtered") => {
+    try {
+      const query = scope === "all" ? { category: "linkage" } : {
+        category: "linkage",
+        keyword: params.keyword || "",
+        startTime: formatDateTime(params.startTime),
+        endTime: formatDateTime(params.endTime),
+      };
+      const response = await api.get("/api/errTypeStats", { params: query });
+
+      const res = response.data;
+      if (res.success) {
+        if (scope === "all") linkageTypeStatsAll.value = res.data || [];
+        else linkageTypeStats.value = res.data || [];
+      }
+    } catch (error) {
+      console.error("linkageTypeStats 请求失败:", error);
+    }
+  };
+
   return {
     fetchErrData,
     fetchErrTypeStats,
     fetchSafetyData,
     fetchSafetyTypeStats,
+    fetchLinkageData,
+    fetchLinkageTypeStats,
     errData,
     errTypeStats,
     errTypeStatsAll,
@@ -162,5 +224,10 @@ export const ErrorStore = defineStore("ErrorStore", () => {
     safetyLoading,
     safetyTypeStats,
     safetyTypeStatsAll,
+    linkageData,
+    linkageTotal,
+    linkageLoading,
+    linkageTypeStats,
+    linkageTypeStatsAll,
   };
 });

@@ -13,7 +13,7 @@
  *
  * 规则清单（除 heaterHysteresis 外均可通过 LINKAGE_RULES 独立开关，规则函数在文件下方）：
  *   pumpAlwaysOn   水泵常开：无故障、其他传感器读数正常就保持运行，不跟温度挂钩。
- *   heaterHysteresis 加热滞回带通断：出水温度低于"目标-回差"才开，达到目标就关（是否生效由指令中心 heater_hysteresis_enabled 决定，不是这里的独立开关；回差值优先取指令中心 heater_hysteresis，没有才用配置中心的兜底值）。
+ *   heaterHysteresis 加热滞回带通断：出水温度低于"目标-回差"才开，达到目标就关（是否生效由指令中心 heater_hysteresis_enabled 决定，不是这里的独立开关；回差值优先取指令中心 heater_hysteresis，没有才用配置中心的兜底值）。反向翻转还受最小开/关驻留时间保护（heater_hysteresis_min_on_ms / heater_hysteresis_min_off_ms），防止在目标温度附近被高频通断，见 getHeaterHysteresisState。
  *   flowSingle     水泵-流量单层：流量在区间内/低于下限->开；高于上限->关（保护）。
  *   pressureSingle 水泵/加热-压力单层：压力低于下限->开泵；高于上限->关泵关热。
  *   tempSingle     加热-温度单层（带滞回）：温度低于目标/下限->开；高于目标/上限->关。
@@ -30,7 +30,9 @@
  * 阈值、目标温度实时读取指令中心 t_direct，页面修改即时生效。
  * 【配置中心关联】LINKAGE_RULES 每次评估动态读取。
  */
+const promisePool = require('../../config/dbPool')
 const systemConfig = require('../../config/systemConfig')
+const { nowLocalDateTime } = require('../../utils/helper')
 const { resolveDeviceNo } = require('../../utils/mappedData')
 const { getCurrentMode } = require('../directData/getControlMode')
 const { isPidEnabled, readSwitchOn } = require('../pidHeating/pidHeating')
@@ -51,6 +53,63 @@ const {
 const lastActions = new Map()
 /** 记录每个设备上一次的 temp1 读数，供"加热温度持续上升"判断趋势（tempPressure 规则用）。 */
 const lastTemp = new Map()
+
+/**
+ * 加热滞回带通断专属的"上次翻转方向和时间"状态，供最小开/关驻留时间判断用。
+ * 思路跟恒流速滞环通断（pumpVelocityControl.js 的 minOnMs/minOffMs）完全一致：
+ * 判定要反向翻转时，必须先确认距离上次翻转已经过了这么久，否则本轮这条规则不
+ * 表态（候选置为 null），防止加热继电器在目标温度附近被高频通断（短循环）。
+ * 这份状态只属于"滞回带通断"这一条规则自己，不影响其它 8 条规则各自的候选。
+ */
+const heaterHysteresisState = new Map()
+function getHeaterHysteresisState(deviceNo) {
+  const key = deviceNo || 'global'
+  if (!heaterHysteresisState.has(key)) {
+    heaterHysteresisState.set(key, { lastSwitchTs: 0, lastSwitchTo: null })
+  }
+  return heaterHysteresisState.get(key)
+}
+
+/**
+ * 规则 key -> 中文名，key 跟 LINKAGE_RULES 配置项、下面各条规则函数一一对应。
+ * 供"告警记录"页面的"联动控制记录"展示用（errorTypeNames.js 引用这份表），
+ * 以及写 t_error_msg 时标注"这次动作是哪条规则决定的"。改规则名字只用改这一处。
+ */
+const LINKAGE_RULE_NAMES = {
+  pumpAlwaysOn: '水泵常开',
+  heaterHysteresis: '加热滞回带通断',
+  flowSingle: '水泵-流量单层',
+  pressureSingle: '水泵/加热-压力单层',
+  tempSingle: '加热-温度单层',
+  dualTemp: '水泵-双温度融合',
+  tempFlow: '水泵/加热-温度+流量融合',
+  pressureFlow: '水泵-压力+流量融合',
+  tempPressure: '水泵/加热-温度+压力融合',
+}
+
+/**
+ * 把一次联动动作写进 t_error_msg，供"告警记录"页面的"联动控制记录"板块查看
+ * （表格 + 按规则统计的饼图），跟安全联锁的 recordAlarm 是同一个思路。
+ * 一次动作如果是被多条规则共同判定出来的（比如泵从关变开，"水泵常开"和
+ * "流量单层"都判定该开），贡献规则各自写一条——饼图才能精确统计到每条规则
+ * 各命中了多少次，而不是笼统一条"联动触发了一次"。
+ * @param {string|null} deviceNo - 设备号
+ * @param {string} ruleKey - 贡献这次结论的规则 key（LINKAGE_RULE_NAMES 的键）
+ * @param {string} deviceLabel - 执行器中文名（'水泵'/'加热'）
+ * @param {'on'|'off'} action - 这次下发的动作
+ * @param {Object} sensors - 当前传感器读数，写进 detail 方便排查
+ */
+async function recordLinkageAlarm(deviceNo, ruleKey, deviceLabel, action, sensors) {
+  const time = nowLocalDateTime()
+  const actionLabel = action === 'on' ? '开' : '关'
+  const ruleLabel = LINKAGE_RULE_NAMES[ruleKey] || ruleKey
+  const detail = `温度1=${sensors.temp1 ?? '-'}，温度2=${sensors.temp2 ?? '-'}，流量=${sensors.flow ?? '-'}，压力=${sensors.pressure ?? '-'}`
+  const message = `命中规则"${ruleLabel}"，${deviceLabel}->${actionLabel}，${detail}`
+  await promisePool.execute(
+    'INSERT INTO t_error_msg (d_no, c_time, e_msg, e_no, type) VALUES (?, ?, ?, ?, ?)',
+    [deviceNo || null, time, message, ruleKey, '联动控制']
+  )
+}
 
 /* ============================ 故障检测（所有规则共用的前置条件） ============================ */
 
@@ -402,7 +461,10 @@ function ruleTempPressure(sensors, states, pressureLow, pressureHigh, tempLow, d
  *      （关优先）。
  *   5. 拿最终结论跟设备当前实际开关状态比，不一样就真的下发一次指令；水泵
  *      如果被恒流速控制接管了、加热如果被 PID 接管了，这里就不再插手，
- *      避免两个控制器抢同一个执行器。
+ *      避免两个控制器抢同一个执行器。真下发时，回头从 ruleResults 里找出
+ *      "候选结论跟最终结论一致"的那些规则（贡献规则可能不止一条），各自
+ *      写一条联动控制记录到 t_error_msg（recordLinkageAlarm），供"告警记录"
+ *      页面精确统计到具体是哪条规则触发的。
  * @param {Object} info - 已解析的设备上报数据
  * @returns {Promise<Array>} 本次实际下发的动作（没有任何变化就是空数组）
  */
@@ -451,37 +513,67 @@ async function evaluateLinkageRules(info) {
 
   // 每条规则返回的都是 { pump, heater } 这样的候选结论，collect 负责把它们分别
   // 塞进两个数组，等所有勾选的规则都跑完了，再用 mergeDecision 合并成最终结论。
+  // 同时把规则 key 和候选结论一起存进 ruleResults，供合并出最终结论后回溯
+  // "这次结论具体是被哪条/哪些规则决定的"（写联动控制记录时要精确到规则名）。
   const pumpCandidates = []
   const heaterCandidates = []
-  const collect = (r) => { pumpCandidates.push(r.pump); heaterCandidates.push(r.heater) }
+  const ruleResults = []
+  const collect = (key, r) => {
+    pumpCandidates.push(r.pump)
+    heaterCandidates.push(r.heater)
+    ruleResults.push({ key, ...r })
+  }
 
-  if (config.pumpAlwaysOn !== false) collect(rulePumpAlwaysOn(sensors, faults))
+  if (config.pumpAlwaysOn !== false) collect('pumpAlwaysOn', rulePumpAlwaysOn(sensors, faults))
   if (hysteresisEnabled) {
-    // 回差和温差过大阈值都跟目标温度一样，现场可以在指令中心实时调（preffix=
-    // heater_hysteresis / temp_diff_open）；指令项被删掉时自动退回配置中心的
-    // LINKAGE_RULES 对应值，两个都没有才用常量兜住，不会把 NaN 带进温度比较里。
-    const [hysteresis, diffOpenThreshold] = await Promise.all([
+    // 回差、温差过大阈值、最小开/关驻留时间都跟目标温度一样，现场可以在指令中心
+    // 实时调（preffix=heater_hysteresis / temp_diff_open / heater_hysteresis_min_on_ms
+    // / heater_hysteresis_min_off_ms）；指令项被删掉时自动退回配置中心的 LINKAGE_RULES
+    // 对应值，两个都没有才用常量兜住，不会把 NaN 带进温度比较/时长比较里。
+    const [hysteresis, diffOpenThreshold, hystMinOnMs, hystMinOffMs] = await Promise.all([
       getNumberValue('heater_hysteresis', deviceNo, config.heaterHysteresisValue, 1),
       getNumberValue('temp_diff_open', deviceNo, config.tempDiffOpenThreshold, 3),
+      getNumberValue('heater_hysteresis_min_on_ms', deviceNo, config.heaterHysteresisMinOnMs, 5000),
+      getNumberValue('heater_hysteresis_min_off_ms', deviceNo, config.heaterHysteresisMinOffMs, 5000),
     ])
-    collect(ruleHeaterHysteresis(sensors, states, faults, targetTemp, diffOpenThreshold, hysteresis))
+    let hystResult = ruleHeaterHysteresis(sensors, states, faults, targetTemp, diffOpenThreshold, hysteresis)
+    // 最小开/关驻留时间保护（防短循环）：这条规则判定要反向翻转时，先看距离上次
+    // 翻转是否已经过了 required 这么久，不够就把这轮候选压成 null（不表态，交给
+    // 其它规则或维持现状）；够了才放行并记下这次翻转的时间和方向，作为下一次
+    // 判断的基准。第一次表态（lastSwitchTo 还是 null）直接记录，不做等待。
+    const hystState = getHeaterHysteresisState(deviceNo)
+    if (hystResult.heater != null) {
+      if (hystState.lastSwitchTo != null && hystResult.heater !== hystState.lastSwitchTo) {
+        const required = hystState.lastSwitchTo === 'on' ? hystMinOnMs : hystMinOffMs
+        if (Date.now() - hystState.lastSwitchTs < required) {
+          hystResult = { pump: null, heater: null }
+        } else {
+          hystState.lastSwitchTs = Date.now()
+          hystState.lastSwitchTo = hystResult.heater
+        }
+      } else if (hystState.lastSwitchTo == null) {
+        hystState.lastSwitchTs = Date.now()
+        hystState.lastSwitchTo = hystResult.heater
+      }
+    }
+    collect('heaterHysteresis', hystResult)
   }
-  if (config.flowSingle === true) collect(ruleFlowSingle(sensors, flowLow, flowHigh))
-  if (config.pressureSingle === true) collect(rulePressureSingle(sensors, pressureLow, pressureHigh))
+  if (config.flowSingle === true) collect('flowSingle', ruleFlowSingle(sensors, flowLow, flowHigh))
+  if (config.pressureSingle === true) collect('pressureSingle', rulePressureSingle(sensors, pressureLow, pressureHigh))
   if (config.tempSingle === true) {
     const tempSingleHysteresis = await getNumberValue('temp_single_hysteresis', deviceNo, config.tempSingleHysteresis, 1)
-    collect(ruleTempSingle(sensors, targetTemp, tempLow, tempHigh, tempSingleHysteresis))
+    collect('tempSingle', ruleTempSingle(sensors, targetTemp, tempLow, tempHigh, tempSingleHysteresis))
   }
   if (config.dualTemp === true) {
     const dualTempDiff = await getNumberValue('dual_temp_diff', deviceNo, config.dualTempDiffThreshold, 2)
-    collect(ruleDualTemp(sensors, dualTempDiff))
+    collect('dualTemp', ruleDualTemp(sensors, dualTempDiff))
   }
-  if (config.tempFlow === true) collect(ruleTempFlow(sensors, flowNormal, tempHigh, flowLow))
+  if (config.tempFlow === true) collect('tempFlow', ruleTempFlow(sensors, flowNormal, tempHigh, flowLow))
   if (config.pressureFlow === true) {
-    collect(rulePressureFlow(sensors, pressureLow, pressureHigh, flowLow, flowHigh, flowNormal))
+    collect('pressureFlow', rulePressureFlow(sensors, pressureLow, pressureHigh, flowLow, flowHigh, flowNormal))
   }
   if (config.tempPressure === true) {
-    collect(ruleTempPressure(sensors, states, pressureLow, pressureHigh, tempLow, deviceNo))
+    collect('tempPressure', ruleTempPressure(sensors, states, pressureLow, pressureHigh, tempLow, deviceNo))
   }
 
   const pumpDesired = mergeDecision(...pumpCandidates)
@@ -498,6 +590,12 @@ async function evaluateLinkageRules(info) {
     && states.pumpOn !== undefined && states.pumpOn !== (pumpDesired === 'on') && canAct(deviceNo, 'pump')) {
     await setSwitch('pump', '水泵', pumpDesired, deviceNo, 'linkage_rules')
     actions.push({ device: 'pump', action: pumpDesired })
+    // 找出这次真的贡献了"该开/该关"这个结论的规则（候选值跟最终结论一致才算贡献，
+    // 只是没表态的 null 不算），贡献规则各写一条联动控制记录，供"告警记录"页面
+    // 精确统计到具体是哪条规则触发的。
+    for (const rule of ruleResults.filter(r => r.pump === pumpDesired)) {
+      await recordLinkageAlarm(deviceNo, rule.key, '水泵', pumpDesired, sensors)
+    }
   }
 
   // PID恒温控制开关是开时改由 service/pidHeating/pidHeating.js 接管加热，这里跳过，
@@ -506,6 +604,9 @@ async function evaluateLinkageRules(info) {
     && states.heatOn !== undefined && states.heatOn !== (heaterDesired === 'on') && canAct(deviceNo, 'heater')) {
     await setSwitch('heater', '加热', heaterDesired, deviceNo, 'linkage_rules')
     actions.push({ device: 'heater', action: heaterDesired })
+    for (const rule of ruleResults.filter(r => r.heater === heaterDesired)) {
+      await recordLinkageAlarm(deviceNo, rule.key, '加热', heaterDesired, sensors)
+    }
   }
 
   if (sensors.temp1 != null) lastTemp.set(deviceNo, sensors.temp1)
@@ -519,4 +620,4 @@ async function evaluateLinkageRules(info) {
   return actions
 }
 
-module.exports = { evaluateLinkageRules }
+module.exports = { evaluateLinkageRules, LINKAGE_RULE_NAMES }

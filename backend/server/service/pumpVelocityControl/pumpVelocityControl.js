@@ -13,7 +13,9 @@
  *      固定一个周期 windowMs，PID 按流速误差算出占空比，决定这个周期内水泵开多久、
  *      关多久，调节的是"周期内的平均流速"。比滞环平滑，但需要整定 Kp/Ki/Kd。
  *      周期下限比加热 PID 更保守（加热 2 秒，这里 10 秒），因为水泵启停的水锤冲击和
- *      电机启动电流远大于加热器。
+ *      电机启动电流远大于加热器——正因为冲击更大，微分滤波（derivativeFilter）和
+ *      占空比斜率限制（dutyRampLimit）这两个 pidHeating.js 有的增强手段，这里也是
+ *      完整实现，不是简化版，见 decideByDuty。
  *
  * 被控量是管内平均流速 v = Q / A（m/s），由管路流量读数（field3，L/min）和配置中心
  * COMPUTED_METRICS.pipeAreaCm2 换算得到，换算实现见 controlShared/controlHelpers.js
@@ -86,6 +88,8 @@ function getState(deviceNo) {
       lastSwitchTs: 0,
       lastSwitchTo: null,   // 'on' / 'off' / null（还没下发过）
       lastEvalTs: 0,
+      filteredDerivative: 0,  // 微分项一阶低通滤波值，跟 pidHeating.js 同一套实现
+      lastDutyRaw: 0,         // 斜率限制前的原始 duty，用于计算变化量
     })
   }
   return stateMap.get(key)
@@ -158,7 +162,7 @@ function decideByHysteresis(velocity, targetVelocity, hysteresis) {
  * @returns {'on'|'off'}
  */
 function decideByDuty(state, now, velocity, targetVelocity, params) {
-  const { windowMs, kp, ki, kd, dutyMin, dutyMax, deadband } = params
+  const { windowMs, kp, ki, kd, dutyMin, dutyMax, deadband, derivativeFilter, dutyRampLimit } = params
 
   // ====== 窗口边界检测 ======
   // 低频上报（两条数据间隔比 windowMs 还长）时要能一次跨过多个完整周期，
@@ -203,9 +207,15 @@ function decideByDuty(state, now, velocity, targetVelocity, params) {
       //   D（微分项，dTerm = kd * 误差变化速度）
       //     -"看误差变化得有多快"，提前刹车：误差正在快速缩小时先减小修正力度，
       //      避免冲过头。跟温度控制不同，流速信号本身噪声更明显，所以这个项默认
-      //      给 0（不用），确实需要更快响应再打开。
+      //      给 0（不用），确实需要更快响应再打开——打开后走的是跟 pidHeating.js
+      //      同一套一阶低通滤波（derivativeFilter），不是拿原始误差变化率直接乘 kd，
+      //      避免流速抖动被 D 项放大成占空比乱跳。
       const pTerm = kp * error
-      const dTerm = state.hasLastError ? kd * ((error - state.lastError) / dtSec) : 0
+      const rawDerivative = state.hasLastError ? (error - state.lastError) / dtSec : 0
+      state.filteredDerivative = state.hasLastError
+        ? derivativeFilter * rawDerivative + (1 - derivativeFilter) * state.filteredDerivative
+        : 0
+      const dTerm = kd * state.filteredDerivative
 
       // 条件积分抗饱和（anti-windup）：先说清楚"积分饱和"是什么问题——如果水泵已经
       // 开到 100% 占空比、流速还是不够（比如水泵本身功率不够大），积分项会因为
@@ -228,9 +238,23 @@ function decideByDuty(state, now, velocity, targetVelocity, params) {
       // 三项相加得到最终输出 u，再夹在 [占空比下限, 占空比上限] 之间——即使
       // PID 算出来是负数或者超过 100%，实际下发的占空比也不会越界。
       const u = pTerm + ki * state.integral + dTerm
-      const duty = Math.max(dutyMin, Math.min(dutyMax, u))
+      const dutyBeforeRamp = Math.max(dutyMin, Math.min(dutyMax, u))
+      let duty = dutyBeforeRamp
+
+      // 占空比斜率限制：单次最大变化幅度限制在 ±dutyRampLimit% 以内（0=不限制），
+      // 防止占空比阶跃跳变——水泵启停的水锤冲击和电机启动电流比加热器更大，
+      // 这层平滑保护尤其值得留着，跟 pidHeating.js 是同一套实现。
+      if (dutyRampLimit > 0 && state.hasLastError) {
+        const dutyChange = duty - state.lastDuty
+        if (Math.abs(dutyChange) > dutyRampLimit) {
+          duty = state.lastDuty + Math.sign(dutyChange) * dutyRampLimit
+          duty = Math.max(dutyMin, Math.min(dutyMax, duty))
+        }
+      }
+      const rampLimited = duty !== dutyBeforeRamp
 
       state.onDurationMs = Math.max(0, Math.min(windowMs, (duty / 100) * windowMs))
+      state.lastDutyRaw = Number(dutyBeforeRamp.toFixed(1))
       state.lastDuty = Number(duty.toFixed(1))
       state.lastError = error
       state.hasLastError = true
@@ -244,6 +268,7 @@ function decideByDuty(state, now, velocity, targetVelocity, params) {
         `占空比=${state.lastDuty}% (开${Math.round(state.onDurationMs)}ms/周期${windowMs}ms)`,
       ]
       if (saturatedHigh || saturatedLow) diag.push(`[抗饱和激活${saturatedHigh ? '上限' : '下限'}]`)
+      if (rampLimited) diag.push(`[斜率限制${dutyRampLimit}%/周期，原始占空比=${state.lastDutyRaw}%]`)
       console.log(diag.join(' | '))
     }
   }
@@ -307,12 +332,14 @@ async function evaluatePumpVelocityControl(info) {
     desired = decideByHysteresis(velocity, targetVelocity, hysteresis)
     if (desired == null) return []   // 滞环带内维持现状，本轮不动作
   } else {
-    const [windowMsRaw, kp, ki, kd, deadband] = await Promise.all([
+    const [windowMsRaw, kp, ki, kd, deadband, derivativeFilterRaw, dutyRampLimit] = await Promise.all([
       getNumberValue('pump_velocity_window_ms', deviceNo, fallback.windowMs, 30000),
       getNumberValue('pump_velocity_kp', deviceNo, fallback.kp, 100),
       getNumberValue('pump_velocity_ki', deviceNo, fallback.ki, 5),
       getNumberValue('pump_velocity_kd', deviceNo, fallback.kd, 0),
       getNumberValue('pump_velocity_deadband', deviceNo, fallback.deadband, 0.02),
+      getNumberValue('pump_velocity_derivative_filter', deviceNo, fallback.derivativeFilter, 0.3),
+      getNumberValue('pump_velocity_duty_ramp_limit', deviceNo, fallback.dutyRampLimit, 15),
     ])
     // 配置里填得再小也不让周期低于 MIN_PUMP_WINDOW_MS，护住水泵。
     const windowMs = Math.max(MIN_PUMP_WINDOW_MS, windowMsRaw > 0 ? windowMsRaw : 30000)
@@ -320,7 +347,10 @@ async function evaluatePumpVelocityControl(info) {
     const dutyMaxRaw = Number.isFinite(Number(fallback.dutyMax)) ? Number(fallback.dutyMax) : 100
     const dutyMin = Math.max(0, Math.min(100, Math.min(dutyMinRaw, dutyMaxRaw)))
     const dutyMax = Math.max(0, Math.min(100, Math.max(dutyMinRaw, dutyMaxRaw)))
-    desired = decideByDuty(state, now, velocity, targetVelocity, { windowMs, kp, ki, kd, dutyMin, dutyMax, deadband })
+    const derivativeFilter = Math.max(0, Math.min(1, derivativeFilterRaw))
+    desired = decideByDuty(state, now, velocity, targetVelocity, {
+      windowMs, kp, ki, kd, dutyMin, dutyMax, deadband, derivativeFilter, dutyRampLimit: Math.max(0, dutyRampLimit),
+    })
   }
 
   // ====== 最小开/关时长：两套算法共用的水泵保护 ======

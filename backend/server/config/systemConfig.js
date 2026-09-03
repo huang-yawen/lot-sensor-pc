@@ -585,6 +585,12 @@ const defaultConfig = {
     // 中间这段维持现状不变，避免在目标温度附近因传感器噪声反复抖动开关。
     heaterHysteresisValue: 1,
     tempDiffOpenThreshold: 3,
+    // 最小开/关驻留时间（ms）：加热滞回带通断专属的防短循环保护，思路跟恒流速滞环
+    // 通断（PUMP_VELOCITY_CONTROL.minOnMs/minOffMs）一致——判定要反向翻转时，必须
+    // 先确认距离上次翻转已经过了这么久，否则本轮这条规则不表态，避免加热继电器在
+    // 目标温度附近被高频通断。
+    heaterHysteresisMinOnMs: 5000,
+    heaterHysteresisMinOffMs: 5000,
     flowSingle: false,
     pressureSingle: false,
     tempSingle: false,
@@ -715,6 +721,10 @@ const defaultConfig = {
   //   kp/ki/kd             - 占空比控制的 PID 参数，误差 = 目标流速 - 当前流速
   //   deadband             - 流速死区（m/s），误差小于它就保持上一次占空比
   //   dutyMin/dutyMax      - 占空比上下限（%）
+  //   derivativeFilter     - 微分项一阶低通滤波系数 0~1，越小滤波越强；跟 PID_HEATING
+  //     同一套实现，流速信号噪声比温度更明显，这个滤波尤其要留着，不建议调到接近 1
+  //   dutyRampLimit        - 占空比斜率限制(%/周期)，0=不限制；防止占空比阶跃跳变，
+  //     水泵启停冲击本来就比加热器大，保留这层保护
   // 以上每个数值参数在指令中心都有对应指令项，指令项优先；删掉指令项就退回这里的值。
   PUMP_VELOCITY_CONTROL: {
     enabled: false,
@@ -730,6 +740,8 @@ const defaultConfig = {
     deadband: 0.02,
     dutyMin: 0,
     dutyMax: 100,
+    derivativeFilter: 0.3,
+    dutyRampLimit: 15,
   },
 
   // --------------------------------------------------------------------------
@@ -1099,7 +1111,7 @@ function validate(config) {
   for (const key of ['enabled', 'pumpAlwaysOn', 'flowSingle', 'pressureSingle', 'tempSingle', 'dualTemp', 'tempFlow', 'pressureFlow', 'tempPressure']) {
     if (typeof linkage[key] !== 'boolean') throw new Error(`LINKAGE_RULES.${key} 必须是布尔值`)
   }
-  for (const key of ['heaterHysteresisValue', 'tempDiffOpenThreshold', 'tempSingleHysteresis', 'dualTempDiffThreshold']) {
+  for (const key of ['heaterHysteresisValue', 'tempDiffOpenThreshold', 'tempSingleHysteresis', 'dualTempDiffThreshold', 'heaterHysteresisMinOnMs', 'heaterHysteresisMinOffMs']) {
     if (!Number.isFinite(linkage[key]) || linkage[key] < 0) throw new Error(`LINKAGE_RULES.${key} 必须是大于等于 0 的数字`)
   }
   const qty = config.QUANTITY_SHUTDOWN

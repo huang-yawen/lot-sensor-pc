@@ -6,23 +6,26 @@
  * -->
 <template>
   <div class="error-info-page">
-    <div class="error-info-container">
-      <div class="search-form">
-        <div class="search-form-inner">
-          <el-input v-model="keyword" style="width: 240px; flex-shrink: 0;" placeholder="输入设备编号" :suffix-icon="Search"
-            clearable />
-          <div class="block" style="flex-shrink: 0;">
-            <el-date-picker v-model="dateRange" type="datetimerange" start-placeholder="开始时间" end-placeholder="结束时间"
-              format="YYYY-MM-DD HH:mm:ss" value-format="YYYY-MM-DD HH:mm:ss"
-              style="margin-left: 30px;" :clearable="true" />
-          </div>
-          <div class="button-wrapper">
-            <el-button type="primary" @click="handleSearch(1)" :loading="loading">
-              开始查找
-            </el-button>
-          </div>
+    <!-- 顶部搜索框，同时驱动下面故障记录/安全联锁记录/联动控制记录三个表格。 -->
+    <div class="search-form">
+      <div class="search-form-inner">
+        <el-input v-model="keyword" style="width: 240px; flex-shrink: 0;" placeholder="输入设备编号" :suffix-icon="Search"
+          clearable />
+        <div class="block" style="flex-shrink: 0;">
+          <el-date-picker v-model="dateRange" type="datetimerange" start-placeholder="开始时间" end-placeholder="结束时间"
+            format="YYYY-MM-DD HH:mm:ss" value-format="YYYY-MM-DD HH:mm:ss"
+            style="margin-left: 30px;" :clearable="true" />
+        </div>
+        <div class="button-wrapper">
+          <el-button type="primary" @click="handleSearch(1)" :loading="loading">
+            开始查找
+          </el-button>
         </div>
       </div>
+    </div>
+
+    <div class="error-info-container">
+      <h3 class="section-title">故障记录</h3>
       <div class="table-wrapper">
         <el-table
           :data="store.errData"
@@ -51,9 +54,24 @@
           :background="true" layout="sizes, prev, pager, next" :total="store.total || 0"
           @size-change="handlePageSizeChange" @current-change="handlePageChange" />
       </div>
+
+      <div class="chart-container" v-if="chartsEnabled">
+        <div class="chart-panel">
+          <div class="chart-scope">
+            <span class="chart-scope-label">统计范围</span>
+            <el-radio-group v-model="errChartScope" size="small">
+              <el-radio-button value="all">全部</el-radio-button>
+              <el-radio-button value="filtered">当前筛选</el-radio-button>
+              <el-radio-button value="page">当前页</el-radio-button>
+            </el-radio-group>
+            <span class="chart-scope-hint">{{ errChartHint }}</span>
+          </div>
+          <PieChart :data="errChartData" :title="errChartTitle" />
+        </div>
+      </div>
     </div>
 
-    <div class="error-info-container safety-container" v-if="showSafetyLog">
+    <div class="error-info-container" v-if="showSafetyLog">
       <h3 class="section-title">安全联锁记录</h3>
       <div class="table-wrapper">
         <el-table
@@ -100,18 +118,50 @@
       </div>
     </div>
 
-    <div class="chart-container" v-if="chartsEnabled">
-      <div class="chart-panel">
-        <div class="chart-scope">
-          <span class="chart-scope-label">统计范围</span>
-          <el-radio-group v-model="errChartScope" size="small">
-            <el-radio-button value="all">全部</el-radio-button>
-            <el-radio-button value="filtered">当前筛选</el-radio-button>
-            <el-radio-button value="page">当前页</el-radio-button>
-          </el-radio-group>
-          <span class="chart-scope-hint">{{ errChartHint }}</span>
+    <div class="error-info-container">
+      <h3 class="section-title">联动控制记录</h3>
+      <div class="table-wrapper">
+        <el-table
+          :data="store.linkageData"
+          style="width: 100%"
+          v-if="store.linkageData.length > 0"
+          border
+          stripe
+          :header-cell-style="{ background: '#f8fafc', color: '#475569', fontWeight: 600 }"
+        >
+          <el-table-column
+            v-for="col in linkageHeaders"
+            :key="col"
+            :prop="col"
+            :label="col"
+            show-overflow-tooltip
+            align="center"
+          />
+        </el-table>
+        <div v-else class="empty-state">
+          {{ store.linkageLoading ? '加载中...' : '暂无联动控制记录' }}
         </div>
-        <PieChart :data="errChartData" :title="errChartTitle" />
+      </div>
+
+      <div class="pagination-wrapper">
+        <el-pagination v-model:current-page="linkageCurrentPage" v-model:page-size="linkagePageSize" :page-sizes="pageSizeOptions"
+          :background="true" layout="sizes, prev, pager, next" :total="store.linkageTotal || 0"
+          @size-change="handleLinkagePageSizeChange" @current-change="handleLinkagePageChange" />
+      </div>
+
+      <div class="chart-container" v-if="chartsEnabled">
+        <div class="chart-panel">
+          <div class="chart-scope">
+            <span class="chart-scope-label">统计范围</span>
+            <el-radio-group v-model="linkageChartScope" size="small">
+              <el-radio-button value="all">全部</el-radio-button>
+              <el-radio-button value="filtered">当前筛选</el-radio-button>
+              <el-radio-button value="page">当前页</el-radio-button>
+            </el-radio-group>
+            <span class="chart-scope-hint">{{ linkageChartHint }}</span>
+          </div>
+          <PieChart :data="linkageChartData" :title="linkageChartTitle" />
+        </div>
       </div>
     </div>
   </div>
@@ -143,10 +193,14 @@ const showSafetyLog = computed(() => systemStore.config.SAFETY_INTERLOCK?.showOn
 const safetyCurrentPage = ref(1);
 const safetyPageSize = ref(5);
 
+const linkageCurrentPage = ref(1);
+const linkagePageSize = ref(5);
+
 // 饼图统计范围：all=数据库里该类型的全部记录；filtered=顶部搜索条件筛出来的那批
 // （跟表格同一批数据）；page=表格当前这一页的记录（纯前端聚合，不发请求）。
 const errChartScope = ref("all");
 const safetyChartScope = ref("all");
+const linkageChartScope = ref("all");
 
 /** 把表格行按"类型"列聚合成饼图要的 [{type, count}]，用于"当前页"范围。 */
 const aggregateByType = (rows) => {
@@ -174,12 +228,17 @@ const errChartData = computed(() =>
 const safetyChartData = computed(() =>
   pickChartData(safetyChartScope.value, store.safetyTypeStatsAll, store.safetyTypeStats, store.safetyData)
 );
+const linkageChartData = computed(() =>
+  pickChartData(linkageChartScope.value, store.linkageTypeStatsAll, store.linkageTypeStats, store.linkageData)
+);
 
 const SCOPE_LABELS = { all: "全部", filtered: "当前筛选", page: "当前页" };
 const errChartTitle = computed(() => `故障类型分布（${SCOPE_LABELS[errChartScope.value]}）`);
 const safetyChartTitle = computed(() => `安全联锁类型分布（${SCOPE_LABELS[safetyChartScope.value]}）`);
+const linkageChartTitle = computed(() => `联动控制规则分布（${SCOPE_LABELS[linkageChartScope.value]}）`);
 const errChartHint = computed(() => `共 ${sumCount(errChartData.value)} 条`);
 const safetyChartHint = computed(() => `共 ${sumCount(safetyChartData.value)} 条`);
+const linkageChartHint = computed(() => `共 ${sumCount(linkageChartData.value)} 条`);
 
 // 故障记录是手写表格，也统一过滤 id/编号列。
 const headers = computed(() => {
@@ -189,6 +248,11 @@ const headers = computed(() => {
 
 const safetyHeaders = computed(() => {
   const data = store.safetyData;
+  return data.length ? Object.keys(data[0]).filter(displayStore.isFieldVisible) : [];
+});
+
+const linkageHeaders = computed(() => {
+  const data = store.linkageData;
   return data.length ? Object.keys(data[0]).filter(displayStore.isFieldVisible) : [];
 });
 
@@ -202,8 +266,10 @@ const handleSearch = async (page = 1, showLoading = true) => {
   if (showLoading) loading.value = true;
   try {
     const params = getSearchParams();
-    // 顶部这一个搜索框同时驱动故障记录表格和下面的安全联锁记录表格，两个表格各自独立分页。
+    // 顶部这一个搜索框同时驱动故障记录表格和下面的安全联锁记录、联动控制记录表格，
+    // 三个表格各自独立分页。
     safetyCurrentPage.value = 1;
+    linkageCurrentPage.value = 1;
     // 饼图的"全部"和"当前筛选"两种范围各拉一份，切换范围时纯前端切换、不用等请求；
     // "当前页"范围直接用表格数据聚合，不占请求。
     const tasks = [
@@ -220,6 +286,9 @@ const handleSearch = async (page = 1, showLoading = true) => {
       tasks.push(store.fetchSafetyTypeStats(params));
       tasks.push(store.fetchSafetyTypeStats({}, "all"));
     }
+    tasks.push(store.fetchLinkageData({ ...params, currentPage: 1, pageSize: linkagePageSize.value }));
+    tasks.push(store.fetchLinkageTypeStats(params));
+    tasks.push(store.fetchLinkageTypeStats({}, "all"));
     await Promise.all(tasks);
   } finally {
     if (showLoading) loading.value = false;
@@ -246,6 +315,17 @@ const handleSafetyPageSizeChange = (size) => {
   safetyPageSize.value = size;
   safetyCurrentPage.value = 1;
   store.fetchSafetyData({ ...getSearchParams(), currentPage: 1, pageSize: size });
+};
+
+const handleLinkagePageChange = (page) => {
+  linkageCurrentPage.value = page;
+  store.fetchLinkageData({ ...getSearchParams(), currentPage: page, pageSize: linkagePageSize.value });
+};
+
+const handleLinkagePageSizeChange = (size) => {
+  linkagePageSize.value = size;
+  linkageCurrentPage.value = 1;
+  store.fetchLinkageData({ ...getSearchParams(), currentPage: 1, pageSize: size });
 };
 
 // WebSocket 推送新故障/告警数据时，用当前页码和筛选条件静默刷新（不切换 loading），
@@ -282,7 +362,8 @@ onUnmounted(() => {
   flex: 0 0 auto;
 }
 
-.safety-container {
+/* 故障记录/安全联锁记录/联动控制记录三个板块依次排列，从第二块起加一点间距。 */
+.error-info-container + .error-info-container {
   margin-top: 8px;
 }
 
