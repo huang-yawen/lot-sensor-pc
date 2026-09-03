@@ -65,6 +65,7 @@ const stateMap = new Map()
 
 /* ============================ 工具函数 ============================ */
 
+/** 按 preffix 精确查 t_direct_config 的 id，查不到返回 null。 */
 async function resolveConfigIdByPrefix(prefix) {
   if (!prefix) return null
   const [rows] = await promisePool.query(
@@ -108,7 +109,6 @@ async function resolveParamConfigId(slot) {
   return rows[0]?.id ?? null
 }
 
-/** 导出：按 preffix 查 config_id 的通用函数（给 pidAutoTuneController 等外部复用）。 */
 async function resolveConfigIdByName(name) {
   const [rows] = await promisePool.query(
     'SELECT id FROM t_direct_config WHERE t_name = ? ORDER BY id ASC LIMIT 1',
@@ -142,10 +142,6 @@ async function readSwitchOn(prefix, deviceNo) {
  * 永久禁用 PID，只用滞回带通断。
  */
 async function isPidEnabled(deviceNo) {
-  // 自整定运行期间这里也返回 true，相当于把加热的控制权一起交给自整定。
-  // linkageRules.js 调这个函数判断要不要让位给 PID，
-  // 所以自整定期间它们看到的也是"PID 已启用"，同样会让位。
-  if (systemConfig.getConfig().PID_AUTOTUNE?.enabled === true) return true
   const master = await readSwitchOn('auto_control_enabled', deviceNo)
   const pid = await readSwitchOn('pid_enabled', deviceNo)
   if (master == null && pid == null) {
@@ -272,17 +268,13 @@ async function evaluatePidHeating(info) {
   // 这里直接返回空数组，不再往下走 PID 计算和指令下发。
   const rootConfig = systemConfig.getConfig()
   if (rootConfig.SINGLE_DEVICE_MODE === true) {
+    // 不看设备号，只要"系统里任意一台设备"故障锁定了就算数
     if (isAnyLocked()) return []
   } else {
+    // 精确查"某一台设备"是否故障锁定
     if (isLockedByFault(deviceNo)) return []
   }
 
-  // ====== 自整定接管 ======
-  // 自整定开启时，这条消息转给 pidAutoTune 的继电反馈测试处理，这里就不再跑正常 PID 了。
-  if (rootConfig.PID_AUTOTUNE?.enabled === true) {
-    const { evaluateAutoTune } = require('./pidAutoTune')
-    return evaluateAutoTune(info)
-  }
 
   // 手动模式下 isPidEnabled 内部读到的"控制模式"开关是 off，master !== true，
   // 这里会直接判 false 短路返回，不需要再单独判断一次手动模式。
@@ -488,7 +480,4 @@ async function evaluatePidHeating(info) {
   return actions
 }
 
-// readTempOut/getTargetTemp/setHeater 额外导出给 pidAutoTune.js 复用，
-// 避免自整定服务重复实现同一套字段读取/指令下发逻辑。
-// resolveConfigIdByPrefix 导出给外部按 preffix 定位指令项（pidAutoTune 写 Kp/Ki/Kd 时用）。
-module.exports = { evaluatePidHeating, isPidEnabled, readSwitchOn, readTempOut, getTargetTemp, setHeater, resolveConfigIdByPrefix, resolveParamConfigId }
+module.exports = { evaluatePidHeating, isPidEnabled, readSwitchOn, readTempOut, getTargetTemp, setHeater, resolveParamConfigId }

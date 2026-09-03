@@ -49,8 +49,6 @@ const deviceStateTrendController = require('../controllers/computedMetrics/devic
 const heaterEnergyController = require('../controllers/computedMetrics/heaterEnergyController')
 const switchDurationController = require('../controllers/switchDuration/switchDurationController')
 
-// ==================== PID 自整定控制器 ====================
-const { applyAutoTuneResult } = require('../controllers/system/pidAutoTuneController')
 
 // ==================== 系统配置控制器 ====================
 const configController = require('../controllers/system/configController')
@@ -190,11 +188,6 @@ router.get('/api/computed-metrics', async (req, res) => {
     res.json({ success: true, data: getLatestComputed() })
 })
 
-/* ============================================================
- * PID 自整定接口
- *   把自整定算出的建议 Kp/Ki/Kd 写入指令中心 t_direct，用于后续运行时直接生效。
- * ============================================================ */
-router.post('/api/pid-autotune/apply', applyAutoTuneResult)
 
 /* ============================================================
  * 故障状态接口

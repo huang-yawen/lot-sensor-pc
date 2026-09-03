@@ -87,79 +87,16 @@
       <el-button :loading="loading" @click="load">刷新</el-button>
       <el-button type="primary" :loading="saving" @click="save">保存并应用</el-button>
     </div>
-
-    <section class="pid-section">
-      <div class="section-heading">
-        <div>
-          <h3>PID 自整定（继电反馈整定法）</h3>
-          <p>开启后暂时接管加热输出，让加热器在"目标温度 ± 回差"之间强制切换，逼出温度振荡，自动算出建议的 Kp/Ki/Kd。跟上方"PID 恒温控制开关"是否启用无关；测试期间"联动控制"里的加热滞回带通断会自动让位。</p>
-        </div>
-      </div>
-      <el-alert
-        type="warning"
-        :closable="false"
-        show-icon
-        title="自整定期间加热器会真实反复全开/全关，请确认现场有人监护、且已确认接线正常再启动；安全联锁（温度上限、传感器掉线等）全程仍然生效，不会因为在整定就失效。"
-      />
-      <el-form label-width="180px" class="pid-form" style="margin-top: 14px;">
-        <el-form-item label="继电测试高占空比（%）">
-          <el-input-number v-model="autoTuneForm.relayHighDuty" :min="0" :max="100" :step="5" :disabled="autoTuneRunning" />
-        </el-form-item>
-        <el-form-item label="继电测试低占空比（%）">
-          <el-input-number v-model="autoTuneForm.relayLowDuty" :min="0" :max="100" :step="5" :disabled="autoTuneRunning" />
-        </el-form-item>
-        <el-form-item label="温度回差（℃）">
-          <el-input-number v-model="autoTuneForm.hysteresis" :min="0.1" :step="0.1" :disabled="autoTuneRunning" />
-          <div class="hint">防止在目标温度附近抖动切换，越小切换越频繁。</div>
-        </el-form-item>
-        <el-form-item label="采集周期数">
-          <el-input-number v-model="autoTuneForm.minCycles" :min="2" :step="1" :disabled="autoTuneRunning" />
-          <div class="hint">采集到这么多个完整振荡周期后自动计算结果（会额外丢弃第 1 个不稳定周期）。</div>
-        </el-form-item>
-        <el-form-item label="超时时间（分钟）">
-          <el-input-number v-model="autoTuneTimeoutMin" :min="1" :step="1" :disabled="autoTuneRunning" />
-          <div class="hint">超时未采集够周期数会自动判定失败并停止。</div>
-        </el-form-item>
-      </el-form>
-
-      <div class="save-bar">
-        <el-button v-if="!autoTuneRunning" type="primary" :loading="autoTuneStarting" @click="startAutoTune">开始自整定</el-button>
-        <el-button v-else type="danger" :loading="autoTuneStopping" @click="stopAutoTune">停止自整定</el-button>
-      </div>
-
-      <div class="autotune-status" v-if="autoTune.status !== 'idle'">
-        <p><strong>状态：</strong>{{ autoTuneStatusLabel }}</p>
-        <p v-if="autoTune.status === 'running'"><strong>进度：</strong>{{ autoTune.progress }}/{{ autoTuneForm.minCycles }} 个周期</p>
-        <p v-if="autoTune.message"><strong>说明：</strong>{{ autoTune.message }}</p>
-
-        <template v-if="autoTune.status === 'done' && autoTune.result">
-          <el-table :data="[autoTune.result]" border style="margin-top: 10px;">
-            <el-table-column label="Ku（临界增益）" prop="ku" />
-            <el-table-column label="Pu（振荡周期/秒）" prop="pu" />
-            <el-table-column label="建议 Kp" prop="kp" />
-            <el-table-column label="建议 Ki" prop="ki" />
-            <el-table-column label="建议 Kd" prop="kd" />
-          </el-table>
-          <div class="save-bar">
-            <el-button type="primary" :loading="applying" @click="applyResult">应用到指令中心</el-button>
-          </div>
-          <div class="hint">直接写入指令中心的 Kp/Ki/Kd（跟上面"PID 参数"是同一套系数，指令中心配置优先于这里的兜底值），立即生效。</div>
-        </template>
-      </div>
-    </section>
   </div>
 </template>
 
 <script setup>
-import { computed, onBeforeUnmount, reactive, ref } from 'vue'
+import { computed, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import api from '@/api'
 
 const loading = ref(false)
 const saving = ref(false)
-const autoTuneStarting = ref(false)
-const autoTuneStopping = ref(false)
-const applying = ref(false)
 
 const defaultForm = () => ({
   enabled: false,
@@ -211,57 +148,6 @@ async function loadCommandTargetTemp() {
   }
 }
 
-const autoTuneForm = reactive({
-  relayHighDuty: 100,
-  relayLowDuty: 0,
-  hysteresis: 0.3,
-  minCycles: 4,
-})
-const autoTuneTimeoutMin = ref(30)
-const autoTune = reactive({ status: 'idle', progress: 0, message: '', result: null })
-const autoTuneRunning = computed(() => autoTune.status === 'running')
-
-const STATUS_LABELS = { idle: '未开始', running: '进行中', done: '已完成', failed: '失败' }
-const autoTuneStatusLabel = computed(() => STATUS_LABELS[autoTune.status] || autoTune.status)
-
-let pollTimer = null
-function startPolling() {
-  if (pollTimer) return
-  pollTimer = setInterval(async () => {
-    try {
-      const response = await api.get('/api/system-config')
-      applyAutoTuneState(response.data.data.PID_AUTOTUNE)
-    } catch {
-      // 轮询失败静默重试，不打断用户
-    }
-  }, 3000)
-}
-function stopPolling() {
-  if (pollTimer) {
-    clearInterval(pollTimer)
-    pollTimer = null
-  }
-}
-
-function applyAutoTuneState(cfg) {
-  if (!cfg) return
-  Object.assign(autoTune, {
-    status: cfg.status ?? 'idle',
-    progress: cfg.progress ?? 0,
-    message: cfg.message ?? '',
-    result: cfg.result ?? null,
-  })
-  // 运行中不用远端参数覆盖表单，避免用户正在改下一轮参数时被轮询打断。
-  if (!autoTuneRunning.value) {
-    if (Number.isFinite(cfg.relayHighDuty)) autoTuneForm.relayHighDuty = cfg.relayHighDuty
-    if (Number.isFinite(cfg.relayLowDuty)) autoTuneForm.relayLowDuty = cfg.relayLowDuty
-    if (Number.isFinite(cfg.hysteresis)) autoTuneForm.hysteresis = cfg.hysteresis
-    if (Number.isFinite(cfg.minCycles)) autoTuneForm.minCycles = cfg.minCycles
-    if (Number.isFinite(cfg.timeoutMs)) autoTuneTimeoutMin.value = Math.round(cfg.timeoutMs / 60000)
-  }
-  if (autoTuneRunning.value) startPolling()
-  else stopPolling()
-}
 
 async function load() {
   loading.value = true
@@ -270,7 +156,6 @@ async function load() {
     const pid = response.data.data.PID_HEATING || defaultForm()
     Object.assign(form, defaultForm(), pid)
     targetTemp.value = response.data.data.DEFAULT_TARGET_TEMP ?? 22
-    applyAutoTuneState(response.data.data.PID_AUTOTUNE)
     await loadCommandTargetTemp()
   } catch (error) {
     ElMessage.error(error.response?.data?.message || 'PID 恒温控制配置加载失败')
@@ -291,59 +176,6 @@ async function save() {
   }
 }
 
-async function startAutoTune() {
-  autoTuneStarting.value = true
-  try {
-    await api.post('/api/system-config', {
-      PID_AUTOTUNE: {
-        enabled: true,
-        relayHighDuty: autoTuneForm.relayHighDuty,
-        relayLowDuty: autoTuneForm.relayLowDuty,
-        hysteresis: autoTuneForm.hysteresis,
-        minCycles: autoTuneForm.minCycles,
-        timeoutMs: autoTuneTimeoutMin.value * 60000,
-        status: 'running',
-        progress: 0,
-        message: '自整定已开始，等待设备上报数据',
-        result: null,
-      },
-    })
-    ElMessage.success('自整定已开始')
-    await load()
-  } catch (error) {
-    ElMessage.error(error.response?.data?.message || '启动自整定失败')
-  } finally {
-    autoTuneStarting.value = false
-  }
-}
-
-async function stopAutoTune() {
-  autoTuneStopping.value = true
-  try {
-    await api.post('/api/system-config', { PID_AUTOTUNE: { enabled: false, status: 'idle', message: '已手动停止' } })
-    ElMessage.success('自整定已停止')
-    await load()
-  } catch (error) {
-    ElMessage.error(error.response?.data?.message || '停止自整定失败')
-  } finally {
-    autoTuneStopping.value = false
-  }
-}
-
-async function applyResult() {
-  applying.value = true
-  try {
-    await api.post('/api/pid-autotune/apply', {})
-    ElMessage.success('已写入指令中心（Kp/Ki/Kd），立即生效')
-  } catch (error) {
-    ElMessage.error(error.response?.data?.message || '应用失败')
-  } finally {
-    applying.value = false
-  }
-}
-
-onBeforeUnmount(() => stopPolling())
-
 load()
 </script>
 
@@ -356,6 +188,4 @@ load()
 .pid-form { margin-top: 6px; }
 .hint { color: #94a3b8; font-size: 12px; margin-top: 4px; }
 .save-bar { display: flex; gap: 10px; margin-top: 16px; }
-.autotune-status { margin-top: 16px; padding-top: 14px; border-top: 1px dashed #e5e7eb; color: #334155; }
-.autotune-status p { margin: 4px 0; }
 </style>
