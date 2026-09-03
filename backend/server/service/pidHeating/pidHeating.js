@@ -136,17 +136,21 @@ async function readSwitchOn(prefix, deviceNo) {
 /**
  * PID 是否真正启用：需要"控制模式"（preffix=auto_control_enabled）和
  * "PID恒温控制"（preffix=pid_enabled）两个指令项都是开，缺一不可（外层总开关 + 内层
- * PID 专属开关的两级结构）。两个指令项都还没配置时才退回 PID_HEATING.enabled 兜底。
- * pid_enabled 这条指令项被删除时 readSwitchOn 返回 null，走 master===true &&
- * null===true 判断，结果是 false（未启用），不会报错——赛场上删掉这个开关就等于
- * 永久禁用 PID，只用滞回带通断。
+ * PID 专属开关的两级结构）。只有 PID 子开关（pid_enabled）没配置时才退回
+ * PID_HEATING.enabled 兜底；总开关明确是关时，兜底也不生效（现场明确关掉自动控制）。
+ * pid_enabled 这条指令项被删除时 readSwitchOn 返回 null，走配置中心兜底，不会报错
+ * ——赛场上删掉这个开关等于"对算法没意见"，由配置中心决定是否启用。
  */
 async function isPidEnabled(deviceNo) {
   const master = await readSwitchOn('auto_control_enabled', deviceNo)
   const pid = await readSwitchOn('pid_enabled', deviceNo)
-  if (master == null && pid == null) {
+  // 只看算法开关：PID 子开关没配就走配置中心兜底
+  if (pid == null) {
+    // 总开关明确是关时，兜底也不该生效（现场明确关掉了自动控制）
+    if (master === false) return false
     return systemConfig.getConfig().PID_HEATING?.enabled === true
   }
+  // PID 子开关配了，以指令页面为准
   return master === true && pid === true
 }
 
@@ -276,8 +280,13 @@ async function evaluatePidHeating(info) {
   }
 
 
-  // 手动模式下 isPidEnabled 内部读到的"控制模式"开关是 off，master !== true，
-  // 这里会直接判 false 短路返回，不需要再单独判断一次手动模式。
+  // ====== 手动模式短路 ======
+  // 跟 pumpVelocityControl.js 对称：手动模式下提前 return []，省掉 isPidEnabled
+  // 内部对 pid_enabled 的查询（master=off 时 isPidEnabled 必然返回 false，
+  // 这里提前拦下来，避免多查一次 pid_enabled 指令项）。
+  if ((await getCurrentMode(deviceNo)) === 'manual') return []
+
+  // 自动模式下再走完整的两级开关判定（master + pid）
   if (!(await isPidEnabled(deviceNo))) return []
 
   const fallback = rootConfig.PID_HEATING || {}

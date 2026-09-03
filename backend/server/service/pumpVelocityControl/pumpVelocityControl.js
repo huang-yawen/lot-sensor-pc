@@ -97,10 +97,11 @@ function getState(deviceNo) {
 
 /**
  * 恒流速控制是否启用，以及用哪套算法。
- * 跟 pidHeating.js/isPidEnabled 一样是"外层总开关 + 内层算法开关"的两级结构：
- * 必须"控制模式"（auto_control_enabled）也是开，算法开关才算数。
+ * 跟 pidHeating.js/isPidEnabled 对称的写法：外层总开关 + 内层算法开关的两级结构，
+ * 必须总开关（auto_control_enabled）也是开，算法开关才算数。
  * 两个算法开关都开时占空比优先（跟加热那边 PID 优先于滞回带的取舍一致：
- * 占空比是更精细的那个）。两个指令项都还没配置时才退回配置中心兜底。
+ * 占空比是更精细的那个）。只有两个算法开关都没配置时才退回配置中心兜底；
+ * 总开关明确是关时，兜底也不生效（现场明确关掉自动控制）。
  * @returns {Promise<'pid'|'hysteresis'|null>} null = 未启用
  */
 async function resolvePumpVelocityMode(deviceNo) {
@@ -108,11 +109,11 @@ async function resolvePumpVelocityMode(deviceNo) {
   const pidOn = await readSwitchOn('pump_velocity_pid_enabled', deviceNo)
   const hysOn = await readSwitchOn('pump_velocity_hysteresis_enabled', deviceNo)
 
-  // 两个算法指令项都被删掉/从没配过时，才看配置中心的兜底默认值。
+  // 只看算法开关：两个算法开关都没配才走配置中心兜底（对齐恒温 isPidEnabled）。
+  // 任一算法开关配了就以指令页面为准；总开关明确是关时兜底也不生效。
   if (pidOn == null && hysOn == null) {
     const fallback = systemConfig.getConfig().PUMP_VELOCITY_CONTROL || {}
     if (fallback.enabled !== true) return null
-    // 总开关指令项存在且是关时，兜底也不该生效（现场明确关掉了自动控制）。
     if (master === false) return null
     return fallback.mode === 'pid' ? 'pid' : 'hysteresis'
   }

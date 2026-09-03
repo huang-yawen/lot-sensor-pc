@@ -47,8 +47,9 @@
         <el-form-item label="电加热额定功率（W）">
           <el-input-number v-model="form.heaterRatedPower" :min="0" :step="100" />
         </el-form-item>
-        <el-form-item label="水管横截面积（cm²）">
-          <el-input-number v-model="form.pipeAreaCm2" :min="0" :step="0.1" />
+        <el-form-item label="管道直径（mm）">
+          <el-input-number v-model="pipeDiameterMm" :min="0" :step="1" :precision="1" />
+          <div class="hint">根据直径自动计算横截面积，当前 ≈ {{ Number(form.pipeAreaCm2).toFixed(4) }} cm²（流速 v=Q/A 使用此面积）</div>
         </el-form-item>
         <el-form-item label="水箱1初始水量（L）">
           <el-input-number v-model="form.initialWaterTank1" :min="0" :step="0.5" />
@@ -88,7 +89,7 @@
 </template>
 
 <script setup>
-import { reactive, ref } from 'vue'
+import { reactive, ref, computed } from 'vue'
 import { ElMessage } from 'element-plus'
 import api from '@/api'
 
@@ -119,6 +120,17 @@ const defaultForm = () => ({
 
 const form = reactive(defaultForm())
 const switchDurationEnabled = ref(true)
+
+// 管道直径(mm) <-> 横截面积(cm²) 互算
+// 面积公式 A = π × (d/2)²，d 单位 mm → 半径 cm = d/2/10，故 A_cm² = π × d² / 400
+const diameterToArea = (d) => (d > 0 ? Number((Math.PI * d * d / 400).toFixed(4)) : 0)
+const areaToDiameter = (a) => (a > 0 ? Number((2 * Math.sqrt(a / Math.PI) * 10).toFixed(2)) : 0)
+
+// 前端只编辑直径，面积自动算出后随 form.pipeAreaCm2 一起提交给后端
+const pipeDiameterMm = computed({
+  get: () => areaToDiameter(form.pipeAreaCm2),
+  set: (val) => { form.pipeAreaCm2 = diameterToArea(val) },
+})
 
 const items = [
   { key: 'resistanceK', title: '系统阻力系数 K', description: 'K=ΔP/Q²，管路结垢/堵塞黄金指标，持续上升需提示清洗。' },
