@@ -45,6 +45,8 @@ const systemConfig = require('../../config/systemConfig')
 const { firstValue, getTopic, buildSwitchPayload } = require('../../utils/protocol')
 const { resolveDeviceNo, resolveFieldAliases } = require('../../utils/mappedData')
 const { getDirectValue, saveDirectData } = require('../directData/saveDirectConfig')
+// 控制模式（手动/自动）统一走 getControlMode，跟 pumpVelocityControl.js 对称。
+const { getCurrentMode } = require('../directData/getControlMode')
 const { saveOperationHistory } = require('../operationHistory/saveOperationHistory')
 // 目标温度是加热控制的公共设定值（SP），滞回带通断和 PID 都读同一个，
 // 取值逻辑只在 controlShared/controlHelpers.js 维护一份，这里直接复用。

@@ -69,7 +69,7 @@
       </div>
     </section>
 
-    <!-- ==================== 温度曲线（温度1 / 温度2） ==================== -->
+    <!-- ==================== 温度曲线（进水温度 / 出水温度） ==================== -->
     <section v-if="showTempChart" class="chart-section">
       <h2 class="section-title">温度曲线</h2>
       <div class="chart-card chart-card-wide">
@@ -77,15 +77,15 @@
       </div>
     </section>
 
-    <!-- ==================== 瞬时流量与压力（双轴） ==================== -->
+    <!-- ==================== 瞬时流量与瞬时压力（双轴） ==================== -->
     <section v-if="showFlowPressureChart" class="chart-section">
-      <h2 class="section-title">瞬时流量与压力</h2>
+      <h2 class="section-title">瞬时流量与瞬时压力</h2>
       <div class="chart-card chart-card-wide">
         <div ref="flowPressureChartRef" class="chart-el chart-el-tall"></div>
       </div>
     </section>
 
-    <!-- ==================== PID跟踪对比（目标温度参考线 + 温度2实际值） ==================== -->
+    <!-- ==================== PID跟踪对比（目标温度参考线 + 出水温度实际值） ==================== -->
     <section v-if="showPidTrackingChart" class="chart-section">
       <h2 class="section-title">
         PID跟踪对比
@@ -107,14 +107,14 @@
       </div>
     </section>
 
-    <!-- ==================== 加热能耗分析（瞬时实际功率 / 累计电耗与换热量 / 单位流量能耗） ==================== -->
+    <!-- ==================== 加热能耗分析（瞬时功率 / 累计电耗与换热量 / 单位流量能耗） ==================== -->
     <!-- 三张图各自独立开关判断（有数据才画），整节由 showHeaterEnergyChart 一个总开关控制，
          跟"PID跟踪对比"/"恒流速跟踪对比"一样，不做成逐条更细的开关，避免赛场配置项爆炸。 -->
     <section v-if="showHeaterEnergyChart" class="chart-section">
       <h2 class="section-title">加热能耗分析</h2>
       <div class="chart-grid" style="grid-template-columns: repeat(3, 1fr);">
         <div class="chart-card">
-          <div class="chart-card-header"><h3>瞬时实际加热功率</h3></div>
+          <div class="chart-card-header"><h3>瞬时加热功率</h3></div>
           <div ref="actualPowerChartRef" class="chart-el"></div>
         </div>
         <div class="chart-card">
@@ -546,7 +546,7 @@ watch([scatterRows, scatterChartRef], () => {
   })
 }, { deep: true })
 
-// ==================== 温度曲线（温度1 / 温度2） ====================
+// ==================== 温度曲线（进水温度 / 出水温度） ====================
 // 跟"平均温度与平均流速"共用同一批查询结果（averageChartRows 已经带了 temp1/temp2/flow/pressure），
 // 不用再单独发一次请求。
 const showTempChart = computed(() => {
@@ -570,10 +570,10 @@ function renderTempChart() {
 
   const times = formatTimes(rows)
   const series = [
-    { name: '温度1', type: 'line', smooth: true, data: rows.map((r) => r.temp1), itemStyle: { color: '#f97316' }, lineStyle: { color: '#f97316' } },
-    { name: '温度2', type: 'line', smooth: true, data: rows.map((r) => r.temp2), itemStyle: { color: '#3b82f6' }, lineStyle: { color: '#3b82f6' } },
+    { name: '进水温度', type: 'line', smooth: true, data: rows.map((r) => r.temp1), itemStyle: { color: '#f97316' }, lineStyle: { color: '#f97316' } },
+    { name: '出水温度', type: 'line', smooth: true, data: rows.map((r) => r.temp2), itemStyle: { color: '#3b82f6' }, lineStyle: { color: '#3b82f6' } },
   ]
-  const legendData = ['温度1', '温度2']
+  const legendData = ['进水温度', '出水温度']
 
   // 出水温度滑动平均（rolling_avg_temp）是独立一次时间窗口查询，不能假设它跟这里
   // 的 rows 行数、顺序一致——两边各自按等宽分桶降采样，桶内取到的具体那一行未必
@@ -616,7 +616,7 @@ watch([averageChartRows, timeWindowData, tempChartRef], () => {
   })
 }, { deep: true })
 
-// ==================== 瞬时流量与压力（双轴，单位不同） ====================
+// ==================== 瞬时流量与瞬时压力（双轴，单位不同） ====================
 const showFlowPressureChart = computed(() => {
   if (historyChartsConfig.value.showFlowPressureChart === false) return false
   return averageChartRows.value.some((r) => r.flow != null || r.pressure != null)
@@ -639,7 +639,7 @@ function renderFlowPressureChart() {
   const times = formatTimes(rows)
   chart.setOption({
     tooltip: { trigger: 'axis' },
-    legend: { data: ['瞬时流量', '压力'], top: 0 },
+    legend: { data: ['瞬时流量', '瞬时压力'], top: 0 },
     toolbox: {
       feature: { magicType: { type: ['line', 'bar'] }, saveAsImage: { title: '下载图片' } },
       right: 10,
@@ -649,11 +649,11 @@ function renderFlowPressureChart() {
     xAxis: { type: 'category', data: times, axisLabel: { rotate: 15, fontSize: 10 } },
     yAxis: [
       { type: 'value', name: '瞬时流量', nameTextStyle: { fontSize: 11 } },
-      { type: 'value', name: '压力', nameTextStyle: { fontSize: 11 } },
+      { type: 'value', name: '瞬时压力', nameTextStyle: { fontSize: 11 } },
     ],
     series: [
       { name: '瞬时流量', type: 'line', yAxisIndex: 0, smooth: true, data: rows.map((r) => r.flow), itemStyle: { color: '#0ea5e9' }, lineStyle: { color: '#0ea5e9' } },
-      { name: '压力', type: 'line', yAxisIndex: 1, smooth: true, data: rows.map((r) => r.pressure), itemStyle: { color: '#a855f7' }, lineStyle: { color: '#a855f7' } },
+      { name: '瞬时压力', type: 'line', yAxisIndex: 1, smooth: true, data: rows.map((r) => r.pressure), itemStyle: { color: '#a855f7' }, lineStyle: { color: '#a855f7' } },
     ],
   }, true)
 }
@@ -664,9 +664,9 @@ watch([averageChartRows, flowPressureChartRef], () => {
   })
 }, { deep: true })
 
-// ==================== PID跟踪对比（目标温度参考线 + 温度2实际值） ====================
+// ==================== PID跟踪对比（目标温度参考线 + 出水温度实际值） ====================
 // 目标温度在指令中心只存"当前值"，没有历史，没法画成随时间变化的曲线，
-// 只能取当前生效值画一条水平参考线（markLine），跟温度2的实际曲线对照。
+// 只能取当前生效值画一条水平参考线（markLine），跟出水温度的实际曲线对照。
 const showPidTrackingChart = computed(() => {
   if (historyChartsConfig.value.showPidTrackingChart === false) return false
   return targetTemp.value != null && averageChartRows.value.some((r) => r.temp2 != null)
@@ -689,7 +689,7 @@ function renderPidTrackingChart() {
   const times = formatTimes(rows)
   chart.setOption({
     tooltip: { trigger: 'axis' },
-    legend: { data: ['温度2（实际）'], top: 0 },
+    legend: { data: ['出水温度'], top: 0 },
     toolbox: {
       feature: { magicType: { type: ['line', 'bar'] }, saveAsImage: { title: '下载图片' } },
       right: 10,
@@ -700,7 +700,7 @@ function renderPidTrackingChart() {
     yAxis: { type: 'value', name: '℃', nameTextStyle: { fontSize: 11 } },
     series: [
       {
-        name: '温度2（实际）',
+        name: '出水温度',
         type: 'line',
         smooth: true,
         data: rows.map((r) => r.temp2),
@@ -756,7 +756,7 @@ function renderPumpVelocityTrackingChart() {
   const times = formatTimes(rows)
   chart.setOption({
     tooltip: { trigger: 'axis' },
-    legend: { data: ['平均流速（实际）'], top: 0 },
+    legend: { data: ['平均流速'], top: 0 },
     toolbox: {
       feature: { magicType: { type: ['line', 'bar'] }, saveAsImage: { title: '下载图片' } },
       right: 10,
@@ -767,7 +767,7 @@ function renderPumpVelocityTrackingChart() {
     yAxis: { type: 'value', name: 'm/s', nameTextStyle: { fontSize: 11 } },
     series: [
       {
-        name: '平均流速（实际）',
+        name: '平均流速',
         type: 'line',
         smooth: true,
         data: rows.map((r) => r.averageVelocity),
@@ -796,7 +796,7 @@ watch([averageChartRows, targetVelocity, pumpVelocityTrackingChartRef], () => {
   })
 }, { deep: true })
 
-// ==================== 加热能耗分析（瞬时实际功率 / 累计电耗与换热量 / 单位流量能耗） ====================
+// ==================== 加热能耗分析（瞬时功率 / 累计电耗与换热量 / 单位流量能耗） ====================
 // 数据来自独立接口 /api/heater-energy（heaterEnergyRows），不跟 averageChartRows 混用——
 // 后端要联合 t_sensor_data（温度/流量）和 t_behavior_data（加热开关状态）两张表才能算出
 // 这几个指标，是单独一次查询，具体公式见后端 heaterEnergyQuery.js 的详细注释。
@@ -808,7 +808,7 @@ const showHeaterEnergyChart = computed(() => {
   return heaterEnergyRows.value.length > 0
 })
 
-// ---- 瞬时实际加热功率（W）：单线图，直观看出加热器什么时候真的在通电、通了多久 ----
+// ---- 瞬时加热功率（W）：单线图，直观看出加热器什么时候真的在通电、通了多久 ----
 const actualPowerChartRef = ref(null)
 let actualPowerChartInstance = null
 
@@ -830,7 +830,7 @@ function renderActualPowerChart() {
     xAxis: { type: 'category', data: times, axisLabel: { rotate: 15, fontSize: 10 } },
     yAxis: { type: 'value', name: 'W', nameTextStyle: { fontSize: 11 } },
     series: [{
-      name: '瞬时实际功率',
+      name: '瞬时功率',
       type: 'line',
       // step: 'end' 画成阶梯线而不是 smooth 平滑曲线：加热器只有开/关两个状态，真实的
       // 功率变化就是"突然从 0 跳到额定功率、又突然跳回 0"，画成平滑曲线反而会制造出

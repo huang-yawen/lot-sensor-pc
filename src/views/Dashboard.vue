@@ -188,7 +188,7 @@ const computedMetricList = computed(() => {
     const t2 = fmt(entry.tempChangeRate.temp2, 3)
     list.push({
       key: 'tempChangeRate',
-      label: '温度变化率 (T1/T2)',
+      label: '温度变化率 (进水/出水)',
       unit: '℃/s',
       value: `${t1 ?? '--'} / ${t2 ?? '--'}`,
     })

@@ -133,13 +133,13 @@ const displayConfig = reactive({
 const chartSwitches = [
   { key: 'showCumulative', label: '累计统计', description: '累计流量等持续累加指标的历史趋势图。' },
   { key: 'showTimeWindow', label: '滑动统计', description: '滑动平均、波动幅度、相邻变化量。' },
-  { key: 'showAverageChart', label: '平均温度与平均流速', description: '(温度1+温度2)/2、流量÷管道面积算出的平均流速。' },
-  { key: 'showTempChart', label: '温度曲线', description: '温度1、温度2 原始读数对比，能直接看出两路温差。' },
-  { key: 'showFlowPressureChart', label: '瞬时流量与压力', description: '瞬时流量、压力原始读数，双轴对照。' },
-  { key: 'showPidTrackingChart', label: 'PID跟踪对比', description: '目标温度参考线 + 温度2 实际值，直观看恒温控制精度。' },
+  { key: 'showAverageChart', label: '平均温度与平均流速', description: '(进水温度+出水温度)/2、流量÷管道面积算出的平均流速。' },
+  { key: 'showTempChart', label: '温度曲线', description: '进水温度、出水温度 原始读数对比，能直接看出两路温差。' },
+  { key: 'showFlowPressureChart', label: '瞬时流量与瞬时压力', description: '瞬时流量、瞬时压力原始读数，双轴对照。' },
+  { key: 'showPidTrackingChart', label: 'PID跟踪对比', description: '目标温度参考线 + 出水温度实际值，直观看恒温控制精度。' },
   { key: 'showPumpVelocityTrackingChart', label: '恒流速跟踪对比', description: '目标流速参考线 + 平均流速实际值，直观看恒流速控制精度。' },
   { key: 'showDeviceStateChart', label: '设备状态时间线', description: '水泵、加热开关状态阶梯图，展示自动控制的实际动作历史。' },
-  { key: 'showHeaterEnergyChart', label: '加热能耗分析', description: '瞬时实际加热功率、累计耗电量与累计换热量对比、单位流量能耗，需要先在“计算数据”页配置加热额定功率。' },
+  { key: 'showHeaterEnergyChart', label: '加热能耗分析', description: '瞬时加热功率、累计耗电量与累计换热量对比、单位流量能耗，需要先在“计算数据”页配置加热额定功率。' },
   { key: 'showDerivedMetricCharts', label: '自定义公式指标', description: '"公式与图表"里勾选了"历史图表"的自定义指标，每条一张图。' },
   { key: 'showTempFlowScatter', label: '温度-流量相关性', description: '出水温度与瞬时流量的散点图，用来看两者的相关趋势。' },
 ]
