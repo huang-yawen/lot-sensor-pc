@@ -22,9 +22,11 @@ function getAbnormalMax() {
 }
 
 /**
- * 从上报数据里解析设备号并标准化成 `字符串 | null`。
- * safetyInterlock.js / linkageRules.js / faultStatus.js 里原本各写一遍
- * `String((await resolveDeviceNo(info)) || '').trim() || null`，统一到这里。
+ * 从一条上报数据里解析出设备号，并统一标准化成 `字符串 | null`：解析不出、或解析出
+ * 空串/纯空白 -> null（代表"全局/单设备"），否则是去掉首尾空白的字符串。
+ * safetyInterlock.js / linkageRules.js / faultStatus.js 原本各写一遍
+ * `String((await resolveDeviceNo(info)) || '').trim() || null`，其中 linkageRules 还
+ * 一条消息里解析了两次。统一到这里，调用方一行搞定，也少一次重复解析。
  * @returns {Promise<string|null>}
  */
 async function resolveDeviceNoStr(info) {
@@ -32,12 +34,16 @@ async function resolveDeviceNoStr(info) {
 }
 
 /**
- * 判断流量读数是不是"正常"（linkageRules.js 原来的 isFlowNormal，上移到共用层）。
- * 要同时满足：非 null、非 0、没顶到异常最大值哨兵、落在配置的上下限之间
- * （没配对应阈值就跳过那一条检查）。
+ * 判断流量读数是不是"正常"——好几条联动规则和安全联锁都要用（linkageRules.js 原来的
+ * isFlowNormal，上移到共用层，两处共用同一份）。要同时满足四点才算正常：
+ *   1. 不是 null：传感器确实上报了数据
+ *   2. 不是 0：水真的在流动，不是完全没流量
+ *   3. 没顶到异常最大值哨兵（getAbnormalMax）：顶到哨兵通常代表传感器掉线/短路，
+ *      读数被硬件卡死在满量程，不是真实流量
+ *   4. 落在配置的下限和上限之间（对应阈值为 null 表示没配置，就跳过那一条检查）
  * @param {number|null} flow
- * @param {number|null} flowLow  - null 表示没配置，不检查这条
- * @param {number|null} flowHigh - null 表示没配置，不检查这条
+ * @param {number|null} flowLow  - 流量下限阈值，null 表示没配置，不检查这条
+ * @param {number|null} flowHigh - 流量上限阈值，null 表示没配置，不检查这条
  * @returns {boolean}
  */
 function isFlowNormal(flow, flowLow, flowHigh) {
@@ -48,8 +54,13 @@ function isFlowNormal(flow, flowLow, flowHigh) {
 }
 
 /**
- * 进出水温差绝对值；两个读数任一缺失时返回 null（不能拿 NaN 去跟阈值比较，
- * 那样比较结果永远是 false，会悄悄绕过依赖温差的判断）。
+ * 进出水温差的绝对值。安全联锁"温差过大"、故障机"水泵故障"、联动的"双温度融合 /
+ * 滞回带通断"都要算这个值，统一在这里，各处只是拿到 diff 之后跟各自的阈值比。
+ *
+ * temp1 / temp2 任一缺失（传感器没上报 / 读不到）时返回 null，而不是算出一个 NaN：
+ * 调用方约定"diff == null 就跳过依赖温差的那条判断"。如果这里返回 NaN，`NaN > 阈值`
+ * 永远是 false，依赖温差的保护会看起来在生效、实际完全没生效（悄悄失效最难排查）。
+ * 只看绝对值、不分进水高还是出水高，是因为这几处都只关心"温差大不大"。
  * @param {{temp1: number|null, temp2: number|null}} sensors
  * @returns {number|null}
  */
@@ -89,18 +100,29 @@ async function resolveThresholdConfigId(slot) {
   return resolveConfigIdByPrefix(def.prefix)
 }
 
+/** 把原始字符串/数字统一转成有限数字，转不出来（空值、空字符串、非数字字符串、
+ * NaN、Infinity）统一返回 null。这样后面各处直接用 `!= null` 就能判断"有没有读到
+ * 有效数值"，不用到处再写一遍 isNaN / typeof 检查。安全联锁 / 联动 / 故障机原来各自
+ * 维护一份一模一样的实现，现统一在这里。 */
 async function toNumber(raw) {
   if (raw == null || raw === '') return null
   const n = Number(raw)
   return Number.isFinite(n) ? n : null
 }
 
+/** 读取指令中心某个阈值槽位（见 THRESHOLD_SLOTS）的当前值：先按 preffix 找到指令项
+ * config_id，再取该设备的值（getDirectValue 内部是"设备专属值优先、其次全局值"）。
+ * 指令项不存在或没有有效数值时返回 null——调用方据此跳过依赖这个阈值的判断，而不是
+ * 拿 NaN/undefined 去比较（那样比较结果永远 false，规则会"悄悄失效"）。 */
 async function getThresholdValue(slot, deviceNo) {
   const configId = await resolveThresholdConfigId(slot)
   if (configId == null) return null
   return toNumber(await getDirectValue({ config_id: configId, d_no: deviceNo }))
 }
 
+/** 从一条上报消息里按字段映射表解析出各传感器的物理数值，返回
+ * { temp1, temp2, flow, pressure, ... }（键由 SENSOR_FIELD_MAP 决定）。
+ * 安全联锁 / 联动 / 故障机三块都要读同一批传感器值，统一走这里。 */
 async function readSensors(info) {
   const out = {}
   // SENSOR_FIELD_MAP 来自配置中心，不能在模块顶层缓存（要求实时取值，热更新才能生效）。
@@ -111,7 +133,18 @@ async function readSensors(info) {
   return out
 }
 
-/** 读取设备当前水泵/加热开关线上状态（water_Y2/heat_Y1）。 */
+/**
+ * 读取设备当前上报的水泵/加热开关状态（行为数据 field1=水泵，field2=加热器），
+ * 返回 { pumpOn, heatOn }。安全联锁 / 联动 / 故障机三块共用这一份解析，避免各写一遍
+ * 时对 "on"/"off"/未知值的判定不一致。
+ *
+ * toOn 的取值语义（三块统一按这个来）：
+ *   - 字段缺失（消息里根本没带这个字段，比如纯传感器消息）-> null，表示"不知道"
+ *   - 能识别为开（on/open/1/true）-> true
+ *   - 其它任何值（包括明确的 off/0，以及无法识别的字符串）-> false
+ * 调用方判断"确认开着"要用 `=== true`，判断"确认没开"用 `=== false` 时要意识到：
+ * 未知值也会落进 false。故障机只用到 `=== true` 和 `!heatOn`，不受这个边界影响。
+ */
 async function readSwitchStates(info) {
   const pumpAliases = await resolveFieldAliases('t_behavior_data', 'field1')
   const heatAliases = await resolveFieldAliases('t_behavior_data', 'field2')
@@ -182,10 +215,15 @@ async function getTargetTemp(deviceNo, fallback) {
   return getNumberValue('target_temperature', deviceNo, fallback, 22)
 }
 
-/** 下发一次开关指令：找到对应指令项、拼协议报文、发布 MQTT、更新 t_direct、记操作历史。
- * source 由调用方传入（如 'linkage_rules'），日志和操作历史里都带着这个来源标签。
- * skipPersist=true 时只发布 MQTT 断电/通电，不改 t_direct 的开关显示值、不记操作历史——
- * 用于故障触发时"硬件断电但页面保持故障前开关状态"（faultStatus.js 用）。 */
+/** 下发一次开关指令：找到对应指令项 -> 拼协议报文 -> 发布 MQTT -> 更新 t_direct 显示值
+ * -> 记一条操作历史。找不到指令项时返回 false，其余情况返回 true。
+ * source 由调用方传入（'linkage_rules' / 'interlock' / 'fault_status' / 'fault_reset' 等），
+ * 日志和操作历史里都带着这个来源标签，方便事后区分"这次开关是谁下发的"。
+ *
+ * skipPersist=true 时只发布 MQTT（真正给硬件通/断电），**不**改 t_direct 的开关显示值、
+ * **不**记操作历史——专门给故障状态机用：故障触发时要"硬件立刻断电、但页面上的开关
+ * 仍显示故障前的状态（泵原来开着就还显示开）"，等用户复位时再按快照恢复。普通控制
+ * （联动 / 安全联锁 / PID 等）都用默认的 skipPersist=false，硬件和页面显示保持一致。 */
 async function setSwitch(prefix, name, value, deviceNo, source, skipPersist = false) {
   const conf = await findSwitchConfig(prefix)
   if (!conf) return false

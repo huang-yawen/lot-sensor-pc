@@ -126,6 +126,17 @@ function trackPumpOnDuration(deviceNo, pumpOn) {
  * 3. 告警入库
  * ============================================================ */
 
+// 说明：读传感器 / 读开关状态 / 按 preffix 查阈值 / 按 preffix 查开关配置 / 转数字 /
+// 解析设备号 / 下发开关（含 skipPersist=只断电不改显示值）这些底层动作，以前本文件
+// 各自维护了一份，现在统一在 service/controlShared/controlHelpers.js
+// （safetyInterlock.js / linkageRules.js 也共用同一份），见文件顶部 require。
+// 冷却计时用 controlShared/cooldown.js（createCooldown 各持一份独立状态，
+// clearForDevice 对应原来的 clearCooldownForDevice）；写 t_error_msg 用
+// controlShared/recordEvent.js。
+
+/** 把一次故障触发写进 t_error_msg（type='故障保护'）。message 里把这次故障保护做了
+ * 哪几件事都写明白，故障记录页直接能看懂。e_no 存故障 id（dry_burn 等），
+ * errorTypeNames.js 再据此显示中文名。 */
 async function recordAlarm(deviceNo, trigger) {
   await recordEvent({
     deviceNo,
@@ -243,8 +254,12 @@ async function detectFault(info, deviceNo, faultConfig) {
     })
   }
 
-  // ⑤ 水泵故障：水泵预热完成，进出水温差 > 阈值。温差计算走共用的 getTempDiff
-  //    （两读数任一缺失返回 null），阈值仍按本模块"指令中心优先、配置中心兜底"取。
+  // ⑤ 水泵故障：水泵预热完成后，进出水温差还是 > 阈值——水泵在转，但进出口温度拉不开
+  //    差、或差得离谱，多半是泵没真正打水。温差用共用的 getTempDiff 算（进水或出水读数
+  //    缺一个就返回 null，`diff != null` 一并挡掉，不拿 NaN 比阈值）。这里的 tempDiffThreshold
+  //    是**故障机自己的**那一个：指令中心配了 temp_diff 指令项就用它，没配才退回
+  //    FAULT_STATUS.tempDiffThreshold（见上方 tempDiffThreshold 的取法）。安全联锁的
+  //    "温差过大"、联动的"双温度融合"各有各的温差阈值，不是同一个。
   if (faultConfig.pumpFault !== false && pumpWarmedUp && tempDiffThreshold != null) {
     const diff = getTempDiff(sensors)
     if (diff != null && diff > tempDiffThreshold) {

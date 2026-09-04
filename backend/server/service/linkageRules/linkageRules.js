@@ -154,8 +154,9 @@ async function detectFaults(sensors, deviceNo, states) {
   return faults
 }
 
-// isFlowNormal（流量读数是否正常）已上移到 controlShared/controlHelpers，
-// safetyInterlock / linkageRules 共用同一份实现，见文件顶部 require。
+// isFlowNormal（流量读数是否正常：非 null、非 0、没顶到异常哨兵、落在上下限之间）
+// 原本定义在本文件，现已上移到 service/controlShared/controlHelpers.js，
+// safetyInterlock.js 也用同一份，见文件顶部 require。实现和判定完全没变，只是挪了位置。
 
 /**
  * 把好几条规则各自给出的候选结论（比如"泵到底该开还是该关"）合并成最终一个
@@ -317,8 +318,12 @@ function ruleTempSingle(sensors, targetTemp, tempLow, tempHigh, hysteresis) {
  * 温差变大通常说明水流动得不够快——加热器一直在加热，但水流速慢，还没被
  * 充分带走热量的那部分水温度就已经升得比较高，进出口温差就会被拉大；这时候
  * 开泵、加快水流，能更快把热量带走，帮温差缩小回正常范围。
- * 这条规则只在乎"温差是不是太大"，不关心到底是进水更高还是出水更高，所以
- * 用绝对值（getTempDiff）比较。
+ * 这条规则只在乎"温差是不是太大"，不关心到底是进水更高还是出水更高，所以用绝对值
+ * （getTempDiff）比较；进水或出水读数缺一个，getTempDiff 返回 null，本条直接不表态。
+ * threshold 是 LINKAGE_RULES.dualTempDiffThreshold（现场可在指令中心 dual_temp_diff 调），
+ * 跟安全联锁"温差过大"、故障机"水泵故障"的温差阈值各自独立——建议把这个设得比
+ * SAFETY_INTERLOCK.tempDiffThreshold 小，否则温差一大是安全联锁先触发（整套强制关闭），
+ * 轮不到这条开泵。
  * @returns {{pump: 'on'|null, heater: null}} 只会给"开泵"或者不表态，从不主动关泵
  */
 function ruleDualTemp(sensors, threshold) {

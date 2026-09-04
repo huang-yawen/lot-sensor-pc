@@ -1,27 +1,31 @@
 /**
  * 【文件职责】安全联锁（安全锁联）服务。
  *
- * 触发任一启用条件时，自动关闭水泵和加热，并把告警写入 t_error_msg。
- * 条件均可通过配置中心 SAFETY_INTERLOCK 独立开关：
- *   1. 流量低于下限阈值或流量为 0
- *   2. 压力高于上限阈值或压力为 0
- *   3. 任一温度高于上限阈值
- *   4. 温差过大（> tempDiffThreshold）
- *   5. 进入手动模式（自动 -> 手动切换时安全关闭一次）
- *   6. 任一传感器数值掉线（长期无数据上报 / 长期为 0 / 异常最大值）
- *   7. 没打开水泵却打开了加热（水泵、加热开关状态均明确上报时才判断，避免消息里
- *      缺行为字段时误触发）
+ * 触发任一启用条件时，强制关闭水泵和加热，并把一条记录写进 t_error_msg
+ * （type='安全联锁'）。所有条件都能通过配置中心 SAFETY_INTERLOCK 逐条布尔开关。
  *
- * 阈值不是写死的，而是从指令中心 t_direct 实时读取（按 preffix 或名称匹配
- * t_direct_config），用户在页面上改阈值后立即生效。
+ * 条件清单（括号里是评估它的函数）：
+ *   - 流量异常：流量为 0 / 顶到异常哨兵 / 低于流量下限        （evaluateValueConditions）
+ *   - 压力异常：压力为 0 / 顶到异常哨兵 / 高于压力上限        （evaluateValueConditions）
+ *   - 温度超上限：进水或出水温度顶到异常哨兵 / 高于温度上限   （evaluateValueConditions）
+ *   - 温差过大：|进水-出水| > SAFETY_INTERLOCK.tempDiffThreshold（evaluateValueConditions）
+ *   - 流量剧烈波动：最近 N 个读数的极差 > flowVolatilityThreshold（疑似水锤/湍流，evaluateValueConditions）
+ *   - 未开水泵却开加热：加热确认开、水泵确认关（两个开关状态都明确上报时才判，evaluateValueConditions）
+ *   - 进入手动模式：控制模式从 auto 切到 manual 的那一刻，安全关闭一次（evaluateSafety）
+ *   - 传感器掉线：设备心跳超时、完全没有消息进来（靠独立定时器 monitorOffline 主动查）
  *
- * 模式语义：安全联锁在自动和手动模式下全程生效——触发任一启用条件都会强制关闭
- * 水泵和加热，并写入告警。区别在于：
- *   - 自动模式：自动控制（正常状况联动）按目标温度启停水泵/加热，安全联锁全程保护。
- *   - 手动模式：人工下发指令单独开关水泵/加热，但安全联锁不失效（如手动强制开加热、
- *     检测到无水流时仍会强制关闭加热），仅“进入手动模式”这一刻会额外安全关闭一次。
+ * 阈值分两类来源：温度/流量/压力上下限从**指令中心** t_direct 按 preffix 实时读
+ * （getThresholdValue，用户在页面改完立即生效）；温差阈值、流量波动阈值、冷却时长、
+ * 异常哨兵值、掉线检测周期从**配置中心** SAFETY_INTERLOCK 读。
  *
- * 【配置中心关联】SAFETY_INTERLOCK 每次评估动态读取，保存配置后立即生效。
+ * 模式语义：安全联锁在自动和手动模式下**全程生效**——触发任一启用条件都会强制关闭
+ * 水泵和加热。区别只在于：
+ *   - 自动模式：正常状况联动（linkageRules.js）按目标温度启停水泵/加热，安全联锁在其上层保护。
+ *   - 手动模式：人工下发指令单独开关，但安全联锁不因手动强制开启而失效（如手动开加热
+ *     但检测到无水流，仍会强制关加热）；额外地，"进入手动模式"这一刻会安全关闭一次。
+ *
+ * 【配置中心关联】SAFETY_INTERLOCK 每次评估动态读取，保存配置后立即生效
+ * （monitorIntervalMs 除外——它在启动时读一次，改后需重启后端）。
  */
 const systemConfig = require('../../config/systemConfig')
 const { getCurrentMode } = require('../directData/getControlMode')
@@ -76,8 +80,15 @@ function trackFlowVolatility(deviceNo, flow) {
   return Math.max(...window) - Math.min(...window)
 }
 
-/** 掉线监测定时器（条件 6）。 */
+/** 掉线监测定时器。 */
 let monitorTimer = null
+
+// 说明：读传感器（readSensors）、读开关状态（readSwitchStates）、按 preffix 查阈值
+// （getThresholdValue）、按 preffix 查开关配置、把原始值转数字（toNumber）、解析设备号
+// （resolveDeviceNoStr）这些底层动作，以前本文件各自维护了一份，现在统一在
+// service/controlShared/controlHelpers.js（linkageRules.js / faultStatus.js 也共用同一份），
+// 见文件顶部 require。冷却计时用 controlShared/cooldown.js，写 t_error_msg 用
+// controlShared/recordEvent.js。
 
 /* ============================ 告警与联锁 ============================ */
 
@@ -101,7 +112,10 @@ async function recordAlarm(deviceNo, trigger, interlocked) {
   })
 }
 
-/** 关闭水泵和加热：逐个走 controlShared 的 setSwitch（发布 MQTT + 更新 t_direct + 记操作历史，source=interlock）。 */
+/** 强制关闭水泵和加热（安全联锁的"动作"部分）。逐个调 controlShared 的 setSwitch，
+ * 它内部会：发布 MQTT 断电报文 -> 把 t_direct 里的开关显示值改成 off -> 记一条
+ * source='interlock' 的操作历史。两个执行器分别 try/catch，其中一个下发失败不影响
+ * 另一个。只要有一个成功关掉就返回 true（供上层标记 interlocked=true）。 */
 async function closePumpHeater(deviceNo, triggerId) {
   let closed = 0
   for (const [prefix, name] of [['pump', '水泵'], ['heater', '加热']]) {
@@ -194,8 +208,10 @@ async function evaluateValueConditions(info, deviceNo, safetyConfig) {
     }
   }
 
-  // 4. 温差过大。温差计算走共用的 getTempDiff（两读数任一缺失返回 null），
-  //    阈值仍用本模块自己的 SAFETY_INTERLOCK.tempDiffThreshold。
+  // 4. 温差过大。温差本身用共用的 getTempDiff 算（进水或出水读数缺一个就返回 null，
+  //    这里 `diff != null` 一并挡掉，不会拿 NaN 去比阈值）；阈值用的是**本模块自己的**
+  //    配置中心值 SAFETY_INTERLOCK.tempDiffThreshold——故障机的"水泵故障"和联动的
+  //    "双温度融合 / 滞回带"也各有一个温差阈值，互相独立，现场调参时注意它们不是同一个。
   if (safetyConfig.tempDiff) {
     const diff = getTempDiff(sensors)
     if (diff != null && diff > Number(safetyConfig.tempDiffThreshold)) {
