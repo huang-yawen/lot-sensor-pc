@@ -6,7 +6,7 @@
 const promisePool = require('../../config/dbPool')
 const systemConfig = require('../../config/systemConfig')
 const { firstValue, getTopic, buildSwitchPayload } = require('../../utils/protocol')
-const { resolveFieldAliases } = require('../../utils/mappedData')
+const { resolveFieldAliases, resolveDeviceNo } = require('../../utils/mappedData')
 const { getDirectValue, saveDirectData } = require('../directData/saveDirectConfig')
 const { saveOperationHistory } = require('../operationHistory/saveOperationHistory')
 
@@ -21,7 +21,45 @@ function getAbnormalMax() {
   return Number.isFinite(v) && v > 0 ? v : 9999
 }
 
-/** 阈值槽位（优先 preffix，其次中文名）。 */
+/**
+ * 从上报数据里解析设备号并标准化成 `字符串 | null`。
+ * safetyInterlock.js / linkageRules.js / faultStatus.js 里原本各写一遍
+ * `String((await resolveDeviceNo(info)) || '').trim() || null`，统一到这里。
+ * @returns {Promise<string|null>}
+ */
+async function resolveDeviceNoStr(info) {
+  return String((await resolveDeviceNo(info)) || '').trim() || null
+}
+
+/**
+ * 判断流量读数是不是"正常"（linkageRules.js 原来的 isFlowNormal，上移到共用层）。
+ * 要同时满足：非 null、非 0、没顶到异常最大值哨兵、落在配置的上下限之间
+ * （没配对应阈值就跳过那一条检查）。
+ * @param {number|null} flow
+ * @param {number|null} flowLow  - null 表示没配置，不检查这条
+ * @param {number|null} flowHigh - null 表示没配置，不检查这条
+ * @returns {boolean}
+ */
+function isFlowNormal(flow, flowLow, flowHigh) {
+  if (flow == null || flow === 0 || flow >= getAbnormalMax()) return false
+  if (flowLow != null && flow < flowLow) return false
+  if (flowHigh != null && flow > flowHigh) return false
+  return true
+}
+
+/**
+ * 进出水温差绝对值；两个读数任一缺失时返回 null（不能拿 NaN 去跟阈值比较，
+ * 那样比较结果永远是 false，会悄悄绕过依赖温差的判断）。
+ * @param {{temp1: number|null, temp2: number|null}} sensors
+ * @returns {number|null}
+ */
+function getTempDiff(sensors) {
+  if (sensors.temp1 == null || sensors.temp2 == null) return null
+  return Math.abs(sensors.temp1 - sensors.temp2)
+}
+
+/** 阈值槽位（优先 preffix，其次中文名）。safetyInterlock.js / faultStatus.js /
+ * linkageRules.js 共用这一份，不再各自维护。tempDiff 供故障状态机的"水泵故障"判据用。 */
 const THRESHOLD_SLOTS = {
   tempHigh: { prefix: 'temp_high', name: '温度上限阈值' },
   tempLow: { prefix: 'temp_low', name: '温度下限阈值' },
@@ -29,6 +67,7 @@ const THRESHOLD_SLOTS = {
   flowHigh: { prefix: 'flow_high', name: '流量上限阈值' },
   pressureLow: { prefix: 'pressure_low', name: '压力下限阈值' },
   pressureHigh: { prefix: 'pressure_high', name: '压力上限阈值' },
+  tempDiff: { prefix: 'temp_diff', name: '温差阈值' },
 }
 
 /** 防抖：同一设备同一开关切换至少间隔 minIntervalMs；所有规则共用同一份计时状态。 */
@@ -144,18 +183,22 @@ async function getTargetTemp(deviceNo, fallback) {
 }
 
 /** 下发一次开关指令：找到对应指令项、拼协议报文、发布 MQTT、更新 t_direct、记操作历史。
- * source 由调用方传入（如 'linkage_rules'），日志和操作历史里都带着这个来源标签。 */
-async function setSwitch(prefix, name, value, deviceNo, source) {
+ * source 由调用方传入（如 'linkage_rules'），日志和操作历史里都带着这个来源标签。
+ * skipPersist=true 时只发布 MQTT 断电/通电，不改 t_direct 的开关显示值、不记操作历史——
+ * 用于故障触发时"硬件断电但页面保持故障前开关状态"（faultStatus.js 用）。 */
+async function setSwitch(prefix, name, value, deviceNo, source, skipPersist = false) {
   const conf = await findSwitchConfig(prefix)
   if (!conf) return false
   const mqttClient = require('../../mqtt')
   const payload = buildSwitchPayload(conf, value)
   if (!systemConfig.getConfig().SINGLE_DEVICE_MODE && deviceNo) payload.d_no = deviceNo
   await mqttClient.publish(getTopic('control'), payload, { qos: systemConfig.getConfig().MQTT_QOS })
-  const oldValue = await getDirectValue({ config_id: conf.id, d_no: deviceNo })
-  await saveDirectData({ config_id: conf.id, value, d_no: deviceNo })
-  await saveOperationHistory({ d_no: deviceNo, config_id: conf.id, old_value: oldValue, new_value: value, source })
-  console.log(`[ControlShared] ${name} -> ${value}（${source}），设备 ${deviceNo || '全局'}`)
+  if (!skipPersist) {
+    const oldValue = await getDirectValue({ config_id: conf.id, d_no: deviceNo })
+    await saveDirectData({ config_id: conf.id, value, d_no: deviceNo })
+    await saveOperationHistory({ d_no: deviceNo, config_id: conf.id, old_value: oldValue, new_value: value, source })
+  }
+  console.log(`[ControlShared] ${name} -> ${value}（${source}${skipPersist ? '，仅硬件' : ''}），设备 ${deviceNo || '全局'}`)
   return true
 }
 
@@ -184,4 +227,7 @@ module.exports = {
   toVelocity,
   setSwitch,
   canAct,
+  resolveDeviceNoStr,
+  isFlowNormal,
+  getTempDiff,
 }

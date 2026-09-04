@@ -30,11 +30,9 @@
  * 阈值、目标温度实时读取指令中心 t_direct，页面修改即时生效。
  * 【配置中心关联】LINKAGE_RULES 每次评估动态读取。
  */
-const promisePool = require('../../config/dbPool')
 const systemConfig = require('../../config/systemConfig')
-const { nowLocalDateTime } = require('../../utils/helper')
-const { resolveDeviceNo } = require('../../utils/mappedData')
 const { getCurrentMode } = require('../directData/getControlMode')
+const { recordEvent } = require('../controlShared/recordEvent')
 const { isPidEnabled, readSwitchOn } = require('../pidHeating/pidHeating')
 const { isPumpVelocityControlEnabled } = require('../pumpVelocityControl/pumpVelocityControl')
 const { isLockedByFault, isAnyLocked } = require('../faultStatus/faultStatus')
@@ -47,6 +45,9 @@ const {
   getTargetTemp,
   setSwitch,
   canAct,
+  isFlowNormal,
+  getTempDiff,
+  resolveDeviceNoStr,
 } = require('../controlShared/controlHelpers')
 
 /** 上次该条件动作，用于日志与最小化重复下发。 */
@@ -100,15 +101,15 @@ const LINKAGE_RULE_NAMES = {
  * @param {Object} sensors - 当前传感器读数，写进 detail 方便排查
  */
 async function recordLinkageAlarm(deviceNo, ruleKey, deviceLabel, action, sensors) {
-  const time = nowLocalDateTime()
   const actionLabel = action === 'on' ? '开' : '关'
   const ruleLabel = LINKAGE_RULE_NAMES[ruleKey] || ruleKey
   const detail = `温度1=${sensors.temp1 ?? '-'}，温度2=${sensors.temp2 ?? '-'}，流量=${sensors.flow ?? '-'}，压力=${sensors.pressure ?? '-'}`
-  const message = `命中规则"${ruleLabel}"，${deviceLabel}->${actionLabel}，${detail}`
-  await promisePool.execute(
-    'INSERT INTO t_error_msg (d_no, c_time, e_msg, e_no, type) VALUES (?, ?, ?, ?, ?)',
-    [deviceNo || null, time, message, ruleKey, '联动控制']
-  )
+  await recordEvent({
+    deviceNo,
+    message: `命中规则"${ruleLabel}"，${deviceLabel}->${actionLabel}，${detail}`,
+    code: ruleKey,
+    type: '联动控制',
+  })
 }
 
 /* ============================ 故障检测（所有规则共用的前置条件） ============================ */
@@ -153,25 +154,8 @@ async function detectFaults(sensors, deviceNo, states) {
   return faults
 }
 
-/**
- * 判断流量读数是不是"正常"，好几条规则会共用这个小工具函数。
- * 要同时满足四个条件才算正常：
- *   1. 读数不是 null（传感器确实有上报数据）
- *   2. 读数不是 0（真的在流动，不是完全没流量）
- *   3. 读数没有顶到异常最大值哨兵（顶到哨兵值通常代表传感器掉线/短路，
- *      读数被硬件卡死在满量程，不是真实流量）
- *   4. 读数落在配置的下限和上限之间（没配置对应阈值就跳过那一条检查）
- * @param {number|null} flow - 流量读数
- * @param {number|null} flowLow - 流量下限阈值，null 表示没配置，不检查这条
- * @param {number|null} flowHigh - 流量上限阈值，null 表示没配置，不检查这条
- * @returns {boolean}
- */
-function isFlowNormal(flow, flowLow, flowHigh) {
-  if (flow == null || flow === 0 || flow >= getAbnormalMax()) return false
-  if (flowLow != null && flow < flowLow) return false
-  if (flowHigh != null && flow > flowHigh) return false
-  return true
-}
+// isFlowNormal（流量读数是否正常）已上移到 controlShared/controlHelpers，
+// safetyInterlock / linkageRules 共用同一份实现，见文件顶部 require。
 
 /**
  * 把好几条规则各自给出的候选结论（比如"泵到底该开还是该关"）合并成最终一个
@@ -242,10 +226,10 @@ function rulePumpAlwaysOn(sensors, faults) {
  */
 function ruleHeaterHysteresis(sensors, states, faults, targetTemp, diffOpenThreshold, hysteresis) {
   const temp2 = sensors.temp2
-  // 进出水温差：两个读数只要有一个缺失就算不出来。diff 为 null 时③不触发——
-  // 宁可不触发这层保护，也不能拿 NaN 去跟阈值比较（那样的比较结果永远是
-  // false，会悄悄绕过保护，看起来规则在生效实际上完全没生效）。
-  const diff = (sensors.temp1 != null && sensors.temp2 != null) ? Math.abs(sensors.temp1 - sensors.temp2) : null
+  // 进出水温差：两个读数只要有一个缺失就算不出来（getTempDiff 返回 null）。diff 为
+  // null 时③不触发——宁可不触发这层保护，也不能拿 NaN 去跟阈值比较（那样的比较结果
+  // 永远是 false，会悄悄绕过保护，看起来规则在生效实际上完全没生效）。
+  const diff = getTempDiff(sensors)
 
   // ① 故障态短路：命中任意一种硬故障，直接强制关闭加热，不再往下判断温度。
   if (faults.length > 0) return { pump: null, heater: 'off' }
@@ -334,12 +318,13 @@ function ruleTempSingle(sensors, targetTemp, tempLow, tempHigh, hysteresis) {
  * 充分带走热量的那部分水温度就已经升得比较高，进出口温差就会被拉大；这时候
  * 开泵、加快水流，能更快把热量带走，帮温差缩小回正常范围。
  * 这条规则只在乎"温差是不是太大"，不关心到底是进水更高还是出水更高，所以
- * 用 Math.abs 取绝对值比较。
+ * 用绝对值（getTempDiff）比较。
  * @returns {{pump: 'on'|null, heater: null}} 只会给"开泵"或者不表态，从不主动关泵
  */
 function ruleDualTemp(sensors, threshold) {
-  if (sensors.temp1 == null || sensors.temp2 == null) return { pump: null, heater: null }
-  return { pump: Math.abs(sensors.temp1 - sensors.temp2) > threshold ? 'on' : null, heater: null }
+  const diff = getTempDiff(sensors)
+  if (diff == null) return { pump: null, heater: null }
+  return { pump: diff > threshold ? 'on' : null, heater: null }
 }
 
 /**
@@ -473,15 +458,14 @@ async function evaluateLinkageRules(info) {
   const config = rootConfig.LINKAGE_RULES || {}
   if (config.enabled !== true) return []
 
+  const deviceNo = await resolveDeviceNoStr(info)
+
   // ====== 故障锁短路 ======
   if (rootConfig.SINGLE_DEVICE_MODE === true) {
     if (isAnyLocked()) return []
-  } else {
-    const preDeviceNo = String((await resolveDeviceNo(info)) || '').trim() || null
-    if (isLockedByFault(preDeviceNo)) return []
+  } else if (isLockedByFault(deviceNo)) {
+    return []
   }
-
-  const deviceNo = String((await resolveDeviceNo(info)) || '').trim() || null
 
   // ====== 手动模式短路 ======
   if ((await getCurrentMode(deviceNo)) === 'manual') return []

@@ -35,15 +35,24 @@
  *   退回 FAULT_STATUS.tempDiffThreshold 兜底（跟 PID 的 Kp/Ki/Kd 同一套"指令中心优先、
  *   配置中心兜底"模式）。
  */
-const promisePool = require('../../config/dbPool')
 const systemConfig = require('../../config/systemConfig')
-const { firstValue, getTopic, buildSwitchPayload } = require('../../utils/protocol')
-const { resolveDeviceNo, resolveFieldAliases, getDefaultDeviceId, getAllDeviceIds } = require('../../utils/mappedData')
+const { getDefaultDeviceId, getAllDeviceIds } = require('../../utils/mappedData')
+// 读传感器/开关、查阈值、下发开关（skipPersist=只断电不改显示值）、算温差、解析设备号
+// ——统一走 controlShared，不再本地重抄一份。
 // 干烧判定时长/最小升温、水泵预热宽限期支持现场在指令中心调，删掉指令项就退回配置中心。
-const { getNumberValue } = require('../controlShared/controlHelpers')
+const {
+  getNumberValue,
+  getThresholdValue,
+  getTempDiff,
+  readSensors,
+  readSwitchStates,
+  setSwitch,
+  resolveConfigIdByPrefix,
+  resolveDeviceNoStr,
+} = require('../controlShared/controlHelpers')
+const { createCooldown } = require('../controlShared/cooldown')
+const { recordEvent } = require('../controlShared/recordEvent')
 const { saveDirectData, getDirectValue } = require('../directData/saveDirectConfig')
-const { saveOperationHistory } = require('../operationHistory/saveOperationHistory')
-const { nowLocalDateTime } = require('../../utils/helper')
 const EventEmitter = require('events')
 
 // 新故障触发时对外广播（app.js 监听后通过 WebSocket 推给前端弹窗提示），
@@ -65,14 +74,6 @@ const FAULT_TYPES = [
   { id: 'pump_idle',       code: '④', priority: 4, name: '水泵空转',      detail: '水泵开启但流量为 0' },
   { id: 'outlet_blockage', code: '②', priority: 5, name: '出水口堵塞',    detail: '流量低于下限阈值' },
 ]
-
-/** 阈值槽位（优先 preffix，其次中文名）。 */
-const THRESHOLD_SLOTS = {
-  flowLow:       { prefix: 'flow_low',       name: '流量下限阈值' },
-  pressureHigh:  { prefix: 'pressure_high',  name: '压力上限阈值' },
-  pressureLow:   { prefix: 'pressure_low',   name: '压力下限阈值' },
-  tempDiff:      { prefix: 'temp_diff',      name: '温差阈值' },
-}
 
 /* ============================================================
  * 2. 全局状态：每个设备的故障态 + 复位按钮状态
@@ -96,8 +97,9 @@ function getDeviceState(deviceNo) {
 const dryBurnStateMap = new Map()
 /** 水泵启动预热计时：记录水泵"从关到开"的起始时间，水泵关闭则清空。 */
 const pumpStartStateMap = new Map()
-/** 故障告警冷却时间戳，避免同一故障高频重复入库（30s）。 */
-const lastFired = new Map()
+/** 故障告警冷却：与安全联锁同一份实现（controlShared/cooldown），各自持有独立计时状态，
+ * 避免同一故障高频重复入库（默认 30s）。 */
+const cooldown = createCooldown()
 
 /**
  * 返回水泵已连续开启的时长（毫秒）；水泵未开启时返回 null。
@@ -121,126 +123,16 @@ function trackPumpOnDuration(deviceNo, pumpOn) {
 }
 
 /* ============================================================
- * 3. 工具函数
+ * 3. 告警入库
  * ============================================================ */
 
-async function resolveConfigIdByPrefix(prefix) {
-  if (!prefix) return null
-  const [rows] = await promisePool.query(
-    "SELECT id FROM t_direct_config WHERE preffix IS NOT NULL AND preffix != '' AND LOWER(preffix) = LOWER(?) ORDER BY id ASC LIMIT 1",
-    [prefix]
-  )
-  return rows[0]?.id ?? null
-}
-
-/** 按 preffix 查阈值指令项的 config_id。所有指令项都有 preffix，不再需要 t_name 兜底。 */
-async function resolveThresholdConfigId(slot) {
-  const def = THRESHOLD_SLOTS[slot]
-  if (!def) return null
-  return resolveConfigIdByPrefix(def.prefix)
-}
-
-function toNumber(raw) {
-  if (raw == null || raw === '') return null
-  const num = Number(raw)
-  return Number.isFinite(num) ? num : null
-}
-
-async function getThresholdValue(slot, deviceNo) {
-  const configId = await resolveThresholdConfigId(slot)
-  if (configId == null) return null
-  return toNumber(await getDirectValue({ config_id: configId, d_no: deviceNo }))
-}
-
-async function readSensors(info) {
-  const result = {}
-  // SENSOR_FIELD_MAP 来自配置中心，不能在模块顶层缓存（要求实时取值，热更新才能生效）。
-  for (const [key, field] of Object.entries(systemConfig.getConfig().SENSOR_FIELD_MAP)) {
-    const aliases = await resolveFieldAliases('t_sensor_data', field)
-    result[key] = toNumber(firstValue(info, aliases))
-  }
-  return result
-}
-
-async function readSwitchStates(info) {
-  // 行为数据：field1=水泵，field2=加热器（与 safetyInterlock / linkageRules 保持一致）
-  const pumpAliases = await resolveFieldAliases('t_behavior_data', 'field1')
-  const heatAliases = await resolveFieldAliases('t_behavior_data', 'field2')
-  const toOn = v => {
-    if (v == null) return null
-    const s = String(v).trim().toLowerCase()
-    if (['on', 'open', '1', 'true'].includes(s)) return true
-    if (['off', 'close', 'closed', '0', 'false'].includes(s)) return false
-    return null
-  }
-  return {
-    pumpOn: toOn(firstValue(info, pumpAliases)),
-    heatOn: toOn(firstValue(info, heatAliases)),
-  }
-}
-
-/** 按 preffix 找开关类（f_type=1）配置。所有开关都有 preffix，不再需要 t_name LIKE 兜底。 */
-async function findSwitchConfig(prefix) {
-  const configId = await resolveConfigIdByPrefix(prefix)
-  if (configId == null) return null
-  const [rows] = await promisePool.query(
-    `SELECT id, t_name, preffix, wire_template, wire_on_payload, wire_off_payload, f_type FROM t_direct_config
-     WHERE id = ? AND f_type = '1' LIMIT 1`,
-    [configId]
-  )
-  return rows[0] || null
-}
-
-/**
- * 下发开关指令：发布 MQTT + 写 t_direct + 写操作历史。
- * skipPersist=true 时只发布 MQTT 断电/通电，不改 t_direct 中的开关显示值，
- * 用于故障触发时"硬件断电但页面保持故障前开关状态"。
- */
-async function setSwitch(prefix, name, value, deviceNo, source, skipPersist = false) {
-  const conf = await findSwitchConfig(prefix)
-  if (!conf) return false
-  const mqttClient = require('../../mqtt')
-  const payload = buildSwitchPayload(conf, value)
-  if (!systemConfig.getConfig().SINGLE_DEVICE_MODE && deviceNo) payload.d_no = deviceNo
-  await mqttClient.publish(getTopic('control'), payload, { qos: systemConfig.getConfig().MQTT_QOS })
-  if (!skipPersist) {
-    const oldValue = await getDirectValue({ config_id: conf.id, d_no: deviceNo })
-    await saveDirectData({ config_id: conf.id, value, d_no: deviceNo })
-    await saveOperationHistory({ d_no: deviceNo, config_id: conf.id, old_value: oldValue, new_value: value, source })
-  }
-  return true
-}
-
 async function recordAlarm(deviceNo, trigger) {
-  const time = nowLocalDateTime()
-  const message = `${trigger.name}（${trigger.code}），已执行故障保护（保存快照、强制关闭水泵和加热、系统进入 FAULT、复位按钮自动置 ON、指令页面锁定），${trigger.detail || ''}`
-  await promisePool.execute(
-    'INSERT INTO t_error_msg (d_no, c_time, e_msg, e_no, type) VALUES (?, ?, ?, ?, ?)',
-    [deviceNo || null, time, message, trigger.id, '故障保护']
-  )
-}
-
-function withinCooldown(key, cooldownMs) {
-  const last = lastFired.get(key) || 0
-  return Date.now() - last < cooldownMs
-}
-
-function markFired(key) {
-  lastFired.set(key, Date.now())
-}
-
-/**
- * 清除某设备的所有故障 cooldown 记录。
- * 用于用户手动复位时：用户拨回 OFF 后，若故障条件仍存在，下一轮 evaluateFaultStatus
- * 检测到故障需要能立即重新触发（不能被冷却期拦住）。
- *
- * lastFired 的 key 形如 `${deviceNo || 'global'}:${trigger.id}`，按设备前缀清理。
- */
-function clearCooldownForDevice(deviceNo) {
-  const prefix = `${deviceNo || 'global'}:`
-  for (const key of lastFired.keys()) {
-    if (key.startsWith(prefix)) lastFired.delete(key)
-  }
+  await recordEvent({
+    deviceNo,
+    message: `${trigger.name}（${trigger.code}），已执行故障保护（保存快照、强制关闭水泵和加热、系统进入 FAULT、复位按钮自动置 ON、指令页面锁定），${trigger.detail || ''}`,
+    code: trigger.id,
+    type: '故障保护',
+  })
 }
 
 /* ============================================================
@@ -351,13 +243,11 @@ async function detectFault(info, deviceNo, faultConfig) {
     })
   }
 
-  // ⑤ 水泵故障：水泵预热完成，进出水温差 > 阈值
-  if (faultConfig.pumpFault !== false
-    && pumpWarmedUp
-    && sensors.temp1 != null && sensors.temp2 != null
-    && tempDiffThreshold != null) {
-    const diff = Math.abs(sensors.temp1 - sensors.temp2)
-    if (diff > tempDiffThreshold) {
+  // ⑤ 水泵故障：水泵预热完成，进出水温差 > 阈值。温差计算走共用的 getTempDiff
+  //    （两读数任一缺失返回 null），阈值仍按本模块"指令中心优先、配置中心兜底"取。
+  if (faultConfig.pumpFault !== false && pumpWarmedUp && tempDiffThreshold != null) {
+    const diff = getTempDiff(sensors)
+    if (diff != null && diff > tempDiffThreshold) {
       triggers.push({
         id: 'pump_fault', code: '⑤', priority: 3,
         name: '水泵故障',
@@ -402,8 +292,8 @@ async function triggerFault(deviceNo, trigger, faultConfig) {
   if (state.systemState === 'FAULT' && state.activeFaultId === trigger.id) {
     return null
   }
-  if (withinCooldown(cooldownKey, cooldownMs)) return null
-  markFired(cooldownKey)
+  if (cooldown.withinCooldown(cooldownKey, cooldownMs)) return null
+  cooldown.markFired(cooldownKey)
 
   console.log(`[FaultStatus] 触发故障 ${trigger.code} ${trigger.name} | 设备=${deviceNo || '全局'} | ${trigger.detail}`)
 
@@ -466,7 +356,7 @@ async function handleResetButtonOff(deviceNo) {
   // 'global' 只是 deviceStateMap/snapshotMap 内部用来代表"d_no 为空"的 key 名，
   // 不是真实设备号，这里把它转成 null，后面统一传 null 给 setSwitch / saveDirectData
   // 等函数。getDeviceState / restoreFromSnapshot / getSwitchValueByPrefix /
-  // clearCooldownForDevice 内部都会把传入的 null 再转成 `deviceNo || 'global'` 去
+  // cooldown.clearForDevice 内部都会把传入的 null 再转成 `deviceNo || 'global'` 去
   // 查同一个 key，所以传 null 依然能命中正确的状态。
   if (deviceNo === 'global') deviceNo = null
 
@@ -520,7 +410,7 @@ async function handleResetButtonOff(deviceNo) {
   // 5) 清除该设备的所有 cooldown 记录，确保下次同种故障复发时能立即重新触发
   //    （需求："故障未修复时，即使用户把复位拨回'关'，如果故障条件仍然存在，
   //      系统应立即重新触发故障"）
-  clearCooldownForDevice(deviceNo)
+  cooldown.clearForDevice(deviceNo)
   // 同时清空干烧检测状态，避免基线温度被沿用导致误判
   dryBurnStateMap.delete(deviceNo || 'global')
   // 水泵按快照重启是一次新的开启，预热计时也要重新开始，避免沿用故障前的累计时长
@@ -562,7 +452,7 @@ async function evaluateFaultStatus(info) {
   const faultConfig = systemConfig.getConfig().FAULT_STATUS || {}
   if (faultConfig.enabled !== true) return []
 
-  const deviceNo = String((await resolveDeviceNo(info)) || '').trim() || null
+  const deviceNo = await resolveDeviceNoStr(info)
   const state = getDeviceState(deviceNo)
 
   // 检测当前是否存在故障
