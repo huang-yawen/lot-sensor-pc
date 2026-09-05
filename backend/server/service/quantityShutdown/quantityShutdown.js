@@ -18,6 +18,11 @@ const { getDirectValue, saveDirectData } = require('../directData/saveDirectConf
 const { saveOperationHistory } = require('../operationHistory/saveOperationHistory')
 // 定量值支持现场在指令中心调（preffix=total_flow_target），指令项删掉就退回配置中心。
 const { getNumberValue } = require('../controlShared/controlHelpers')
+// 总开关同样支持现场在指令中心调（preffix=quantity_shutdown_enabled），指令项删掉
+// 就退回配置中心 QUANTITY_SHUTDOWN.enabled——跟 pidHeating.js 的 isPidEnabled 判断
+// pid_enabled 是同一套"指令中心优先、配置中心兜底"的约定，直接复用它导出的
+// readSwitchOn，不再自己重写一遍指令中心查值逻辑。
+const { readSwitchOn } = require('../pidHeating/pidHeating')
 
 /** 流量字段槽位（与字段映射表 field3 对齐）。 */
 const FLOW_FIELD = 'field3'
@@ -28,6 +33,11 @@ const flowAccumulator = new Map()
 const shutdownDone = new Map()
 /** 每个设备上一次评估时“定量停机”开关是否启用（用于识别开关切换，重置计量周期）。 */
 const lastEnabled = new Map()
+/** 每个设备上一条参与累加的消息的时间戳（毫秒），配合 timestampMs 算真实 Δt。 */
+const lastTimestamp = new Map()
+/** 相邻两条消息的秒差上限：超过视为设备离线间隙，积分时只按上限计，避免离线期间
+ * 被当成一直在流。跟 computedMetrics.js / cumulativeService.js 的 clamp 保持一致。 */
+const MAX_GAP_SEC = 10
 
 /** 按 preffix 精确查 t_direct_config 的 id，查不到返回 null。 */
 async function resolveConfigIdByPrefix(prefix) {
@@ -104,21 +114,29 @@ async function shutDown(deviceNo) {
  *      流量归零又重新开始计量，也不会来一条消息就重复下发一次关闭指令，
  *      直到用户把开关关掉再打开，才会回到②重新开始一轮。
  * @param {Object} info - 已解析的设备上报数据
+ * @param {number} [timestampMs] - 这条消息的时间戳（毫秒），用于按真实时间差积分流量；
+ *   不传时退回 Date.now()，跟 computedMetrics.compute() 的用法一致
  * @returns {Object|null} 本次评估结果（{deviceNo, accumulated, target, reached,
- *   shutdown?}），开关关闭、目标值无效时返回 null（代表这次不参与判断）
+ *   shutdown}），开关关闭、目标值无效时返回 null（代表这次不参与判断）
  */
-async function evaluateQuantityShutdown(info) {
+async function evaluateQuantityShutdown(info, timestampMs = Date.now()) {
   const config = systemConfig.getConfig().QUANTITY_SHUTDOWN || {}
   const deviceNo = String((await resolveDeviceNo(info)) || '').trim() || null
 
+  // 总开关：指令中心 quantity_shutdown_enabled 优先，指令项被删/没配过（返回 null）
+  // 才退回配置中心 QUANTITY_SHUTDOWN.enabled。
+  const switchOn = await readSwitchOn('quantity_shutdown_enabled', deviceNo)
+  const enabled = switchOn != null ? switchOn : config.enabled === true
+
   const wasEnabled = lastEnabled.get(deviceNo)
-  lastEnabled.set(deviceNo, config.enabled === true)
+  lastEnabled.set(deviceNo, enabled)
 
   // 关闭定量停机：重置计量周期。
-  if (config.enabled !== true) {
+  if (enabled !== true) {
     if (wasEnabled === true) {
       flowAccumulator.set(deviceNo, 0)
       shutdownDone.set(deviceNo, false)
+      lastTimestamp.delete(deviceNo)
       console.log(`[QuantityShutdown] 设备 ${deviceNo || '全局'} 定量停机已关闭，计量周期重置`)
     }
     return null
@@ -132,6 +150,7 @@ async function evaluateQuantityShutdown(info) {
   if (wasEnabled !== true) {
     flowAccumulator.set(deviceNo, 0)
     shutdownDone.set(deviceNo, false)
+    lastTimestamp.delete(deviceNo)
     console.log(`[QuantityShutdown] 设备 ${deviceNo || '全局'} 定量停机已开启，开始计量`)
   }
 
@@ -139,10 +158,15 @@ async function evaluateQuantityShutdown(info) {
   if (shutdownDone.get(deviceNo)) return null
 
   const flow = await readFlow(info)
-  // 流量按 L/min 上报，近似按 1 秒采样间隔累加。
+  // 流量按 L/min 上报，按跟上一条参与累加的消息之间的真实时间差积分（clamp 到
+  // MAX_GAP_SEC，避免设备离线间隙被当成一直在流）；本轮第一条消息（lastTimestamp
+  // 还没有）按 1 秒算，跟 computedMetrics.js 遇到同样情况时的处理一致。
+  const prevTs = lastTimestamp.get(deviceNo)
+  const dtSec = prevTs != null ? Math.max(0, Math.min(MAX_GAP_SEC, (timestampMs - prevTs) / 1000)) : 1
+  lastTimestamp.set(deviceNo, timestampMs)
   if (flow != null && flow >= 0) {
     const prev = flowAccumulator.get(deviceNo) || 0
-    flowAccumulator.set(deviceNo, prev + flow / 60)
+    flowAccumulator.set(deviceNo, prev + (flow / 60) * dtSec)
   }
 
   const accumulated = flowAccumulator.get(deviceNo) || 0

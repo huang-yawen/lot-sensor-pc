@@ -115,9 +115,17 @@ function kTrend(kHistory) {
   return (latest - first) / first
 }
 
-async function compute(info, timestampMs = Date.now()) {
+async function compute(info, timestampMs = Date.now(), knownDeviceNo = undefined) {
   const config = systemConfig.getConfig().COMPUTED_METRICS || {}
-  const deviceNo = String((await resolveDeviceNo(info)) || '').trim() || null
+  // refreshFromDB() 回放历史数据时，传进来的 info.d_no 是已经落库、已经解析过的
+  // 设备号（不是设备原始上报的 id 字段），不能再让 resolveDeviceNo 重新按
+  // DEVICE_ID_FIELDS 当成原始序列号去 t_device.number 里找一遍——DEVICE_ID_FIELDS
+  // 里恰好也配了 'd_no' 这个候选名，会导致查不到匹配、误判成未识别设备。knownDeviceNo
+  // 由 refreshFromDB() 显式传入已解析好的设备号时跳过重新解析；实时消息路径不传，
+  // 走原来的 resolveDeviceNo(info) 逻辑。
+  const deviceNo = knownDeviceNo !== undefined
+    ? (String(knownDeviceNo || '').trim() || null)
+    : String((await resolveDeviceNo(info)) || '').trim() || null
   const state = getState(deviceNo)
 
   const sensors = await readSensors(info)
@@ -375,7 +383,7 @@ async function refreshFromDB() {
     if (heatAliases[0]) info[heatAliases[0]] = heatState
     const rawTime = row.c_time ? String(row.c_time).replace(' ', 'T') : ''
     const ts = rawTime ? new Date(rawTime).getTime() : NaN
-    await compute(info, Number.isFinite(ts) ? ts : Date.now())
+    await compute(info, Number.isFinite(ts) ? ts : Date.now(), row.d_no)
   }
 }
 

@@ -38,6 +38,14 @@
       <div class="state" v-if="!selectedDeviceId && !hideDevicePicker">请选择{{ deviceLabel }}以配置指令</div>
       <div class="state" v-else-if="loading">加载中...</div>
       <div class="device-content" v-else>
+        <div v-if="qtyMatchedProgress" class="qty-progress-card">
+          <div class="qty-progress-title">定量停机 · 本轮实时进度</div>
+          <el-progress :percentage="qtyProgressPercentage" :status="qtyMatchedProgress.reached ? 'success' : undefined" />
+          <div class="qty-progress-text">
+            已累计 {{ qtyMatchedProgress.accumulated }} L / 目标 {{ qtyMatchedProgress.target }} L
+            <span v-if="qtyMatchedProgress.reached">（已达标，本轮已自动停机）</span>
+          </div>
+        </div>
         <DeviceSetting :storeData="store.data" :renderData="store.renderData"
           :handleUpdateData="store.handleUpdateData" :fetchDirectData="store.fetchDirectData"
           :handleRender="store.handleRender" :id="selectedDeviceId || 'null'" />
@@ -51,8 +59,9 @@ import DeviceSetting from '@/components/direct/DeviceSetting.vue'
 import { DirectStore } from '@/stores/DirectStore'
 import { DeviceStore } from '@/stores/DeviceStore' 
 import { useSystemConfigStore } from '@/stores/SystemConfigStore'
-import { computed, ref, onMounted } from 'vue'
+import { computed, ref, onMounted, onUnmounted } from 'vue'
 import { ArrowDown } from '@element-plus/icons-vue'
+import { connect as connectQtyWs, on as qtyWsOn } from '@/utils/websocket'
 
 const store = DirectStore()
 const dStore = DeviceStore() 
@@ -71,6 +80,23 @@ const handleCommand = (command) => {
   selectedDeviceId.value = command
 }
 
+// 定量停机本轮实时进度：跟 QuantityShutdownConfig.vue 一样订阅 sensor_data 里的
+// _quantityShutdown 字段；deviceNo 要匹配当前选中的设备号才展示，避免多设备时
+// 显示成别的设备的进度。只有真正收到推送（代表功能确实开着）才有值，配合模板
+// 里的 v-if 做到“定量停机关闭就完全不显示”这条要求。
+const qtyProgress = ref(null)
+const qtyMatchedProgress = computed(() => {
+  if (!qtyProgress.value) return null
+  const targetId = String(selectedDeviceId.value || 'null')
+  const progId = qtyProgress.value.deviceNo == null ? 'null' : String(qtyProgress.value.deviceNo)
+  return progId === targetId ? qtyProgress.value : null
+})
+const qtyProgressPercentage = computed(() => {
+  if (!qtyMatchedProgress.value || !qtyMatchedProgress.value.target) return 0
+  return Math.min(100, Math.round((qtyMatchedProgress.value.accumulated / qtyMatchedProgress.value.target) * 100))
+})
+let unsubscribeQtyProgress = null
+
 onMounted(async () => {
   loading.value = true
   try {
@@ -86,6 +112,17 @@ onMounted(async () => {
   } finally {
     loading.value = false
   }
+})
+
+onMounted(() => {
+  connectQtyWs()
+  unsubscribeQtyProgress = qtyWsOn('sensor_data', (payload) => {
+    if (payload && payload._quantityShutdown) qtyProgress.value = payload._quantityShutdown
+  })
+})
+
+onUnmounted(() => {
+  unsubscribeQtyProgress?.()
 })
 </script>
 
@@ -154,6 +191,26 @@ onMounted(async () => {
 
 .device-content {
   flex: 1;
+}
+
+.qty-progress-card {
+  margin-bottom: 16px;
+  padding: 14px 18px;
+  background: #f5f7fa;
+  border-radius: 8px;
+}
+
+.qty-progress-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #374270;
+  margin-bottom: 8px;
+}
+
+.qty-progress-text {
+  margin-top: 8px;
+  color: #64748b;
+  font-size: 14px;
 }
 
 .state {

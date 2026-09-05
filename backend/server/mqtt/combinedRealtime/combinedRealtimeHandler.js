@@ -104,15 +104,16 @@ async function handleMessage(topic, payload) {
         // 水泵恒流速控制：仅接管水泵这一个执行器，滞环通断或占空比二选一。
         const pumpVelocityActions = await evaluatePumpVelocityControl(info)
         if (pumpVelocityActions.length) info._pumpVelocityActions = pumpVelocityActions
+        // 用入库的 c_time（而不是服务器处理消息的墙钟时间）换算成毫秒时间戳，定量停机和
+        // “需要计算的数据”两处按真实时间差积分流量时共用同一个基准，避免 MQTT 排队延迟/
+        // 设备时钟漂移让各处对同一段时间算出不同的时间差。
+        const cTimeMs = info.c_time ? new Date(String(info.c_time).replace(' ', 'T')).getTime() : NaN
+        const flowTimestampMs = Number.isFinite(cTimeMs) ? cTimeMs : Date.now()
         // 定量停机：累计流量达到目标后关闭水泵和加热。
-        const qtyResult = await evaluateQuantityShutdown(info)
+        const qtyResult = await evaluateQuantityShutdown(info, flowTimestampMs)
         if (qtyResult) info._quantityShutdown = qtyResult
         // “需要计算的数据”实时派生指标。
-        // 用入库的 c_time（而不是服务器处理消息的墙钟时间）换算成毫秒时间戳传入，
-        // 跟“全表累计”模式下 SQL 用同一列积分保持时间基准一致，避免 MQTT 排队延迟/
-        // 设备时钟漂移让两条链路对同一段时间算出不同的时间差。
-        const cTimeMs = info.c_time ? new Date(String(info.c_time).replace(' ', 'T')).getTime() : NaN
-        await computeMetrics(info, Number.isFinite(cTimeMs) ? cTimeMs : Date.now())
+        await computeMetrics(info, flowTimestampMs)
         return info
     } catch (err) {
         console.error('[CombinedRealtime] Error processing message:', err.message)

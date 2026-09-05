@@ -28,6 +28,22 @@
       </el-form>
     </section>
 
+    <section class="qty-section" v-if="progress">
+      <div class="section-heading">
+        <div>
+          <h3>本轮实时进度</h3>
+          <p>数据来自 WebSocket 实时推送（跟随传感器消息）；定量停机关闭、或设备离线还没收到推送时不显示。</p>
+        </div>
+      </div>
+      <div class="qty-progress">
+        <el-progress :percentage="progressPercentage" :status="progress.reached ? 'success' : undefined" />
+        <div class="qty-progress-text">
+          已累计 {{ progress.accumulated }} L / 目标 {{ progress.target }} L
+          <span v-if="progress.reached">（已达标，本轮已自动停机）</span>
+        </div>
+      </div>
+    </section>
+
     <div class="save-bar">
       <el-button :loading="loading" @click="load">刷新</el-button>
       <el-button type="primary" :loading="saving" @click="save">保存并应用</el-button>
@@ -36,12 +52,35 @@
 </template>
 
 <script setup>
-import { reactive, ref } from 'vue'
+import { computed, reactive, ref, onMounted, onUnmounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import api from '@/api'
+import { connect, on as wsOn } from '@/utils/websocket'
 
 const loading = ref(false)
 const saving = ref(false)
+
+// ==================== 本轮实时进度（WebSocket 推送） ====================
+// evaluateQuantityShutdown() 的结果挂在 sensor_data 推送的 payload._quantityShutdown
+// 上（combinedRealtimeHandler.js / sensorRealtimeHandler.js 都会调用它并挂载），
+// 开关关闭或目标值无效时不会有这个字段，progress 保持 null，页面显示"暂无数据"。
+const progress = ref(null)
+const progressPercentage = computed(() => {
+  if (!progress.value || !progress.value.target) return 0
+  return Math.min(100, Math.round((progress.value.accumulated / progress.value.target) * 100))
+})
+let unsubscribeProgress = null
+
+onMounted(() => {
+  connect()
+  unsubscribeProgress = wsOn('sensor_data', (payload) => {
+    if (payload && payload._quantityShutdown) progress.value = payload._quantityShutdown
+  })
+})
+
+onUnmounted(() => {
+  unsubscribeProgress?.()
+})
 
 const defaultForm = () => ({
   enabled: false,
@@ -84,5 +123,7 @@ load()
 .section-heading h3 { margin: 0 0 5px; color: #0f172a; }
 .section-heading p { margin: 0; color: #64748b; }
 .qty-form { margin-top: 6px; }
+.qty-progress { max-width: 520px; }
+.qty-progress-text { margin-top: 8px; color: #64748b; font-size: 14px; }
 .save-bar { display: flex; gap: 10px; margin-top: 16px; }
 </style>
