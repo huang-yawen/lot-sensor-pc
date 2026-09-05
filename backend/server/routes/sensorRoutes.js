@@ -39,6 +39,7 @@ const testEchartsData = require('../controllers/chart/testEchartsData')
 
 // ==================== 累计与窗口指标控制器 ====================
 const cumulativeController = require('../controllers/cumulative/cumulativeController')
+const { queryFlowIntegralTotal } = require('../service/cumulative/cumulativeService')
 const timeWindowController = require('../controllers/timeWindow/timeWindowController')
 
 // ==================== 历史图表控制器 ====================
@@ -185,7 +186,40 @@ router.get('/api/computed-metrics', async (req, res) => {
     } catch (err) {
         console.error('[ComputedMetrics] 数据库回放失败:', err.message)
     }
-    res.json({ success: true, data: getLatestComputed() })
+    const data = getLatestComputed()
+    // 「累计流量」有两种口径，COMPUTED_METRICS.cumulativeFlowMode 控制：
+    //   'all'（默认）——按 flow_integral 从数据库现算"全表积分总量"，跟历史图表页面同一套
+    //     算法、同一个口径，且后端重启不归零；
+    //   'session'——不覆盖，直接用 computedMetrics.js 里的内存累加值（本次后端启动以来，
+    //     重启归零，跟液位反推共用同一个累加器）。
+    // 查询失败时保留 computedMetrics 的内存值兜底。
+    try {
+        const cfg = systemConfig.getConfig()
+        const cm = cfg.COMPUTED_METRICS || {}
+        const flowMetric = (cfg.CUMULATIVE_METRICS || []).find(
+            (m) => m.metric_key === 'cumulative_flow' && m.enabled && m.aggregation === 'flow_integral'
+        )
+        if (cm.cumulativeFlow !== false && cm.cumulativeFlowMode !== 'session' && flowMetric) {
+            for (const deviceNo of Object.keys(data)) {
+                // deviceNo 是字符串 'null' 代表这条消息没能在 t_device 里解析出注册设备号
+                // （resolveDeviceNo 失败）——这种情况下 t_sensor_data 根本没有对应行（
+                // saveMappedData 遇到未解析设备号会直接跳过入库），如果仍去查“全表总量”，
+                // 会把其它已识别设备的流量错误地算到这个“未识别设备”头上。直接跳过，
+                // 保留 computedMetrics 的内存值（等同于查询失败时的兜底路径）。
+                if (deviceNo === 'null') continue
+                const total = await queryFlowIntegralTotal({
+                    source_table: flowMetric.source_table,
+                    source_field: flowMetric.source_field,
+                    d_no: deviceNo,
+                    precision: flowMetric.precision ?? 2,
+                })
+                data[deviceNo].cumulativeFlow = { value: total, unit: flowMetric.unit || 'L' }
+            }
+        }
+    } catch (err) {
+        console.error('[ComputedMetrics] 累计流量总量查询失败，回退内存值:', err.message)
+    }
+    res.json({ success: true, data })
 })
 
 

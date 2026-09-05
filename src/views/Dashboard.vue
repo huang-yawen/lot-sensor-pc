@@ -40,6 +40,9 @@
 
     <section class="gauge-section">
       <article class="gauge-card">
+        <GaugeChart :value="inletTemp" title="进水温度" unit="℃" :min="0" :max="60" />
+      </article>
+      <article class="gauge-card">
         <GaugeChart :value="currentTemp" title="出水温度" unit="℃" :min="0" :max="60" />
       </article>
     </section>
@@ -152,6 +155,13 @@ let unsubscribeError = null
 const rows = computed(() => dashboard.value.processedData || [])
 const latestSensor = computed(() => rows.value[0] || null)
 const latestBehavior = computed(() => (dashboard.value.behaviorOutcome || [])[0] || null)
+// 首页进水温度仪表盘：直接取最新一条传感数据里的“进水温度”原始读数（/api/data 已返回，
+// 不再单独请求接口）。出水温度仪表盘仍走 /api/current-temp。
+const inletTemp = computed(() => {
+  const raw = latestSensor.value?.['进水温度']
+  const n = Number(raw)
+  return raw == null || raw === '' || !Number.isFinite(n) ? null : n
+})
 const fieldUnits = computed(() => dashboard.value.fieldUnits || {})
 
 // ==================== 需要计算的数据（后端实时派生指标） ====================
@@ -348,7 +358,7 @@ onUnmounted(() => {
 .metric-card.online { border-top-color: #10b981; }
 .metric-card.sensor { border-top-color: #0ea5e9; }
 .metric-card.warning { border-top-color: #f59e0b; }
-.gauge-section { margin: 16px 0; }
+.gauge-section { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; margin: 16px 0; }
 .gauge-card { border: 1px solid #e5e7eb; border-radius: 14px; background: #fff; box-shadow: 0 6px 20px rgba(15, 23, 42, .05); padding: 12px; height: 220px; }
 .metric-card span, .metric-card small { display: block; color: #64748b; }
 .metric-card strong { display: block; margin: 9px 0 4px; font-size: 30px; color: #0f172a; }

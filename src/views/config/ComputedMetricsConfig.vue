@@ -34,6 +34,15 @@
           </template>
         </el-table-column>
       </el-table>
+
+      <div v-if="form.cumulativeFlow" class="cumulative-mode-row">
+        <span class="mode-label">累计流量计算方式：</span>
+        <el-radio-group v-model="form.cumulativeFlowMode" size="small" :disabled="!form.enabled">
+          <el-radio-button value="all">全表累计（持久，不归零）</el-radio-button>
+          <el-radio-button value="session">本次启动累计（重启归零）</el-radio-button>
+        </el-radio-group>
+        <div class="hint">影响首页"累计流量"这个数值：全表累计=从第一条数据起持续累加，后端重启也不丢；本次启动累计=只算本次后端启动以来的流量，重启清零。历史图表页面"累计流量"曲线不受这个开关影响，始终按所选时间范围积分。</div>
+      </div>
     </section>
 
     <section class="cfg-section">
@@ -105,6 +114,7 @@ const defaultForm = () => ({
   eerHeatBalance: true,
   flowPressureCurve: true,
   cumulativeFlow: true,
+  cumulativeFlowMode: 'all',
   averageVelocity: true,
   waterLevel: true,
   averageTempChart: true,
@@ -186,5 +196,7 @@ load()
 .desc { color: #64748b; font-size: 12px; }
 .cfg-form { margin-top: 6px; max-width: 520px; }
 .hint { color: #94a3b8; font-size: 12px; margin-top: 4px; }
+.cumulative-mode-row { margin-top: 14px; }
+.mode-label { margin-right: 10px; color: #606266; }
 .save-bar { display: flex; gap: 10px; margin-top: 16px; }
 </style>

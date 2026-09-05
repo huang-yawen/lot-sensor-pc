@@ -146,6 +146,8 @@ const defaultConfig = {
   //   source_field - 源表中的数值字段（如 field3）
   //   unit         - 单位，如 L、min
   //   enabled      - true 启用累计计算；false 仅保留配置不查询
+  //   aggregation  - 省略=SUM 直接累加；avg=累计平均；on_duration=开关为1的累计时长；
+  //                  flow_integral=源字段是每分钟速率量（如 L/min），按 值/60×时间间隔 积分累加
   //   mode         - "inline"=合入历史表/图表，"standalone"=仅首页独立展示，"both"=两者同时
   //   precision    - 小数位数
   //   chart_type   - ECharts 图表类型：line 或 bar
@@ -163,6 +165,7 @@ const defaultConfig = {
       precision: 2,
       chart_type: 'bar',
       color: '#0ea5e9',
+      aggregation: 'flow_integral',
     },
     {
       metric_key: 'cumulative_heat_time',
@@ -755,6 +758,9 @@ const defaultConfig = {
   //   eerHeatBalance           - 系统能效比（COP）与热平衡（换热量/热损失）
   //   flowPressureCurve        - 流量-压力特性曲线拟合（线性回归斜率）
   //   cumulativeFlow           - 累计流量（上一时刻总流量 + 瞬时流量 × 时间）
+  //   cumulativeFlowMode       - 累计流量计算方式：'all'=全表累计（默认，从第一条数据起，
+  //                              持久、后端重启不归零）；'session'=本次后端启动以来的
+  //                              内存累加值，重启归零
   //   averageVelocity          - 平均流速 v = Q / A
   //   waterLevel               - 液位（基于两水箱初始水量与累计流量）
   // 计算参数：
@@ -772,6 +778,7 @@ const defaultConfig = {
     eerHeatBalance: true,
     flowPressureCurve: true,
     cumulativeFlow: true,
+    cumulativeFlowMode: 'all',
     averageVelocity: true,
     waterLevel: true,
     averageTempChart: true,
@@ -1157,6 +1164,7 @@ function validate(config) {
   for (const key of ['enabled', 'resistanceK', 'pressureDropRate', 'tempChangeRate', 'heatExchangeEfficiency', 'eerHeatBalance', 'flowPressureCurve', 'cumulativeFlow', 'averageVelocity', 'waterLevel', 'averageTempChart', 'averageVelocityChart']) {
     if (typeof computed[key] !== 'boolean') throw new Error(`COMPUTED_METRICS.${key} 必须是布尔值`)
   }
+  if (!['session', 'all'].includes(computed.cumulativeFlowMode)) throw new Error("COMPUTED_METRICS.cumulativeFlowMode 只能是 'session' 或 'all'")
   for (const key of ['heaterRatedPower', 'pipeAreaCm2', 'initialWaterTank1', 'initialWaterTank2', 'tankAreaCm2', 'waterDensity', 'waterSpecificHeat']) {
     if (!Number.isFinite(computed[key]) || computed[key] < 0) throw new Error(`COMPUTED_METRICS.${key} 必须是大于等于 0 的数字`)
   }

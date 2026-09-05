@@ -9,10 +9,18 @@
  *   - avg：累计平均（从第一条数据开始逐点求平均）
  *   - on_duration：开关状态"持续时长"累计（字段值为 '1' 期间经过的实际时间，
  *     单位分钟）。走独立的 querySingleOnDurationCumulative，不复用 aggregationSql。
+ *   - flow_integral：源字段是"每分钟速率量"（如瞬时流量 L/min）时用这个。直接 SUM(原始值)
+ *     对速率量没有物理意义，必须先乘以每条读数代表的时间跨度再累加：本条增量 = 值/60 ×
+ *     min(与上一条的秒差, MAX_GAP_SEC)。走独立的 querySingleFlowIntegralCumulative。
  */
 const promisePool = require('../../config/dbPool')
 const systemConfig = require('../../config/systemConfig')
 const { calcBucketSeconds } = require('../../utils/timeRange')
+
+// 相邻两条读数的秒差上限：超过视为设备离线间隙，积分时只按上限计，避免离线期间
+// 被当成一直在流。跟 querySingleOnDurationCumulative 的 MAX_GAP_SEC、首页
+// computedMetrics.js 里 Math.min(10, ...) 的 clamp 保持一致。
+const MAX_GAP_SEC = 10
 
 /**
  * 获取所有已启用的累计指标配置
@@ -49,6 +57,9 @@ function aggregationSql(metric) {
 async function querySingleCumulative(metric, options = {}) {
   if (metric.aggregation === 'on_duration') {
     return querySingleOnDurationCumulative(metric, options)
+  }
+  if (metric.aggregation === 'flow_integral') {
+    return querySingleFlowIntegralCumulative(metric, options)
   }
 
   const { d_no, limit = 300, startTime, endTime } = options
@@ -197,6 +208,96 @@ async function queryAllCumulative(options = {}) {
 }
 
 /**
+ * "瞬时速率字段按时间积分"的累计查询（aggregation === 'flow_integral'）。
+ *
+ * 用于源字段是"每分钟速率量"的指标（如瞬时流量 L/min）。本条增量(单位=源字段积分后的量，
+ * 如 L) = 值/60 × min(与上一条的秒差, MAX_GAP_SEC)，再逐行滚动累加。
+ * 结构同 querySingleOnDurationCumulative：先在全量数据上用 LAG() 落地逐行秒差，再用
+ * SUM() OVER() 精确算累计，最后按时间分桶降采样、每桶取最新一行。
+ * value 列返回原始瞬时读数（供曲线悬浮查看），cumulative 才是积分累计值。
+ */
+async function querySingleFlowIntegralCumulative(metric, options = {}) {
+  const { d_no, limit = 300, startTime, endTime } = options
+  const table = metric.source_table
+  const field = metric.source_field
+  const precision = metric.precision ?? 2
+
+  const safeLimit = Math.min(2000, Math.max(1, Number.parseInt(limit, 10) || 300))
+  const conditions = []
+  const subParams = []
+  if (d_no) { conditions.push('d_no = ?'); subParams.push(d_no) }
+  if (startTime) { conditions.push('c_time >= ?'); subParams.push(startTime) }
+  if (endTime) { conditions.push('c_time <= ?'); subParams.push(endTime) }
+  const whereExtra = conditions.length ? `AND ${conditions.join(' AND ')}` : ''
+
+  const bucketSeconds = startTime ? calcBucketSeconds({ startTime, endTime, pointLimit: safeLimit }) : 1
+  const params = [bucketSeconds, ...subParams, safeLimit]
+
+  const sql = `
+    SELECT c_time, value, cumulative
+    FROM (
+      SELECT
+        c_time, value, cumulative,
+        ROW_NUMBER() OVER (PARTITION BY bucket ORDER BY c_time DESC, id DESC) AS rn
+      FROM (
+        SELECT
+          id, c_time,
+          FLOOR(UNIX_TIMESTAMP(c_time) / ?) AS bucket,
+          ROUND(v, ${precision}) AS value,
+          ROUND(
+            SUM(GREATEST(COALESCE(v, 0), 0) / 60 * LEAST(COALESCE(dt_sec, 1), ${MAX_GAP_SEC}))
+              OVER (ORDER BY c_time ASC, id ASC ROWS UNBOUNDED PRECEDING),
+            ${precision}
+          ) AS cumulative
+        FROM (
+          SELECT
+            id,
+            c_time,
+            CAST(NULLIF(\`${field}\`, '') AS DECIMAL(20,6)) AS v,
+            TIMESTAMPDIFF(SECOND, LAG(c_time) OVER (ORDER BY c_time ASC, id ASC), c_time) AS dt_sec
+          FROM ${table}
+          WHERE 1=1 ${whereExtra}
+        ) AS with_dt
+      ) AS calculated
+    ) AS bucketed
+    WHERE rn = 1
+    ORDER BY c_time ASC
+    LIMIT ?
+  `
+  const [rows] = await promisePool.query(sql, params)
+  return rows
+}
+
+/**
+ * flow_integral 的"积分累计总量"标量查询：不分桶、不 LIMIT，直接返回一个数。
+ * 首页"累计流量"板块用它，跟历史图表页面 flow_integral 曲线同一套算法、同一个口径。
+ * 不传 startTime 即"从第一条数据起的全量总量"（工业累计总量 / 累计器语义），且天然
+ * 持久——后端重启也不会归零，因为是从数据库现算的。
+ */
+async function queryFlowIntegralTotal({ source_table, source_field, d_no = null, startTime = null, endTime = null, precision = 2 } = {}) {
+  const p = Number.isInteger(precision) ? precision : 2
+  const conditions = []
+  const params = []
+  if (d_no) { conditions.push('d_no = ?'); params.push(d_no) }
+  if (startTime) { conditions.push('c_time >= ?'); params.push(startTime) }
+  if (endTime) { conditions.push('c_time <= ?'); params.push(endTime) }
+  const whereExtra = conditions.length ? `AND ${conditions.join(' AND ')}` : ''
+
+  const sql = `
+    SELECT ROUND(SUM(GREATEST(COALESCE(v, 0), 0) / 60 * LEAST(COALESCE(dt_sec, 1), ${MAX_GAP_SEC})), ${p}) AS total
+    FROM (
+      SELECT
+        CAST(NULLIF(\`${source_field}\`, '') AS DECIMAL(20,6)) AS v,
+        TIMESTAMPDIFF(SECOND, LAG(c_time) OVER (ORDER BY c_time ASC, id ASC), c_time) AS dt_sec
+      FROM ${source_table}
+      WHERE 1=1 ${whereExtra}
+    ) AS with_dt
+  `
+  const [[row]] = await promisePool.query(sql, params)
+  return row && row.total != null ? Number(row.total) : 0
+}
+
+/**
  * 为历史查询注入累计列 SQL 片段
  * 适用于 mode 为 "inline" 或 "both" 的情况。
  *
@@ -213,7 +314,7 @@ async function queryAllCumulative(options = {}) {
  */
 function buildInlineCumulativeSql(sourceTable) {
   const metrics = getEnabledCumulativeMetrics()
-    .filter(m => (m.mode === 'inline' || m.mode === 'both') && (!sourceTable || m.source_table === sourceTable) && m.aggregation !== 'on_duration')
+    .filter(m => (m.mode === 'inline' || m.mode === 'both') && (!sourceTable || m.source_table === sourceTable) && m.aggregation !== 'on_duration' && m.aggregation !== 'flow_integral')
 
   if (metrics.length === 0) return { selectFragment: '', metrics: [] }
 
@@ -230,6 +331,7 @@ module.exports = {
   querySingleCumulative,
   queryAllCumulative,
   buildInlineCumulativeSql,
+  queryFlowIntegralTotal,
 }
 /** 【文件职责】累计派生指标计算服务，按配置定义的字段和窗口汇总历史数据。
  * 【配置中心关联】CUMULATIVE_METRICS；每次请求动态读取，场景保存后无需重启。 */

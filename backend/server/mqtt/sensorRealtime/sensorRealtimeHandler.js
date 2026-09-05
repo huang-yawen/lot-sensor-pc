@@ -121,7 +121,11 @@ async function handleMessage(topic, payload) {
         const qtyResult = await evaluateQuantityShutdown(info)
         if (qtyResult) info._quantityShutdown = qtyResult
         // "需要计算的数据"实时派生指标，仅用于展示，不参与硬件控制。
-        await computeMetrics(info)
+        // 用入库的 c_time（而不是服务器处理消息的墙钟时间）换算成毫秒时间戳传入，
+        // 跟“全表累计”模式下 SQL 用同一列积分保持时间基准一致，避免 MQTT 排队延迟/
+        // 设备时钟漂移让两条链路对同一段时间算出不同的时间差。
+        const cTimeMs = info.c_time ? new Date(String(info.c_time).replace(' ', 'T')).getTime() : NaN
+        await computeMetrics(info, Number.isFinite(cTimeMs) ? cTimeMs : Date.now())
         return info
     } catch (err) {
         console.error('[SensorRealtime] Error processing message:', err.message)

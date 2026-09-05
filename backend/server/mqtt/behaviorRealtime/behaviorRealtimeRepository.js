@@ -128,6 +128,53 @@ async function detectAndRecordChanges(info, d_no) {
     }
 }
 
+/*
+   * ── 控制模式 / PID恒温 等「PC 侧逻辑开关」的补值 ──────────────────────────
+   *
+   * 这些开关（控制模式 mode、PID恒温 pidMode）是上位机自己维护的状态，
+   * 硬件不会通过 MQTT 上报，所以 info 里没有。这里在落库前从「指令中心」补进来：
+   *   preffix ──resolveConfigIdByPrefix──▶ config_id ──getDirectValue──▶ t_direct 最新下发值
+   * 再归一化成 0 / 1 塞进 mappedInfo，交给 saveMappedData 按 mapper 表写进 t_behavior_data。
+   * 用 preffix 而不是写死 config_id：场景编辑 / 主键重排会让 config_id 变，只有 preffix 稳定。
+   * 只在 info 没带该字段时才补（hasOwnProperty 判断），设备真上报了就以上报值为准。
+   *
+   * ── 想「新增」一个开关显示（3 步都要做齐）───────────────────────────────
+   *   1. t_behavior_field_mapper 加一行：
+   *        f_name    = 页面中文列名，如「阀门」
+   *        p_name    = 逻辑名，如 valveMode（要和第 3 步 mappedInfo.<p_name> 完全一致）
+   *        db_name   = t_behavior_data 里「空闲的」物理列，如 field5
+   *                    （field1~field4 已被占用；没有多余 fieldN 时先 ALTER TABLE 加列）
+   *        type      = '1'（开关）
+   *        visible   = '1'
+   *        value_map = {"0":"关","1":"开"}
+   *   2. 确认该开关的 preffix 已存在于 t_direct_config，且 t_direct 里有值，
+   *      否则 resolveConfigIdByPrefix 返回 null，这列恒为 0。
+   *   3. 在下面照抄一个 if 块，改成对应的 preffix 和 mappedInfo.<p_name>。
+   *   4. 重启后端生效。
+   *   ⚠ 只加 if 不加 mapper 行：值会被 saveMappedData 忽略，存不进；
+   *     只加 mapper 行不加 if：列会出现但恒为空。
+   *
+   * ── 想「去掉」一个开关显示 ──────────────────────────────────────────────
+   *   · 推荐（免改代码、免重启）：
+   *       UPDATE t_behavior_field_mapper SET visible = 0 WHERE p_name = 'pidMode';
+   *     读取路径只 SELECT visible = 1 的行，页面立即不再显示该列。
+   *   · 或直接删除该 mapper 行。
+   *   · 下面对应的 if 块可一并注释掉，省去每条消息一次无用的 t_direct 查询；
+   *     但「只注释 if、不动 mapper」不行：列还在，只是恒为空。
+   *
+   * ── 改了 mapper 的 p_name 会怎样（不会让项目报错）───────────────────────
+   *   saveMappedData 是纯数据驱动：拿不到匹配的 p_name 就跳过这一列，不抛异常，
+   *   顶多该列存不进值、页面显示空。前端只认 f_name（读取时 SELECT fieldN AS f_name），
+   *   看不到 p_name，改 p_name 对页面渲染没有影响。
+   *   全项目唯一写死了 mapper p_name 字面量的地方，就是下面这两个 if：
+   *   'mode'（对应「控制模式」那行）、'pidMode'（对应「PID恒温」那行）。
+   *   把这两行 mapper 的 p_name 改名时必须同步其一，否则补值写旧 key、mapper 找新 key，
+   *   这两列会变空：
+   *     · 在 p_name 里保留别名，如 '控制模式新名|mode'（| 分隔，saveMappedData 支持多别名）；
+   *     · 或把下面 if 里的 'mode' / mappedInfo.mode（pidMode 同理）一起改名。
+   *   其余普通传感器/执行器字段的 p_name 可随意改，只要新名字能和设备上报 JSON 的
+   *   key 对上（或把旧名留作别名）即可。
+   */
 async function saveBehaviorData(info) {
     // 设备编号必须能在 t_device.number 匹配上（见 utils/mappedData.js resolveDeviceNo），
     // 匹配不上就跳过保存，不再兜底成数据库里第一个设备或 'default_device'。
@@ -139,12 +186,10 @@ async function saveBehaviorData(info) {
 
     try {
         const mappedInfo = { ...info, d_no }
-        // 控制模式、PID恒温这两个状态是 PC 端逻辑状态，设备不会上报；从 t_direct 读
-        // 真实值落库，存成 0/1，让行为数据页对应列显示真实数据（t_behavior_field_mapper
-        // 的 value_map 会转成"手动/自动""关/开"这种文案）。自动/手动、PID恒温这两个
-        // 状态只存在于软件里，硬件本身不知道也不上报，所以由后端自己去指令中心查一下
-        // 当前值是什么，拼进这条数据里再存库。两个指令项的 config_id 不能硬编码——
-        // 场景调整、主键重新分配都可能让具体数字变化，只有 preffix 是稳定的。
+        // 控制模式(mode)、PID恒温(pidMode)是 PC 端逻辑状态，设备不上报；这里在落库前
+        // 从指令中心(t_direct)按 preffix 查当前值补进来。完整原理、「增删一个开关显示」
+        // 的步骤、以及改 mapper p_name 的注意事项，见上方 saveBehaviorData 前的大段注释。
+
         if (!Object.prototype.hasOwnProperty.call(mappedInfo, 'mode')) {
             const controlModeConfigId = await resolveConfigIdByPrefix('auto_control_enabled')
             if (controlModeConfigId != null) {

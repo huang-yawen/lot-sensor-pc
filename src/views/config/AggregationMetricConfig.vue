@@ -84,9 +84,10 @@
           </el-form-item>
           <el-form-item label="源字段"><el-input v-model="form.source_field" placeholder="例如：field3" /></el-form-item>
           <el-form-item label="计算方式">
-            <el-select v-if="dialogType === 'cumulative'" v-model="form.aggregation"><el-option label="累计求和" value="sum" /><el-option label="累计平均" value="avg" /><el-option label="开关持续时长（分钟）" value="on_duration" /></el-select>
+            <el-select v-if="dialogType === 'cumulative'" v-model="form.aggregation"><el-option label="累计求和" value="sum" /><el-option label="累计平均" value="avg" /><el-option label="开关持续时长（分钟）" value="on_duration" /><el-option label="瞬时速率按时间积分" value="flow_integral" /></el-select>
             <el-select v-else v-model="form.aggregation"><el-option label="滑动平均" value="avg" /><el-option label="波动幅度（最大-最小）" value="volatility" /><el-option label="相邻变化量" value="rate" /></el-select>
             <div v-if="dialogType === 'cumulative' && form.aggregation === 'on_duration'" class="switch-hint">源字段需为开关型字段（值为 1/0），统计其为 1 期间累计经过的时长；仅支持"仅历史图表页面独立图表"这一显示位置。</div>
+            <div v-if="dialogType === 'cumulative' && form.aggregation === 'flow_integral'" class="switch-hint">源字段需为"每分钟速率量"（如瞬时流量 L/min）；按 值/60×与上一条的时间间隔 逐条积分累加，单位为源字段积分后的量（如 L）。</div>
           </el-form-item>
           <el-form-item v-if="dialogType === 'window'" label="窗口条数"><el-input-number v-model="form.window_size" :min="2" :max="100" /></el-form-item>
           <el-form-item label="单位"><el-input v-model="form.unit" placeholder="例如：L、℃" /></el-form-item>
@@ -156,7 +157,7 @@ const sections = computed(() => [
 const rowsFor = type => type === 'cumulative' ? cumulative.value : windows.value
 const tableLabel = table => table === 't_behavior_data' ? '运行状态' : '传感数据'
 const aggregationLabel = value => ({ avg: '滑动平均', volatility: '波动幅度', rate: '相邻变化量' }[value] || value)
-const cumulativeAggregationLabel = value => ({ avg: '累计平均', on_duration: '开关持续时长' }[value] || '累计求和')
+const cumulativeAggregationLabel = value => ({ avg: '累计平均', on_duration: '开关持续时长', flow_integral: '速率积分' }[value] || '累计求和')
 const modeLabel = value => ({ standalone: '历史图表页面', inline: '汇总数据页面', both: '历史图表页面 + 汇总数据页面' }[value] || value)
 
 async function load() {
