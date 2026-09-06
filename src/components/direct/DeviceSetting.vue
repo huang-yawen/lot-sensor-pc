@@ -66,6 +66,7 @@ let unsubscribeDirectUpdate = null;
 let unsubscribeBehaviorSync = null;
 let unsubscribePidHeating = null;
 let unsubscribeHeaterBlocked = null;
+let unsubscribeFaultTriggered = null;
 
 // PID 本周期加热时长展示：跟 DirectSetting.vue 的定量停机进度一样订阅 sensor_data
 // 里的 _pidHeating 字段，deviceNo 要匹配当前设备号才展示，避免多设备时显示成别的设备。
@@ -205,6 +206,9 @@ const handleUpdate = async (id, value) => {
     } else if (result.success) {
       ElMessage.success("指令已发送");
       console.log("[Frontend] 显示成功消息");
+      // 复位按钮拨到 off 会走到这里（后端 HTTP 响应带 status:'fault_reset'，不广播），
+      // 立刻拉一次故障状态，让「正常/故障」框和随后的 watch(isFault) 表单刷新不必等 5 秒轮询。
+      loadFaultState();
     } else {
       // 后端拒绝（如故障锁定、水泵未开不允许开加热等）：开关已经乐观改成了新值，
       // 这里要回退，避免界面显示"已打开"但实际操作被拒绝、设备根本没变化。
@@ -283,6 +287,11 @@ onMounted(async () => {
 
   unsubscribeHeaterBlocked = wsOn("pid_heater_blocked", handleHeaterBlocked);
 
+  // 故障触发是后端即时广播的（app.js 的 onFault）；原本这个状态框只靠下面的 5 秒轮询
+  // 刷新，最多能延迟 5 秒。这里收到故障广播就立刻拉一次权威状态；复位（故障->正常）那边
+  // 在 handleUpdate 里补了一次；5 秒轮询保留作兜底（漏收 WS、自动恢复、多标签页）。
+  unsubscribeFaultTriggered = wsOn("fault_triggered", loadFaultState);
+
   if (prop.storeData.length === 0) {
     await prop.fetchDirectData();
   }
@@ -296,6 +305,7 @@ onUnmounted(() => {
   unsubscribeBehaviorSync?.();
   unsubscribePidHeating?.();
   unsubscribeHeaterBlocked?.();
+  unsubscribeFaultTriggered?.();
   if (faultTimer) clearInterval(faultTimer);
 });
 </script>
