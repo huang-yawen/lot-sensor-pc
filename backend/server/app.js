@@ -46,9 +46,38 @@ app.use(cors({
 }));
 app.use(express.json({ limit: '1mb' }));
 
+// ==================== API 认证 ====================
+// 通过环境变量 API_TOKEN 启用；未配置时不拦截（本地开发友好）。
+// 配置后所有 /api/ 请求需在 x-api-token 头或 ?token= 查询参数中携带正确 token。
+// 静态前端文件（非 /api/ 路径）放行，保证页面能正常加载。
+const API_TOKEN = process.env.API_TOKEN || '';
+if (API_TOKEN) {
+  app.use((req, res, next) => {
+    if (!req.path.startsWith('/api/')) return next();
+    const token = req.headers['x-api-token'] || req.query.token;
+    if (token !== API_TOKEN) {
+      return res.status(401).json({ success: false, message: '未授权访问' });
+    }
+    next();
+  });
+}
+
 // 所有业务接口统一挂载到同一个路由入口，便于集中维护。
 // 具体路由定义见 routes/sensorRoutes.js，app 层不再直接写路由。
 app.use('/', sensorRoutes);
+
+// ==================== 全局错误处理 ====================
+// 兜底所有未被控制器 catch 的异常：生产环境不返回内部错误细节（SQL/路径等），
+// 开发环境仍返回 err.message 便于调试。
+const isProd = process.env.NODE_ENV === 'production';
+// eslint-disable-next-line no-unused-vars
+app.use((err, req, res, next) => {
+  console.error('[GlobalError]', err.message);
+  res.status(500).json({
+    success: false,
+    message: isProd ? '服务器内部错误' : (err.message || '未知错误')
+  });
+});
 
 // ==================== 静态前端托管 ====================
 // 前端构建产物 dist/ 由后端 express.static 直接提供，不需要单独前端服务器。
@@ -75,6 +104,22 @@ const wss = new WebSocketServer({ server, path: '/ws' });
 const wsClients = new Set();
 
 wss.on('connection', (ws, req) => {
+    // 校验 Origin：拒绝来自非白名单页面的 WebSocket 连接（防恶意网页跨站连入）。
+    const origin = req.headers.origin;
+    if (origin && !allowedOrigins.has(origin)) {
+        console.warn(`[WebSocket] 拒绝非法来源连接: ${origin}`);
+        ws.close(1008, '来源不允许');
+        return;
+    }
+    // 若配置了 API_TOKEN，WebSocket 通过 URL query 传递 ?token=xxx 校验。
+    if (API_TOKEN) {
+        const url = new URL(req.url, 'http://localhost');
+        if (url.searchParams.get('token') !== API_TOKEN) {
+            console.warn('[WebSocket] 拒绝未授权连接');
+            ws.close(1008, '未授权');
+            return;
+        }
+    }
     console.log(`[WebSocket] 客户端已连接, IP: ${req.socket.remoteAddress}`);
     wsClients.add(ws);
     // 首次连接立即发送当前设备状态，避免头部导航等待下一轮定时广播。
@@ -257,6 +302,17 @@ startSafetyMonitor();
 // NORMAL，但数据库里 reset_button 仍停留在重启前的 on，导致状态显示不一致、
 // 复位开关卡死无法通过页面操作恢复。
 initFaultStateFromDb();
+
+// ==================== 进程级异常兜底 ====================
+// 捕获未处理的同步异常和 Promise rejection，防止单次错误导致整个服务崩溃。
+// 控制系统可用性优先：记录错误后不退出进程，让服务继续运行。
+process.on('uncaughtException', (err) => {
+  console.error('[FATAL] 未捕获异常:', err.message);
+  console.error(err.stack);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('[UNHANDLED] 未处理的 Promise rejection:', reason);
+});
 
 server.listen(port, host, () => {
   console.log(`Server started: http://${host}:${port}`);
