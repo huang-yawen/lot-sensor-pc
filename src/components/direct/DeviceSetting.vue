@@ -65,6 +65,7 @@ let unsubscribePendingCommands = null;
 let unsubscribeDirectUpdate = null;
 let unsubscribeBehaviorSync = null;
 let unsubscribePidHeating = null;
+let unsubscribeHeaterBlocked = null;
 
 // PID 本周期加热时长展示：跟 DirectSetting.vue 的定量停机进度一样订阅 sensor_data
 // 里的 _pidHeating 字段，deviceNo 要匹配当前设备号才展示，避免多设备时显示成别的设备。
@@ -76,6 +77,17 @@ const pidHeatingDurationText = computed(() => {
   if (infoId !== targetId) return null;
   return (pidHeatingStatus.value.onDurationMs / 1000).toFixed(1) + "s";
 });
+
+// PID 恒温控制想开加热但水泵没开，被后端拦下来时提示一次：跟手动模式下点开关被
+// 拒绝弹的 ElMessage 是同一件事，只是这次是自动模式下被 PID 自己拦下来的。
+// pid_heater_blocked 是独立广播（不像 sensor_data 走节流合并），deviceNo 同样要匹配
+// 当前设备号，避免多设备时把别的设备的提示当成自己的弹出来。
+function handleHeaterBlocked(info) {
+  const targetId = String(prop.id ?? "null");
+  const infoId = info?.deviceNo == null ? "null" : String(info.deviceNo);
+  if (infoId !== targetId) return;
+  ElMessage.warning(info.message || "PID恒温控制：加热被拦截");
+}
 
 // 硬编码的开关 preffix ↔ t_behavior_field_mapper.f_name 映射：数据库里没有能直接
 // 关联“指令项”和“行为数据字段”的字段，只能靠这份约定维护；如果以后改了水泵/加热
@@ -269,6 +281,8 @@ onMounted(async () => {
     if (payload && payload._pidHeating) pidHeatingStatus.value = payload._pidHeating;
   });
 
+  unsubscribeHeaterBlocked = wsOn("pid_heater_blocked", handleHeaterBlocked);
+
   if (prop.storeData.length === 0) {
     await prop.fetchDirectData();
   }
@@ -281,6 +295,7 @@ onUnmounted(() => {
   unsubscribeDirectUpdate?.();
   unsubscribeBehaviorSync?.();
   unsubscribePidHeating?.();
+  unsubscribeHeaterBlocked?.();
   if (faultTimer) clearInterval(faultTimer);
 });
 </script>

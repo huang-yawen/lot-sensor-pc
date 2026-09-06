@@ -24,6 +24,7 @@ const systemConfig = require('./config/systemConfig');
 const { startMonitor: startSafetyMonitor } = require('./service/safety/safetyInterlock');
 const { initFaultStateFromDb, onFault } = require('./service/faultStatus/faultStatus');
 const { onAlarm } = require('./service/alarm/evaluateRules');
+const { onHeaterBlocked } = require('./service/pidHeating/pidHeating');
 const mqttClient = require('./mqtt/index')
 
 const app = express();
@@ -210,6 +211,12 @@ onFault((trigger) => {
 // 弹窗那样打断操作、要求用户复位。
 onAlarm((alarm) => {
     broadcast('alarm_triggered', alarm);
+});
+
+// PID 恒温控制想开加热但水泵没开，被拦下来时立即广播（不走节流）——性质跟自定义
+// 阈值告警一样是"提示、不需要用户处理"，同样用 AlarmNotifier.vue 的非阻塞通知展示。
+onHeaterBlocked((info) => {
+    broadcast('pid_heater_blocked', info);
 });
 
 // ==================== 设备在线状态定时广播 ====================

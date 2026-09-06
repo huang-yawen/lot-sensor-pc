@@ -54,6 +54,11 @@ const { getTargetTemp } = require('../controlShared/controlHelpers')
 const { isLockedByFault, isAnyLocked } = require('../faultStatus/faultStatus')
 // 周期历史落库：供"历史图表"页面画 PID 加热开关阶梯图，仅展示用途，失败不影响控制。
 const { saveCycleRecord } = require('./pidHeatingCycleHistory')
+// 水泵未开却要打开加热被拦截时，向前端提示一次（跟手动模式下点开关被拒绝弹的
+// ElMessage 是同一件事，只是这里是自动模式下被 PID 自己拦下来），事件由 app.js
+// 订阅后转发成 WebSocket 广播，写法跟 faultStatus.js 的 onFault 一致。
+const EventEmitter = require('events')
+const events = new EventEmitter()
 
 /** 每个设备的 PID 状态。
  *  - windowStart: 本 PWM 周期起始时间戳（ms，相对服务器时钟）
@@ -249,6 +254,9 @@ function getState(deviceNo) {
       filteredDerivative: 0,   // 微分项一阶低通滤波值
       lastDutyRaw: 0,          // 斜率限制前的原始 duty，用于计算变化量
       lastTempIn: null,         // 上一次进水温度，用于前馈计算
+      // 水泵未开时是否已经提醒过一次"加热被拦截"，避免每条消息都重复弹提示；
+      // 一旦水泵重新开启就清零，下次再被拦截时会重新提醒一次。
+      pumpBlockNotified: false,
     })
   }
   return stateMap.get(key)
@@ -460,6 +468,9 @@ async function evaluatePidHeating(info) {
   const elapsedInWindow = now - state.windowStart
   // 当 onDurationMs 等于窗口时长（100% 占空比）或 elapsedInWindow < onDurationMs 时开启
   const desired = (state.onDurationMs >= windowMs || elapsedInWindow < state.onDurationMs) ? 'on' : 'off'
+  // 每个周期的"关"阶段清零提醒标记，保证下一次进入"开"阶段如果还是被拦截，
+  // 会重新提醒一次，而不是从第一次拦截之后就再也不提醒。
+  if (desired === 'off') state.pumpBlockNotified = false
 
   // ============================================================
   // 指令下发（带防抖 + 状态未知时的保守同步）
@@ -482,7 +493,21 @@ async function evaluatePidHeating(info) {
     }
   }
 
-  if (shouldSend) {
+  // 未开水泵却要打开加热：跟手动模式下"水泵未开启，不能打开加热，请先打开水泵"是
+  // 同一条防线（SAFETY_INTERLOCK.requirePumpBeforeHeater，见 updateDirectConfigAndPublish.js），
+  // 这里补上自动模式这一侧——PID 算出来要开，也得先看水泵是不是真的开着，不是就拦下
+  // 这次下发，只在从"允许"变成"拦截"的那一刻提醒一次，避免每条消息都弹一次提示。
+  const requirePumpBeforeHeater = rootConfig.SAFETY_INTERLOCK?.requirePumpBeforeHeater !== false
+  const blockedByPump = shouldSend && desired === 'on' && requirePumpBeforeHeater && !(await readSwitchOn('pump', deviceNo))
+
+  if (blockedByPump) {
+    if (!state.pumpBlockNotified) {
+      state.pumpBlockNotified = true
+      console.warn(`[PidHeating] 拦截：水泵未开启时不打开加热，设备 ${deviceNo || '全局'}`)
+      events.emit('heaterBlocked', { deviceNo, message: '水泵未开启，PID恒温控制暂不打开加热，请先打开水泵' })
+    }
+  } else if (shouldSend) {
+    state.pumpBlockNotified = false
     try {
       await setHeater(desired, deviceNo, 'pid_heating')
       state.lastEvalTs = now
@@ -517,4 +542,14 @@ async function getPidHeatingStatus(info) {
   return { deviceNo, onDurationMs: Math.round(state.onDurationMs) }
 }
 
-module.exports = { evaluatePidHeating, isPidEnabled, readSwitchOn, readTempOut, getTargetTemp, setHeater, resolveParamConfigId, getPidHeatingStatus }
+module.exports = {
+  evaluatePidHeating,
+  isPidEnabled,
+  readSwitchOn,
+  readTempOut,
+  getTargetTemp,
+  setHeater,
+  resolveParamConfigId,
+  getPidHeatingStatus,
+  onHeaterBlocked: (listener) => events.on('heaterBlocked', listener),
+}
