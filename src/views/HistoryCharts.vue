@@ -1005,12 +1005,19 @@ const showPidCycleChart = computed(() => {
 })
 
 // 每个周期两个点：周期起始时刻开始加热（1），加热满 on_duration_ms 后关闭（0）。
+// 再补一个"最后一个周期窗口结束"的关闭点，让最后那一格的完整时长也能画出来。
 const pidCyclePoints = computed(() => {
   const points = []
-  for (const row of pidCycleRows.value) {
+  const rows = pidCycleRows.value
+  for (const row of rows) {
     const start = new Date(row.window_start).getTime()
     points.push({ time: start, value: 1 })
     points.push({ time: start + Number(row.on_duration_ms), value: 0 })
+  }
+  const last = rows[rows.length - 1]
+  if (last && points.length) {
+    const lastEnd = new Date(last.window_start).getTime() + Number(last.window_ms)
+    if (lastEnd > points[points.length - 1].time) points.push({ time: lastEnd, value: 0 })
   }
   return points
 })
@@ -1029,9 +1036,16 @@ function renderPidCycleChart() {
   const chart = echarts.init(el)
   pidCycleChartInstance = chart
 
-  const times = formatTimes(points.map((p) => ({ c_time: p.time })))
+  const pad2 = (n) => String(n).padStart(2, '0')
   chart.setOption({
-    tooltip: { trigger: 'axis' },
+    tooltip: {
+      trigger: 'axis',
+      formatter: (params) => {
+        const p = Array.isArray(params) ? params[0] : params
+        const d = new Date(p.value[0])
+        return `${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}<br/>加热：${p.value[1] === 1 ? '开' : '关'}`
+      },
+    },
     legend: { data: ['加热'], top: 0 },
     toolbox: {
       feature: { saveAsImage: { title: '下载图片' } },
@@ -1039,7 +1053,19 @@ function renderPidCycleChart() {
       top: 0,
     },
     grid: { left: 50, right: 30, top: 50, bottom: 50 },
-    xAxis: { type: 'category', data: times, axisLabel: { rotate: 15, fontSize: 10 } },
+    // 时间轴：每段宽度按真实时长渲染，才能看出每次加热持续多久、占空比大小；
+    // category 轴会把每个点等距排开，开/关段一样宽，看不出时长。
+    xAxis: {
+      type: 'time',
+      axisLabel: {
+        rotate: 15,
+        fontSize: 10,
+        formatter: (val) => {
+          const d = new Date(val)
+          return `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`
+        },
+      },
+    },
     yAxis: {
       type: 'value',
       min: 0,
@@ -1048,7 +1074,7 @@ function renderPidCycleChart() {
       axisLabel: { formatter: (v) => (v === 1 ? '开' : v === 0 ? '关' : '') },
     },
     series: [
-      { name: '加热', type: 'line', step: 'end', data: points.map((p) => p.value), itemStyle: { color: '#f97316' }, lineStyle: { color: '#f97316', width: 2 } },
+      { name: '加热', type: 'line', step: 'end', data: points.map((p) => [p.time, p.value]), itemStyle: { color: '#f97316' }, lineStyle: { color: '#f97316', width: 2 } },
     ],
   }, true)
 }

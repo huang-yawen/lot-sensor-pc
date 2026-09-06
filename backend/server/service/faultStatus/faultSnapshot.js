@@ -1,7 +1,7 @@
 /**
  * 【文件职责】故障前快照服务：故障触发瞬间捕获指令页面所有开关状态和数值参数，
- *   故障复位时按快照原样恢复（包括水泵/加热等执行器开关状态），确保用户修复设备
- *   后一键恢复到故障前的运行配置，避免重新输入参数。
+ *   故障复位时按快照恢复水泵/加热等执行器**开关**状态（数值/阈值类指令项不回写，
+ *   避免覆盖用户在故障期间的合法修改——安全联锁"故障期间可调阈值排查问题"是有意放行的）。
  *
  *   快照按设备隔离（多设备模式下每个设备一份），仅保留最新一份（覆盖式），
  *   因为同一设备多个故障顺序触发时，应该恢复的是"最近一次故障前"的状态，
@@ -88,8 +88,8 @@ function getSnapshot(deviceNo) {
 }
 
 /**
- * 从快照恢复所有参数和开关状态到指令页面（重写 t_direct），
- * 并按快照中记录的开关状态重新启动对应执行器。
+ * 从快照只恢复开关类指令项（f_type=1）的状态到指令页面（重写 t_direct），数值/阈值类
+ * 不回写（见下方 for 循环注释）；并按快照中记录的开关状态重新启动对应执行器。
  *
  * 注意：恢复时不发布 MQTT 指令给设备硬件，由调用方在恢复完成后统一触发
  * "按快照开关状态重启执行器"。这里只负责把 t_direct 数据恢复到快照时刻的样子。
@@ -108,6 +108,11 @@ async function restoreFromSnapshot(deviceNo) {
   let restored = 0
   const restoredItems = []
   for (const item of snapshot.items) {
+    // 只恢复开关类（f_type=1）。故障期间没有任何自动流程会改数值/阈值类指令项，
+    // 只有用户手动改（且安全联锁有意放行"故障期间调阈值排查问题"），把它们一并回写
+    // 只会覆盖掉用户的合法修改。快照仍完整抓取所有项（供 getSwitchValueByPrefix 查
+    // 开关状态、以及诊断），恢复只动开关。
+    if (String(item.f_type) !== '1') continue
     try {
       await saveDirectData({
         config_id: item.config_id,
@@ -125,7 +130,8 @@ async function restoreFromSnapshot(deviceNo) {
       console.error(`[FaultSnapshot] 恢复项失败 config_id=${item.config_id}:`, err.message)
     }
   }
-  console.log(`[FaultSnapshot] 已从快照恢复 | 设备=${key} | 恢复项数=${restored}/${snapshot.items.length}`)
+  const switchCount = snapshot.items.filter(it => String(it.f_type) === '1').length
+  console.log(`[FaultSnapshot] 已从快照恢复开关项 | 设备=${key} | ${restored}/${switchCount}（数值/阈值类不回写，共 ${snapshot.items.length} 项）`)
   return {
     restored,
     snapshotTriggerId: snapshot.triggerId,

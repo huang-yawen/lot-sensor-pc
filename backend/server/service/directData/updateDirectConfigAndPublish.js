@@ -178,6 +178,23 @@ async function validateBoundPair(configId, value, d_no) {
   return null
 }
 
+/** saveDirectData 带小退避重试：故障期间数据库并发压力大时偶发死锁 / 连接抖动，
+ *  重试几次再放弃。返回 { ok:true, result } 或 { ok:false, error }——调用方据此如实
+ *  报错，而不是直接丢值、或把存库失败谎报成别的错。 */
+async function saveDirectDataWithRetry(params, tries = 3) {
+  let lastErr = null
+  for (let attempt = 1; attempt <= tries; attempt++) {
+    try {
+      return { ok: true, result: await saveDirectData(params) }
+    } catch (err) {
+      lastErr = err
+      console.warn(`[DirectUpdate] 存库第 ${attempt}/${tries} 次失败: ${err.message}`)
+      if (attempt < tries) await new Promise(r => setTimeout(r, 150 * attempt))
+    }
+  }
+  return { ok: false, error: lastErr }
+}
+
 /**
  * 处理指令更新请求
  * POST /directData/update
@@ -324,8 +341,22 @@ module.exports = async (req, res) => {
       // 设备号原样存进 t_operation_history，导致这条全局操作历史归错到一个叫
       // "null" 的设备名下。
       const saveDNo = deviceId
-      const oldValue = await getDirectValue({ config_id, d_no: saveDNo })
-      const saveResult = await saveDirectData({ config_id, value, d_no: saveDNo })
+      let oldValue = null
+      try {
+        oldValue = await getDirectValue({ config_id, d_no: saveDNo })
+      } catch (readErr) {
+        console.warn('[DirectUpdate] 读旧值失败（不影响存库，仅历史 old_value 记为空）:', readErr.message)
+      }
+      const saved = await saveDirectDataWithRetry({ config_id, value, d_no: saveDNo })
+      if (!saved.ok) {
+        console.error('[DirectUpdate] 本地参数存库多次失败:', saved.error && saved.error.message)
+        return res.status(503).json({
+          success: false,
+          message: '保存到数据库失败，请稍后重试',
+          data: { status: 'save_failed', error: saved.error && saved.error.message }
+        })
+      }
+      const saveResult = saved.result
       console.log('[DirectUpdate] 本地配置保存成功（未配置 MQTT 字段，不下发）:', saveResult)
 
       const historyResult = await saveOperationHistory({
@@ -366,7 +397,10 @@ module.exports = async (req, res) => {
       console.log('[DirectUpdate] 全局配置，直接发送')
     }
 
-    // 4. 设备在线 -> 先发送指令（间隔 200ms 连续发送两次）
+    // 4. 设备在线 -> 先发送指令（间隔 200ms 连续发送两次）。
+    //    这一段只负责"发出去"，跟下面第 5 步"存库"是两段独立的 try/catch：发送本身失败
+    //    才返回「MQTT 发送失败」；一旦确认发出去了，存库偶发失败不再谎报成发送失败、
+    //    也不直接丢弃。
     try {
       // 第一次发送
       const firstPublish = await mqttClient.publish(getTopic('control'), payload)
@@ -382,37 +416,6 @@ module.exports = async (req, res) => {
         throw new Error(`MQTT 第二次发送未成功: ${secondPublish.status}`)
       }
       console.log('[DirectUpdate] MQTT 第二次发送成功')
-
-      // 5. 发送成功后再保存到数据库。统一用上面已标准化的 deviceId（null=全局，
-      // 设备号=设备专属），理由同上（2.5 步）：不能直接用前端传来的原始 d_no。
-      const saveDNo = deviceId
-      const oldValue = await getDirectValue({ config_id, d_no: saveDNo })
-      const saveResult = await saveDirectData({ config_id, value, d_no: saveDNo })
-      console.log('[DirectUpdate] 数据库保存成功:', saveResult)
-
-      // 记录操作历史（手动指令下发）
-      // 只存 config_id + new_value，操作名称和值含义通过 JOIN t_direct_config 获取
-      const historyResult = await saveOperationHistory({
-        d_no: deviceId,
-        config_id: Number(config_id),
-        old_value: oldValue,
-        new_value: String(value),
-        source: 'manual'
-      })
-
-      const historyMessage = historyResult.skipped
-        ? '指令已发送并保存；当前配置不记录软件操作历史'
-        : historyResult.success
-          ? '指令已发送、保存并记录操作历史'
-          : '指令已发送并保存，但操作历史记录失败'
-      const wsBroadcast = req.app.get('wsBroadcast')
-      if (wsBroadcast) wsBroadcast('direct_data_updated', { config_id, value, d_no: saveDNo })
-
-      return res.json({
-        success: true,
-        message: historyMessage,
-        data: { db: saveResult, status: 'published', history: historyResult }
-      })
     } catch (err) {
       console.error('[DirectUpdate] MQTT 发送失败:', err.message)
       return res.status(503).json({
@@ -421,6 +424,56 @@ module.exports = async (req, res) => {
         data: { status: 'failed', error: err.message }
       })
     }
+
+    // 5. 已确认下发，再保存到数据库。统一用上面已标准化的 deviceId（null=全局，
+    //    设备号=设备专属），理由同上（2.5 步）：不能直接用前端传来的原始 d_no。
+    //    "确认发出去了"之后就应尽量把值落库——故障期间数据库并发压力大（快照全表扫、
+    //    强制关泵/加热、告警入库、传感器持续入库、前端轮询…），saveDirectData 偶发拿不到
+    //    连接 / 锁等待超时，这里带小退避重试几次，仍失败才如实返回「已发送但存库失败」，
+    //    不再谎报成 MQTT 失败。
+    const saveDNo = deviceId
+    let oldValue = null
+    try {
+      oldValue = await getDirectValue({ config_id, d_no: saveDNo })
+    } catch (readErr) {
+      console.warn('[DirectUpdate] 读旧值失败（不影响存库，仅历史 old_value 记为空）:', readErr.message)
+    }
+
+    const saved = await saveDirectDataWithRetry({ config_id, value, d_no: saveDNo })
+    if (!saved.ok) {
+      console.error('[DirectUpdate] 指令已下发但存库多次失败:', saved.error && saved.error.message)
+      return res.status(503).json({
+        success: false,
+        message: '指令已发送到设备，但保存到数据库失败，请稍后重试',
+        data: { status: 'sent_not_saved', error: saved.error && saved.error.message }
+      })
+    }
+    const saveResult = saved.result
+    console.log('[DirectUpdate] 数据库保存成功:', saveResult)
+
+    // 记录操作历史（手动指令下发）
+    // 只存 config_id + new_value，操作名称和值含义通过 JOIN t_direct_config 获取
+    const historyResult = await saveOperationHistory({
+      d_no: deviceId,
+      config_id: Number(config_id),
+      old_value: oldValue,
+      new_value: String(value),
+      source: 'manual'
+    })
+
+    const historyMessage = historyResult.skipped
+      ? '指令已发送并保存；当前配置不记录软件操作历史'
+      : historyResult.success
+        ? '指令已发送、保存并记录操作历史'
+        : '指令已发送并保存，但操作历史记录失败'
+    const wsBroadcast = req.app.get('wsBroadcast')
+    if (wsBroadcast) wsBroadcast('direct_data_updated', { config_id, value, d_no: saveDNo })
+
+    return res.json({
+      success: true,
+      message: historyMessage,
+      data: { db: saveResult, status: 'published', history: historyResult }
+    })
 
   } catch (err) {
     console.error('[DirectUpdate] 服务器错误:', err)
