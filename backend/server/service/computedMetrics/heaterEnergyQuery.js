@@ -26,7 +26,16 @@
  *   ③ with_power — 算每一行的瞬时功率、以及这一行相对上一行贡献的电能/热能/流量
  *                   增量（乘以 dt_sec，超过 MAX_GAP_SEC 的间隔视为离线间隙不计入，
  *                   跟 switchDurationService.js/cumulativeService.js on_duration
- *                   同一套护栏）。
+ *                   同一套护栏）。**三个增量都 gate 在 heater_on 上**——只统计"加热时段"，
+ *                   口径完全对称，所以最外层 SEC = 加热电耗 ÷ 加热时段流量 = "每加热 1L 水
+ *                   耗多少电"，不会被水泵空跑（没加热）时的流量把数值稀释偏低。
+ *                   计算方法（每行增量，dt = min(与上一条读数的秒差, MAX_GAP_SEC)）：
+ *                     瞬时功率  actual_power_w = heater_on ? P_额定 : 0                单位 W
+ *                     电能增量  electric_wh_delta = heater_on × dt × P_额定 / 3600     单位 Wh
+ *                     热能增量  heat_wh_delta = heater_on × dt × (ρ·Cp·(flow/60/1000)·|ΔT|) / 3600  单位 Wh
+ *                     流量增量  flow_l_delta = heater_on × dt × (flow/60)              单位 L
+ *                   （flow 声明单位 L/min：/60→L/s、/1000→m³/s；/3600 是 W·s→Wh。）
+ *                   最外层 SEC = MAX(累计电能 Wh) / NULLIF(MAX(累计加热时段流量 L), 0)   单位 Wh/L
  *   ④ calculated — 用窗口函数把 ③ 的增量滚动累加成"从查询范围起点到这一行为止"
  *                   的累计值，语义上跟"累计流量"图表一致：先在全部原始数据上精确
  *                   逐行累加，再按时间分桶降采样、每桶取累计值最大的那一行（因为
@@ -109,7 +118,7 @@ async function queryHeaterEnergy(options = {}) {
           heater_on * LEAST(COALESCE(dt_sec, 0), ${MAX_GAP_SEC}) * ${heaterRatedPower} / 3600 AS electric_wh_delta,
           heater_on * LEAST(COALESCE(dt_sec, 0), ${MAX_GAP_SEC})
             * COALESCE(${waterDensity} * ${waterSpecificHeat} * (flow / 60 / 1000) * ABS(temp2 - temp1), 0) / 3600 AS heat_wh_delta,
-          LEAST(COALESCE(dt_sec, 0), ${MAX_GAP_SEC}) * COALESCE(flow / 60, 0) AS flow_l_delta
+          heater_on * LEAST(COALESCE(dt_sec, 0), ${MAX_GAP_SEC}) * COALESCE(flow / 60, 0) AS flow_l_delta
         FROM (
           SELECT
             s.id, s.c_time, s.temp1, s.temp2, s.flow,

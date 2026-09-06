@@ -752,11 +752,15 @@ const defaultConfig = {
   // 13. 需要计算的数据（首页专用展示板块）
   // --------------------------------------------------------------------------
   // 每个指标可用布尔值独立控制是否在首页展示；enabled 是总开关。
-  //   resistanceK              - 系统阻力系数 K = ΔP / Q²（结垢/堵塞黄金指标）
-  //   pressureDropRate         - 压力陡降速率 V = dP/dt（吸入空气紧急停泵判定）
-  //   tempChangeRate           - 温度变化率 dT/dt（断线/开路/短路判定）
-  //   heatExchangeEfficiency   - 换热效率 η = ρ·Cp·Q·ΔT / P_heater
-  //   eerHeatBalance           - 系统能效比（COP）与热平衡（换热量/热损失）
+  //   resistanceK              - 系统阻力系数 K = 泵出口压力(kPa) / 流量(L/s)²（通畅度代理
+  //                              指标：单个压力传感器，用绝对表压不是跨管段 ΔP，工况稳定才可比）
+  //   pressureDropRate         - 压力陡降速率 V = (本次压力−上次压力)/时间差(s)，kPa/s
+  //   tempChangeRate           - 温度变化率 dT/dt = (本次温度−上次温度)/时间差(s)，℃/s
+  //   heatExchangeEfficiency   - 换热效率 η = (ρ·Cp·Q·max(0,出水−进水)) / P_额定 × 100%（水带走的热功率÷额定电功率；出水更冷时按 0）
+  //   eerHeatBalance           - 热平衡：P_额定 = 水带走的热功率 + 未被带走部分（W 分解；电阻加热无 COP）
+  //   heatingEfficiency        - 加热效率 = 实际升温ΔT ÷ 理论升温ΔT ×100%（理论升温=P_额定/(ρ·Cp·Q)，
+  //                              温度域表达，数值上=换热效率 η；仅加热开启+有流量时算）
+  //   heatingRate              - 加热速度 = 持续加热中出水温度的升温速率 (本次−上次出水温度)/Δt（℃/min；加热刚开启那一条不算）
   //   flowPressureCurve        - 流量-压力特性曲线拟合（线性回归斜率）
   //   cumulativeFlow           - 累计流量（上一时刻总流量 + 瞬时流量 × 时间）
   //   cumulativeFlowMode       - 累计流量计算方式：'all'=全表累计（默认，从第一条数据起，
@@ -777,6 +781,8 @@ const defaultConfig = {
     tempChangeRate: true,
     heatExchangeEfficiency: true,
     eerHeatBalance: true,
+    heatingEfficiency: true,
+    heatingRate: true,
     flowPressureCurve: true,
     cumulativeFlow: true,
     cumulativeFlowMode: 'all',
@@ -807,6 +813,7 @@ const defaultConfig = {
   //   showPidTrackingChart    - 显示"PID跟踪对比"（目标温度参考线 + 温度2 实际值）
   //   showDeviceStateChart    - 显示"设备状态时间线"（水泵/加热开关阶梯图）
   //   showPidHeatingCycleChart - 显示"PID周期加热开关"（按 PWM 周期边界复原的加热开关阶梯图）
+  //   showHeatingAnalysisChart - 显示"加热效率与加热速度"（实际升温 vs 理论升温、加热时的升温速率）
   //   showHeaterEnergyChart   - 显示"加热能耗分析"（瞬时实际加热功率、累计耗电量与
   //     累计换热量对比、单位流量能耗），需要 COMPUTED_METRICS.heaterRatedPower 配置为
   //     正数才会有数据，加热额定功率没配置时这张图查询直接返回空
@@ -824,6 +831,7 @@ const defaultConfig = {
     showDeviceStateChart: true,
     showPidHeatingCycleChart: true,
     showHeaterEnergyChart: true,
+    showHeatingAnalysisChart: true,
     showDerivedMetricCharts: true,
     showTempFlowScatter: true,
   },
@@ -1164,7 +1172,7 @@ function validate(config) {
   if (pumpVelocity.dutyMin > pumpVelocity.dutyMax) throw new Error('PUMP_VELOCITY_CONTROL.dutyMin 不能大于 dutyMax')
   const computed = config.COMPUTED_METRICS
   if (!computed || typeof computed !== 'object' || Array.isArray(computed)) throw new Error('COMPUTED_METRICS 必须是 JSON 对象')
-  for (const key of ['enabled', 'resistanceK', 'pressureDropRate', 'tempChangeRate', 'heatExchangeEfficiency', 'eerHeatBalance', 'flowPressureCurve', 'cumulativeFlow', 'averageVelocity', 'waterLevel', 'averageTempChart', 'averageVelocityChart']) {
+  for (const key of ['enabled', 'resistanceK', 'pressureDropRate', 'tempChangeRate', 'heatExchangeEfficiency', 'eerHeatBalance', 'heatingEfficiency', 'heatingRate', 'flowPressureCurve', 'cumulativeFlow', 'averageVelocity', 'waterLevel', 'averageTempChart', 'averageVelocityChart']) {
     if (typeof computed[key] !== 'boolean') throw new Error(`COMPUTED_METRICS.${key} 必须是布尔值`)
   }
   if (!['session', 'all'].includes(computed.cumulativeFlowMode)) throw new Error("COMPUTED_METRICS.cumulativeFlowMode 只能是 'session' 或 'all'")
@@ -1173,7 +1181,7 @@ function validate(config) {
   }
   const historyCharts = config.HISTORY_CHARTS
   if (!historyCharts || typeof historyCharts !== 'object' || Array.isArray(historyCharts)) throw new Error('HISTORY_CHARTS 必须是 JSON 对象')
-  for (const key of ['showCumulative', 'showTimeWindow', 'showAverageChart', 'showTempChart', 'showFlowPressureChart', 'showPidTrackingChart', 'showPumpVelocityTrackingChart', 'showDeviceStateChart', 'showPidHeatingCycleChart', 'showHeaterEnergyChart', 'showDerivedMetricCharts', 'showTempFlowScatter']) {
+  for (const key of ['showCumulative', 'showTimeWindow', 'showAverageChart', 'showTempChart', 'showFlowPressureChart', 'showPidTrackingChart', 'showPumpVelocityTrackingChart', 'showDeviceStateChart', 'showPidHeatingCycleChart', 'showHeaterEnergyChart', 'showHeatingAnalysisChart', 'showDerivedMetricCharts', 'showTempFlowScatter']) {
     if (typeof historyCharts[key] !== 'boolean') throw new Error(`HISTORY_CHARTS.${key} 必须是布尔值`)
   }
   if (!Number.isInteger(historyCharts.pointLimit) || historyCharts.pointLimit < 10 || historyCharts.pointLimit > 2000) {

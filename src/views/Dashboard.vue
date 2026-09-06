@@ -175,13 +175,13 @@ const computedMetricList = computed(() => {
   const list = []
 
   if (flags.resistanceK && entry.resistanceK) {
-    const trend = entry.resistanceK.trend3d
+    const trend = entry.resistanceK.trendRecent
     list.push({
       key: 'resistanceK',
       label: '系统阻力系数 K',
       unit: entry.resistanceK.unit || '',
       value: fmt(entry.resistanceK.value, 4),
-      note: trend != null ? `3天趋势 ${(trend * 100).toFixed(1)}%` : '',
+      note: trend != null ? `近期趋势 ${(trend * 100).toFixed(1)}%（约30分钟内，未落库）` : '',
     })
   }
   if (flags.pressureDropRate && entry.pressureDropRate) {
@@ -209,17 +209,41 @@ const computedMetricList = computed(() => {
       key: 'heatExchangeEfficiency',
       label: '换热效率',
       unit: '%',
-      value: eff != null ? fmt(eff * 100, 1) : null,
+      // 后端 value 已是百分数（水带走的热功率 ÷ 加热额定电功率 ×100），这里不再 ×100
+      value: eff != null ? fmt(eff, 1) : null,
       note: entry.heatExchangeEfficiency.heatTransferredW ? `换热量 ${fmt(entry.heatExchangeEfficiency.heatTransferredW, 0)}W` : '',
     })
   }
   if (flags.eerHeatBalance && entry.eerHeatBalance) {
+    const bal = entry.eerHeatBalance
     list.push({
       key: 'eerHeatBalance',
-      label: '能效比 / 热平衡',
-      unit: '',
-      value: entry.eerHeatBalance.cop != null ? fmt(entry.eerHeatBalance.cop, 3) : null,
-      note: entry.eerHeatBalance.heatLossW != null ? `散热损失 ${fmt(entry.eerHeatBalance.heatLossW, 0)}W` : '',
+      label: '热平衡（电功率去向）',
+      unit: 'W',
+      // 电阻加热器 COP 恒为 1，不再展示"能效比"；只给电功率去向分解：
+      // 水带走的热功率 / 没被水带走的部分（散热+蓄热+测量误差）
+      value: bal.heatTransferredW != null
+        ? `换热 ${fmt(bal.heatTransferredW, 0)} / 未带走 ${fmt(bal.heatLossW, 0)}`
+        : null,
+    })
+  }
+  if (flags.heatingEfficiency && entry.heatingEfficiency) {
+    const he = entry.heatingEfficiency
+    list.push({
+      key: 'heatingEfficiency',
+      label: '加热效率',
+      unit: '%',
+      // 实际升温ΔT ÷ 理论升温ΔT ×100%（理论升温 = 加热额定功率全进水里能升多少度）
+      value: he.value != null ? fmt(he.value, 1) : null,
+      note: he.actualRiseC != null ? `实际升温 ${fmt(he.actualRiseC, 2)}℃ / 理论 ${fmt(he.theoreticalRiseC, 2)}℃` : '',
+    })
+  }
+  if (flags.heatingRate && entry.heatingRate) {
+    list.push({
+      key: 'heatingRate',
+      label: '加热速度',
+      unit: entry.heatingRate.unit || '℃/min',
+      value: fmt(entry.heatingRate.value, 3),
     })
   }
   if (flags.flowPressureCurve && entry.flowPressureCurve) {

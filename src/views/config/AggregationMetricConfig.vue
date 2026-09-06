@@ -129,6 +129,7 @@ const displayConfig = reactive({
   showDeviceStateChart: true,
   showPidHeatingCycleChart: true,
   showHeaterEnergyChart: true,
+  showHeatingAnalysisChart: true,
   showDerivedMetricCharts: true,
   showTempFlowScatter: true,
 })
@@ -143,6 +144,7 @@ const chartSwitches = [
   { key: 'showDeviceStateChart', label: '设备状态时间线', description: '水泵、加热开关状态阶梯图，展示自动控制的实际动作历史。' },
   { key: 'showPidHeatingCycleChart', label: 'PID周期加热开关', description: '按 PID PWM 周期边界精确复原加热开关阶梯波形，横轴是周期时间点而不是设备采样频率，方便观察占空比是否合理。' },
   { key: 'showHeaterEnergyChart', label: '加热能耗分析', description: '瞬时加热功率、累计耗电量与累计换热量对比、单位流量能耗，需要先在“计算数据”页配置加热额定功率。' },
+  { key: 'showHeatingAnalysisChart', label: '加热效率与加热速度', description: '实际升温 vs 理论升温（理论升温=加热额定功率÷(ρ·Cp·流量)）、加热时出水的升温速率(℃/min)，需要先在“计算数据”页配置加热额定功率。' },
   { key: 'showDerivedMetricCharts', label: '自定义公式指标', description: '"公式与图表"里勾选了"历史图表"的自定义指标，每条一张图。' },
   { key: 'showTempFlowScatter', label: '温度-流量相关性', description: '出水温度与瞬时流量的散点图，用来看两者的相关趋势。' },
 ]

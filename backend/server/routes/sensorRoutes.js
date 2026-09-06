@@ -48,6 +48,7 @@ const scatterChartController = require('../controllers/computedMetrics/scatterCh
 const currentTempController = require('../controllers/computedMetrics/currentTempController')
 const deviceStateTrendController = require('../controllers/computedMetrics/deviceStateTrendController')
 const heaterEnergyController = require('../controllers/computedMetrics/heaterEnergyController')
+const heatingAnalysisController = require('../controllers/computedMetrics/heatingAnalysisController')
 const pidHeatingCycleController = require('../controllers/pidHeating/pidHeatingCycleController')
 const switchDurationController = require('../controllers/switchDuration/switchDurationController')
 
@@ -166,6 +167,7 @@ router.get('/api/temp-flow-scatter', scatterChartController)
 router.get('/api/current-temp', currentTempController)
 router.get('/api/device-state-trend', deviceStateTrendController)
 router.get('/api/heater-energy', heaterEnergyController)
+router.get('/api/heating-analysis', heatingAnalysisController)
 router.get('/api/pid-heating-cycles', pidHeatingCycleController)
 
 /* ============================================================

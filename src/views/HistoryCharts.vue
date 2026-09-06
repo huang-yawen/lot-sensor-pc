@@ -128,6 +128,21 @@
       </div>
     </section>
 
+    <!-- ==================== 加热效率与加热速度 ==================== -->
+    <section v-if="showHeatingAnalysisChart" class="chart-section">
+      <h2 class="section-title">加热效率与加热速度</h2>
+      <div class="chart-grid" style="grid-template-columns: repeat(2, 1fr);">
+        <div class="chart-card">
+          <div class="chart-card-header"><h3>加热效率（实际升温 / 理论升温）</h3></div>
+          <div ref="heatingEfficiencyChartRef" class="chart-el"></div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-card-header"><h3>加热速度（加热时出水升温速率）</h3></div>
+          <div ref="heatingRateChartRef" class="chart-el"></div>
+        </div>
+      </div>
+    </section>
+
     <!-- ==================== 设备状态时间线（水泵/加热开关阶梯图） ==================== -->
     <section v-if="showDeviceStateChart" class="chart-section">
       <h2 class="section-title">设备状态时间线</h2>
@@ -177,7 +192,7 @@
     </section>
 
     <el-empty
-      v-if="!loading && !cumulativeEntries.length && !timeWindowEntries.length && !showAverageChart && !showTempFlowScatter && !showTempChart && !showFlowPressureChart && !showPidTrackingChart && !showDeviceStateChart && !showHeaterEnergyChart && !cumulativeFlowEntry && !switchDurationEntries.length && !derivedMetricEntries.length"
+      v-if="!loading && !cumulativeEntries.length && !timeWindowEntries.length && !showAverageChart && !showTempFlowScatter && !showTempChart && !showFlowPressureChart && !showPidTrackingChart && !showDeviceStateChart && !showHeaterEnergyChart && !showHeatingAnalysisChart && !cumulativeFlowEntry && !switchDurationEntries.length && !derivedMetricEntries.length"
       description="所选时间范围内暂无数据，或配置中心还没启用相关图表"
     />
   </div>
@@ -217,6 +232,7 @@ const historyChartsConfig = computed(() => ({
   showDeviceStateChart: true,
   showPidHeatingCycleChart: true,
   showHeaterEnergyChart: true,
+  showHeatingAnalysisChart: true,
   showDerivedMetricCharts: true,
   showTempFlowScatter: true,
   ...systemStore.config.HISTORY_CHARTS,
@@ -232,16 +248,45 @@ const deviceStateRows = ref([])
 const pidCycleRows = ref([])
 const derivedMetricData = ref({})
 const heaterEnergyRows = ref([])
+const heatingEfficiencyRows = ref([])
+const heatingRateRows = ref([])
 
-/** 统一的时间轴格式化，三张图共用。 */
+/** 统一的时间轴格式化，十几张图共用。按 rows 数组引用缓存结果——loadAll() 每次拉数据
+ * 都是整体换一个新数组，缓存会随新数据自然失效；同一批数据被多张图复用时直接命中缓存，
+ * 省掉重复的 toLocaleString（十几张图 × 几百行 = 几千次，是进页面卡顿的一部分）。 */
+const _formatTimesCache = new WeakMap()
 function formatTimes(rows) {
-  return rows.map((r) => (r.c_time
+  if (!Array.isArray(rows)) return []
+  const cached = _formatTimesCache.get(rows)
+  if (cached) return cached
+  const out = rows.map((r) => (r.c_time
     ? new Date(r.c_time).toLocaleString('zh-CN', {
         year: 'numeric', month: '2-digit', day: '2-digit',
         hour: '2-digit', minute: '2-digit', second: '2-digit',
         hour12: false,
       })
     : ''))
+  _formatTimesCache.set(rows, out)
+  return out
+}
+
+// ---- 图表渲染错帧队列：进入页面时十几张 echarts 图如果在同一帧里全部 init + setOption，
+// 主线程会一次性卡住几百毫秒。这里把每张图的渲染塞进队列，用 requestAnimationFrame 每帧
+// 只跑到 ~8ms 就把控制权还给浏览器，图表在一两百毫秒内陆续画出来，但页面全程可交互、不卡。
+const _renderQueue = []
+let _renderRaf = 0
+function _drainRenderQueue() {
+  _renderRaf = 0
+  const t0 = performance.now()
+  while (_renderQueue.length && performance.now() - t0 < 8) {
+    const fn = _renderQueue.shift()
+    try { fn() } catch (err) { console.error('[HistoryCharts] 图表渲染失败:', err) }
+  }
+  if (_renderQueue.length) _renderRaf = requestAnimationFrame(_drainRenderQueue)
+}
+function queueRender(fn) {
+  if (_renderQueue.indexOf(fn) === -1) _renderQueue.push(fn)
+  if (!_renderRaf) _renderRaf = requestAnimationFrame(_drainRenderQueue)
 }
 
 function currentRangeParams() {
@@ -261,7 +306,7 @@ async function loadAll() {
   loading.value = true
   try {
     const params = currentRangeParams()
-    const [cumRes, twRes, avgRes, stateRes, pidCycleRes, derivedRes, scatterRes, energyRes] = await Promise.allSettled([
+    const [cumRes, twRes, avgRes, stateRes, pidCycleRes, derivedRes, scatterRes, energyRes, heatingRes] = await Promise.allSettled([
       api.get('/api/cumulative', { params }),
       api.get('/api/time-window', { params }),
       api.get('/api/average-chart', { params }),
@@ -270,6 +315,7 @@ async function loadAll() {
       api.get('/api/derived-metrics/history', { params }),
       api.get('/api/temp-flow-scatter', { params }),
       api.get('/api/heater-energy', { params }),
+      api.get('/api/heating-analysis', { params }),
     ])
     cumulativeData.value = cumRes.status === 'fulfilled' ? (cumRes.value.data?.data || {}) : {}
     timeWindowData.value = twRes.status === 'fulfilled' ? (twRes.value.data?.data || {}) : {}
@@ -281,6 +327,8 @@ async function loadAll() {
     derivedMetricData.value = derivedRes.status === 'fulfilled' ? (derivedRes.value.data?.data || {}) : {}
     scatterRows.value = scatterRes.status === 'fulfilled' ? (scatterRes.value.data?.data || []) : []
     heaterEnergyRows.value = energyRes.status === 'fulfilled' ? (energyRes.value.data?.data?.rows || []) : []
+    heatingEfficiencyRows.value = heatingRes.status === 'fulfilled' ? (heatingRes.value.data?.data?.efficiency || []) : []
+    heatingRateRows.value = heatingRes.status === 'fulfilled' ? (heatingRes.value.data?.data?.rate || []) : []
   } finally {
     loading.value = false
   }
@@ -372,9 +420,9 @@ function renderCumulativeChart() {
 
 watch([cumulativeEntries, cumulativeChartRef], () => {
   nextTick(() => {
-    if (cumulativeChartRef.value) renderCumulativeChart()
+    if (cumulativeChartRef.value) queueRender(renderCumulativeChart)
   })
-}, { deep: true })
+})
 
 // ==================== 滑动统计 ====================
 const timeWindowMetricConfigs = computed(() => {
@@ -402,7 +450,7 @@ const chartRefs = {}
 function setChartRef(key, el) {
   if (el && !chartRefs[key]) {
     chartRefs[key] = el
-    nextTick(() => renderEntryChart(key))
+    nextTick(() => queueRender(() => renderEntryChart(key)))
   }
 }
 
@@ -442,10 +490,10 @@ function renderEntryChart(key) {
 watch(timeWindowEntries, () => {
   nextTick(() => {
     timeWindowEntries.value.forEach((e) => {
-      if (chartRefs[e.key]) renderEntryChart(e.key)
+      if (chartRefs[e.key]) queueRender(() => renderEntryChart(e.key))
     })
   })
-}, { deep: true })
+})
 
 // ==================== 平均温度 / 平均流速 ====================
 const showAverageChart = computed(() => {
@@ -506,9 +554,9 @@ function renderAverageChart() {
 
 watch([averageChartRows, averageChartRef], () => {
   nextTick(() => {
-    if (averageChartRef.value) renderAverageChart()
+    if (averageChartRef.value) queueRender(renderAverageChart)
   })
-}, { deep: true })
+})
 
 // ==================== 温度-流量相关性（散点图） ====================
 const showTempFlowScatter = computed(() => {
@@ -554,9 +602,9 @@ function renderScatterChart() {
 
 watch([scatterRows, scatterChartRef], () => {
   nextTick(() => {
-    if (scatterChartRef.value) renderScatterChart()
+    if (scatterChartRef.value) queueRender(renderScatterChart)
   })
-}, { deep: true })
+})
 
 // ==================== 温度曲线（进水温度 / 出水温度） ====================
 // 跟"平均温度与平均流速"共用同一批查询结果（averageChartRows 已经带了 temp1/temp2/flow/pressure），
@@ -624,9 +672,9 @@ function renderTempChart() {
 
 watch([averageChartRows, timeWindowData, tempChartRef], () => {
   nextTick(() => {
-    if (tempChartRef.value) renderTempChart()
+    if (tempChartRef.value) queueRender(renderTempChart)
   })
-}, { deep: true })
+})
 
 // ==================== 瞬时流量与瞬时压力（双轴，单位不同） ====================
 const showFlowPressureChart = computed(() => {
@@ -672,9 +720,9 @@ function renderFlowPressureChart() {
 
 watch([averageChartRows, flowPressureChartRef], () => {
   nextTick(() => {
-    if (flowPressureChartRef.value) renderFlowPressureChart()
+    if (flowPressureChartRef.value) queueRender(renderFlowPressureChart)
   })
-}, { deep: true })
+})
 
 // ==================== PID跟踪对比（目标温度参考线 + 出水温度实际值） ====================
 // 目标温度在指令中心只存"当前值"，没有历史，没法画成随时间变化的曲线，
@@ -737,9 +785,9 @@ function renderPidTrackingChart() {
 
 watch([averageChartRows, targetTemp, pidTrackingChartRef], () => {
   nextTick(() => {
-    if (pidTrackingChartRef.value) renderPidTrackingChart()
+    if (pidTrackingChartRef.value) queueRender(renderPidTrackingChart)
   })
-}, { deep: true })
+})
 
 // ==================== 恒流速跟踪对比（目标流速参考线 + 平均流速实际值） ====================
 // 跟 PID 跟踪对比同一个套路：目标流速在指令中心只有"当前值"没有历史，画成水平参考线，
@@ -804,9 +852,9 @@ function renderPumpVelocityTrackingChart() {
 
 watch([averageChartRows, targetVelocity, pumpVelocityTrackingChartRef], () => {
   nextTick(() => {
-    if (pumpVelocityTrackingChartRef.value) renderPumpVelocityTrackingChart()
+    if (pumpVelocityTrackingChartRef.value) queueRender(renderPumpVelocityTrackingChart)
   })
-}, { deep: true })
+})
 
 // ==================== 加热能耗分析（瞬时功率 / 累计电耗与换热量 / 单位流量能耗） ====================
 // 数据来自独立接口 /api/heater-energy（heaterEnergyRows），不跟 averageChartRows 混用——
@@ -857,11 +905,11 @@ function renderActualPowerChart() {
 }
 
 watch([heaterEnergyRows, actualPowerChartRef], () => {
-  nextTick(() => { if (actualPowerChartRef.value) renderActualPowerChart() })
-}, { deep: true })
+  nextTick(() => { if (actualPowerChartRef.value) queueRender(renderActualPowerChart) })
+})
 
-// ---- 累计耗电量 / 累计换热量（Wh）：两条线画在同一张图，两条线的高度差直观体现
-// "花的电"和"传给水的热"之间的差距，本质就是换热效率 η 的可视化版本 ----
+// ---- 累计耗电量 / 累计换热量（Wh，均只统计加热时段）：两条线画在同一张图，高度差
+// 直观体现"花的电"和"传给水的热"之间的差距 =(1−η)×电耗，是换热效率 η 的可视化版本 ----
 const heatEnergyChartRef = ref(null)
 let heatEnergyChartInstance = null
 
@@ -905,10 +953,11 @@ function renderHeatEnergyChart() {
 }
 
 watch([heaterEnergyRows, heatEnergyChartRef], () => {
-  nextTick(() => { if (heatEnergyChartRef.value) renderHeatEnergyChart() })
-}, { deep: true })
+  nextTick(() => { if (heatEnergyChartRef.value) queueRender(renderHeatEnergyChart) })
+})
 
-// ---- 单位流量能耗 SEC（Wh/L）：每处理 1L 水花了多少电，数值越低说明系统能效越高 ----
+// ---- 单位流量能耗 SEC（Wh/L）= 加热期间累计电耗 ÷ 加热期间累计流量：每加热 1L 水
+//      花了多少电（电耗/换热量/流量三个累计量都只统计加热时段，口径对称），越低越省电 ----
 const secChartRef = ref(null)
 let secChartInstance = null
 
@@ -941,8 +990,84 @@ function renderSecChart() {
 }
 
 watch([heaterEnergyRows, secChartRef], () => {
-  nextTick(() => { if (secChartRef.value) renderSecChart() })
-}, { deep: true })
+  nextTick(() => { if (secChartRef.value) queueRender(renderSecChart) })
+})
+
+// ==================== 加热效率与加热速度 ====================
+// 数据来自 /api/heating-analysis（heatingEfficiencyRows / heatingRateRows）。
+// 加热效率 = 实际升温ΔT ÷ 理论升温ΔT ×100%（理论升温 = 加热额定功率全进水里能升多少度）；
+// 加热速度 = 加热开启时出水温度的升温速率（℃/min）。公式见后端 heatingAnalysisQuery.js。
+const showHeatingAnalysisChart = computed(() => {
+  if (historyChartsConfig.value.showHeatingAnalysisChart === false) return false
+  return heatingEfficiencyRows.value.length > 0 || heatingRateRows.value.length > 0
+})
+
+const heatingEfficiencyChartRef = ref(null)
+let heatingEfficiencyChartInstance = null
+
+function renderHeatingEfficiencyChart() {
+  const rows = heatingEfficiencyRows.value
+  const el = heatingEfficiencyChartRef.value
+  if (!rows.length || !el || el.offsetWidth === 0) {
+    if (el) setTimeout(renderHeatingEfficiencyChart, 50)
+    return
+  }
+  if (heatingEfficiencyChartInstance) heatingEfficiencyChartInstance.dispose()
+  const chart = echarts.init(el)
+  heatingEfficiencyChartInstance = chart
+  const times = formatTimes(rows)
+  chart.setOption({
+    tooltip: { trigger: 'axis' },
+    legend: { data: ['实际升温', '理论升温', '加热效率'], top: 0 },
+    grid: { left: 20, right: 40, top: 40, bottom: 50 },
+    xAxis: { type: 'category', data: times, axisLabel: { rotate: 15, fontSize: 10 } },
+    yAxis: [
+      { type: 'value', name: '℃', nameTextStyle: { fontSize: 11 } },
+      { type: 'value', name: '%', nameTextStyle: { fontSize: 11 }, splitLine: { show: false } },
+    ],
+    series: [
+      { name: '实际升温', type: 'line', smooth: true, data: rows.map((r) => r.actualRiseC), itemStyle: { color: '#10b981' }, lineStyle: { color: '#10b981' } },
+      { name: '理论升温', type: 'line', smooth: true, data: rows.map((r) => r.theoreticalRiseC), itemStyle: { color: '#94a3b8' }, lineStyle: { color: '#94a3b8', type: 'dashed' } },
+      { name: '加热效率', type: 'line', smooth: true, yAxisIndex: 1, data: rows.map((r) => r.efficiencyPct), itemStyle: { color: '#f59e0b' }, lineStyle: { color: '#f59e0b' } },
+    ],
+  }, true)
+}
+
+watch([heatingEfficiencyRows, heatingEfficiencyChartRef], () => {
+  nextTick(() => { if (heatingEfficiencyChartRef.value) queueRender(renderHeatingEfficiencyChart) })
+})
+
+const heatingRateChartRef = ref(null)
+let heatingRateChartInstance = null
+
+function renderHeatingRateChart() {
+  const rows = heatingRateRows.value
+  const el = heatingRateChartRef.value
+  if (!rows.length || !el || el.offsetWidth === 0) {
+    if (el) setTimeout(renderHeatingRateChart, 50)
+    return
+  }
+  if (heatingRateChartInstance) heatingRateChartInstance.dispose()
+  const chart = echarts.init(el)
+  heatingRateChartInstance = chart
+  const times = formatTimes(rows)
+  chart.setOption({
+    tooltip: { trigger: 'axis' },
+    grid: { left: 20, right: 20, top: 20, bottom: 50 },
+    xAxis: { type: 'category', data: times, axisLabel: { rotate: 15, fontSize: 10 } },
+    yAxis: { type: 'value', name: '℃/min', nameTextStyle: { fontSize: 11 } },
+    series: [{
+      name: '加热速度', type: 'line', smooth: true,
+      data: rows.map((r) => r.heatingRate),
+      itemStyle: { color: '#ef4444' }, lineStyle: { color: '#ef4444' },
+      areaStyle: { color: '#ef4444', opacity: 0.1 },
+    }],
+  }, true)
+}
+
+watch([heatingRateRows, heatingRateChartRef], () => {
+  nextTick(() => { if (heatingRateChartRef.value) queueRender(renderHeatingRateChart) })
+})
 
 // ==================== 设备状态时间线（水泵/加热开关阶梯图） ====================
 const showDeviceStateChart = computed(() => {
@@ -991,9 +1116,9 @@ function renderDeviceStateChart() {
 
 watch([deviceStateRows, deviceStateChartRef], () => {
   nextTick(() => {
-    if (deviceStateChartRef.value) renderDeviceStateChart()
+    if (deviceStateChartRef.value) queueRender(renderDeviceStateChart)
   })
-}, { deep: true })
+})
 
 // ==================== PID周期加热开关（按PWM周期边界精确复原开关阶梯波形） ====================
 // 跟"设备状态时间线"的区别：那张图是按设备行为上报的采样频率取样，这张图直接用
@@ -1081,9 +1206,9 @@ function renderPidCycleChart() {
 
 watch([pidCyclePoints, pidCycleChartRef], () => {
   nextTick(() => {
-    if (pidCycleChartRef.value) renderPidCycleChart()
+    if (pidCycleChartRef.value) queueRender(renderPidCycleChart)
   })
-}, { deep: true })
+})
 
 // ==================== 累计流量（从累计统计里单独摘出来，自己一张图） ====================
 const cumulativeFlowEntry = computed(() => {
@@ -1135,9 +1260,9 @@ function renderCumulativeFlowChart() {
 
 watch([cumulativeFlowEntry, cumulativeFlowChartRef], () => {
   nextTick(() => {
-    if (cumulativeFlowChartRef.value) renderCumulativeFlowChart()
+    if (cumulativeFlowChartRef.value) queueRender(renderCumulativeFlowChart)
   })
-}, { deep: true })
+})
 
 // ==================== 累计运行时长（累计加热时长 + 累计水泵运行时长，同图对比） ====================
 const switchDurationEntries = computed(() => {
@@ -1195,9 +1320,9 @@ function renderSwitchDurationChart() {
 
 watch([switchDurationEntries, switchDurationChartRef], () => {
   nextTick(() => {
-    if (switchDurationChartRef.value) renderSwitchDurationChart()
+    if (switchDurationChartRef.value) queueRender(renderSwitchDurationChart)
   })
-}, { deep: true })
+})
 
 // ==================== 自定义公式指标（"公式与图表"勾选了"历史图表"的指标，每条一张卡片） ====================
 const derivedMetricEntries = computed(() => {
@@ -1215,7 +1340,7 @@ const derivedChartRefs = {}
 function setDerivedChartRef(key, el) {
   if (el && !derivedChartRefs[key]) {
     derivedChartRefs[key] = el
-    nextTick(() => renderDerivedEntryChart(key))
+    nextTick(() => queueRender(() => renderDerivedEntryChart(key)))
   }
 }
 
@@ -1255,12 +1380,14 @@ function renderDerivedEntryChart(key) {
 watch(derivedMetricEntries, () => {
   nextTick(() => {
     derivedMetricEntries.value.forEach((e) => {
-      if (derivedChartRefs[e.key]) renderDerivedEntryChart(e.key)
+      if (derivedChartRefs[e.key]) queueRender(() => renderDerivedEntryChart(e.key))
     })
   })
-}, { deep: true })
+})
 
 function disposeAllCharts() {
+  if (_renderRaf) { cancelAnimationFrame(_renderRaf); _renderRaf = 0 }
+  _renderQueue.length = 0
   Object.values(chartInstances).forEach((c) => c?.dispose())
   for (const key in chartInstances) delete chartInstances[key]
   for (const key in chartRefs) delete chartRefs[key]

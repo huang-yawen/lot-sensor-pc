@@ -143,11 +143,13 @@ const pipeDiameterMm = computed({
 })
 
 const items = [
-  { key: 'resistanceK', title: '系统阻力系数 K', description: 'K=ΔP/Q²，管路结垢/堵塞黄金指标，持续上升需提示清洗。' },
-  { key: 'pressureDropRate', title: '压力陡降速率 V', description: 'V=dP/dt，0.5 秒内骤降判定吸入空气，紧急停泵。' },
-  { key: 'tempChangeRate', title: '温度变化率 dT/dt', description: '加热后无上升判定断线/开路，斜率超限判定短路。' },
-  { key: 'heatExchangeEfficiency', title: '换热效率', description: 'η=ρ·Cp·Q·ΔT/P_heater，衡量电能利用率。' },
-  { key: 'eerHeatBalance', title: '能效比与热平衡', description: 'COP 与换热量/热损失对比。' },
+  { key: 'resistanceK', title: '系统阻力系数 K', description: 'K = 泵出口压力(kPa) ÷ 流量(L/s)²，单位 kPa/(L/s)²。管路通畅度代理指标——只有一个压力传感器，用的是绝对表压不是跨管段压降 ΔP，工况稳定时 K 持续走高提示结垢/堵塞。附带的"近期趋势"取内存最近约 30 分钟首末对比，未落库、非跨天。' },
+  { key: 'pressureDropRate', title: '压力陡降速率 V', description: 'V = (本次压力 − 上次压力) ÷ 两次时间差(s)，单位 kPa/s。0.5 秒内骤降判定吸入空气，紧急停泵。' },
+  { key: 'tempChangeRate', title: '温度变化率 dT/dt', description: '(本次温度 − 上次温度) ÷ 两次时间差(s)，单位 ℃/s，进/出水各算一路。加热后无上升判定断线/开路，斜率超限判定短路。' },
+  { key: 'heatExchangeEfficiency', title: '换热效率 η', description: 'η = (ρ·Cp·Q·ΔT) ÷ P_额定 × 100%，单位 %。ρ 介质密度 kg/m³、Cp 比热容 J/(kg·℃)、Q 流量 m³/s、P_额定 加热器额定电功率 W；分子是水每秒带走的热功率。ΔT = max(0, 出水温度 − 进水温度)——出水比进水冷（装反/没在加热）时按 0，效率算成 0 直接暴露问题。仅加热开启时计算。' },
+  { key: 'eerHeatBalance', title: '热平衡（电功率去向）', description: 'P_额定 = 水带走的热功率 heatTransferredW + 未被带走的部分 heatLossW（= max(0, P_额定 − heatTransferredW)），单位 W。电阻加热器 COP 恒为 1，不再输出"能效比"。' },
+  { key: 'heatingEfficiency', title: '加热效率', description: '加热效率 = 实际升温ΔT ÷ 理论升温ΔT × 100%，单位 %。理论升温ΔT = P_额定 ÷ (ρ·Cp·Q)（加热额定电功率如果全进入当前流量 Q 的水，能升多少度）；实际升温ΔT = 出水温度 − 进水温度。数值上等于换热效率 η，这里是温度域表达，历史图上画"实际升温 / 理论升温"两条线更直观。仅加热开启+有流量时算，需先配加热额定功率。' },
+  { key: 'heatingRate', title: '加热速度', description: '加热速度 = (本次出水温度 − 上次出水温度) ÷ Δt_分钟，单位 ℃/min。只在"这一条和上一条消息都在加热"时给值（加热刚开启那一条不算，跟历史图口径一致）。跟"温度变化率"的区别：那个每条消息都算、进出水都算、不管加不加热。加热中出水还往下掉会给负值，便于发现异常。' },
   { key: 'flowPressureCurve', title: '流量-压力特性曲线', description: '线性回归斜率，反映管路特性。' },
   { key: 'cumulativeFlow', title: '累计流量', description: '上一时刻总流量 + 瞬时流量 × 时间。' },
   { key: 'averageVelocity', title: '平均流速', description: 'v = Q / A（瞬时流量除以水管截面积）。' },

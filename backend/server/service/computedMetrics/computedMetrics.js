@@ -2,15 +2,19 @@
  * 【文件职责】“需要计算的数据”服务：从实时上报数据派生工程指标，供首页专用板块展示。
  *
  * 计算指标（可配置显示开关，见 COMPUTED_METRICS）：
- *   1. 系统阻力系数 K = ΔP / Q²（管路结垢/堵塞黄金指标）
- *   2. 压力陡降速率 V = dP/dt（吸入空气紧急停泵判定）
- *   3. 温度变化率 dT/dt（传感器断线/开路/短路判定）
- *   4. 换热效率 η = ρ·Cp·Q·ΔT / P_heater（ρ/Cp 默认水的物性参数，可在配置中心改）
- *   5. 系统能效比（COP）与热平衡
- *   6. 流量-压力特性曲线拟合（线性回归斜率）
- *   7. 累计流量（上一时刻总流量 + 瞬时流量 × 时间）
- *   8. 平均流速 v = Q / A
- *   9. 液位（基于两水箱初始水量与累计流量）
+ *   1. 系统阻力系数 K = P_泵出口 / Q²（管路通畅度代理指标：本项目只有一个压力
+ *      传感器，用的是泵出口绝对表压，不是跨管段压降 ΔP；只有流量/工况稳定时才可横向比）
+ *   2. 压力陡降速率 V = dP/dt（吸入空气紧急停泵判定），单位 kPa/s
+ *   3. 温度变化率 dT/dt（传感器断线/开路/短路判定），单位 ℃/s
+ *   4. 换热效率 η = (ρ·Cp·Q·ΔT) / P_额定 × 100%（水每秒带走的热功率 ÷ 加热额定电功率，单位 %）
+ *   5. 热平衡：P_额定 = 水带走的热功率 heatTransferredW + 未被带走的部分 heatLossW（单位 W）
+ *   6. 流量-压力特性曲线拟合（线性回归斜率 dP/dQ，kPa/(L/min)）
+ *   7. 累计流量 = Σ(瞬时流量 L/s × 相邻两条读数的秒差)（秒差上限 10s），单位 L
+ *   8. 平均流速 v = Q / A（Q 换成 m³/s，A 管道横截面积 cm²→m²），单位 m/s
+ *   9. 液位（按"水单向从水箱1流到水箱2"用累计流量推算；闭环循环下会偏离实际）
+ *   10. 加热效率 = 实际升温ΔT / 理论升温ΔT × 100%（理论升温 = P_额定/(ρ·Cp·Q)，温度域
+ *       表达；数值上等于换热效率 η）——只在加热开启+有流量时算
+ *   11. 加热速度 = 加热开启时出水温度的升温速率 ΔT_出水/Δt（℃/min）
  *
  * 内存中维护滚动状态；每条 MQTT 消息调用 compute() 更新并返回最新结果。
  * 【配置中心关联】COMPUTED_METRICS 每次计算读取，保存后立即生效。
@@ -102,15 +106,15 @@ function linearSlope(points) {
   return num / den
 }
 
-/** 计算 K 值在最近 3 天内的变化趋势（返回比例，如 0.05 表示上升 5%）。 */
+/** K 值"近期"变化趋势：拿内存滚动缓冲区（state.kHistory，上限 2000 条、后端重启清零，
+ *  约覆盖最近 30 分钟）里最早一条和最新一条的 K 相比。
+ *  计算方法：trendRecent = (K_最新 − K_最早) / K_最早（返回比例，0.05 = 上升 5%）。
+ *  ⚠ 这不是"跨天对比"——K 没有落库，无法真正算 3 天趋势；要做长周期结垢趋势，
+ *  需要把 K 像 t_pid_heating_cycle 那样单独建表落库后查库计算。 */
 function kTrend(kHistory) {
   if (kHistory.length < 2) return null
-  const now = Date.now()
-  const threeDaysAgo = now - 3 * 24 * 3600 * 1000
-  const recent = kHistory.filter(h => h.timestamp >= threeDaysAgo)
-  if (recent.length < 2) return null
-  const first = recent[0].k
-  const latest = recent[recent.length - 1].k
+  const first = kHistory[0].k
+  const latest = kHistory[kHistory.length - 1].k
   if (!first || first === 0) return null
   return (latest - first) / first
 }
@@ -141,6 +145,8 @@ async function compute(info, timestampMs = Date.now(), knownDeviceNo = undefined
       tempChangeRate: config.tempChangeRate !== false,
       heatExchangeEfficiency: config.heatExchangeEfficiency !== false,
       eerHeatBalance: config.eerHeatBalance !== false,
+      heatingEfficiency: config.heatingEfficiency !== false,
+      heatingRate: config.heatingRate !== false,
       flowPressureCurve: config.flowPressureCurve !== false,
       cumulativeFlow: config.cumulativeFlow !== false,
       averageVelocity: config.averageVelocity !== false,
@@ -161,11 +167,13 @@ async function compute(info, timestampMs = Date.now(), knownDeviceNo = undefined
   const averageTemp = temp1 != null && temp2 != null ? (temp1 + temp2) / 2 : null
   if (averageTemp != null) result.averageTemp = { value: Number(averageTemp.toFixed(2)), unit: '℃' }
 
-  // ---- 1. 系统阻力系数 K = ΔP / Q²（Q 单位 L/s，避开 Q=0） ----
-  // 物理依据：管路水流阻力跟流量的平方成正比（这是流体力学里常见的紊流
-  // 阻力关系），K 就是这个比例系数，只反映管路本身"通不通畅"，不随瞬时
-  // 流量大小变化——管路结垢、局部堵塞会让内径变小、阻力变大，K 就会持续
-  // 走高，所以拿它最近 3 天的变化趋势（kTrend）提示"该清洗管路了"。
+  // ---- 1. 系统阻力系数 K = P_泵出口 / Q²（Q 单位 L/s，避开 Q=0） ----
+  // 计算方法：K = 压力读数(kPa) / 流量(L/s)²。
+  // 物理依据：紊流下管路水流阻力跟流量的平方成正比，K 就是这个比例系数，理想情况下
+  // 只反映管路"通不通畅"、不随瞬时流量变化——结垢/局部堵塞让内径变小、阻力变大，K 走高。
+  // ⚠ 本项目只有一个压力传感器（field4），这里的"P"是泵出口的绝对表压，不是真正跨
+  // 管段的压降 ΔP，所以 K 里还混着工况的影响——只有流量/水温/阀门开度都稳定时，K 的
+  // 变化才能归因于管路本身、当"结垢趋势"看；工况一变，不能直接下结论。
   if (flowLPerSec != null && flowLPerSec !== 0 && pressure != null) {
     const k = safeDivide(pressure, flowLPerSec ** 2)
     if (k != null) {
@@ -174,7 +182,7 @@ async function compute(info, timestampMs = Date.now(), knownDeviceNo = undefined
       result.resistanceK = {
         value: Number(k.toFixed(4)),
         unit: 'kPa/(L/s)²',
-        trend3d: kTrend(state.kHistory),
+        trendRecent: kTrend(state.kHistory),
       }
     }
   }
@@ -212,7 +220,30 @@ async function compute(info, timestampMs = Date.now(), knownDeviceNo = undefined
     }
   }
 
-  // ---- 4 & 5. 换热效率 η 与 能效比/热平衡 ----
+  // ---- 3.1 加热速度（持续加热中，出水温度的升温速率） ----
+  // 计算方法：加热速度 = (本次出水温度 − 上次出水温度) / Δt_分钟，单位 ℃/min。
+  //   · 只在"这一条和上一条消息都在加热"时给值（state.last.heatOn === true 且
+  //     switches.heatOn === true）——加热刚开启的那一条，上一条还是关的，两点温差里
+  //     混着 OFF 段，不能算作"加热速度"，跟历史查询 queryHeatingRate 里
+  //     "heater_on = 1 AND prev_heater_on = 1" 的口径保持一致。
+  //   · Δt 上限 10 秒（跟其它累计类查询同一护栏），超过视为离线间隙不出值。
+  //   · 跟指标 3 tempChangeRate 的区别：那个每条消息都算、进出水都算、不管加不加热；
+  //     这个专看"持续加热时出水升得多快"。加热正常时应为正，出水在加热中还往下掉说明
+  //     有问题，这里不做非负裁剪，负值原样给出。
+  if (
+    state.last && switches.heatOn === true && state.last.heatOn === true &&
+    temp2 != null && state.last.temp2 != null
+  ) {
+    const dtMin = (nowMs - state.last.timestamp) / 60000
+    if (dtMin > 0 && dtMin <= 10 / 60) {
+      result.heatingRate = {
+        value: Number(((temp2 - state.last.temp2) / dtMin).toFixed(3)),
+        unit: '℃/min',
+      }
+    }
+  }
+
+  // ---- 4 & 5. 换热效率 η 与 热平衡（电功率去向） ----
   // 换热效率的物理意思：加热器每秒钟往电路里花的电（powerW，额定功率），
   // 有多少真正变成了水带走的热量（heatTransferredW），两者的比值就是效率。
   // "水带走了多少热"怎么算：想象每秒钟有 Q（m³）体积的水流过，从进水温度升到
@@ -224,7 +255,13 @@ async function compute(info, timestampMs = Date.now(), knownDeviceNo = undefined
   // 这也是为什么现场如果不是拿纯水做介质（比如实验用了乙二醇防冻液、盐水），
   // 必须把下面这两个参数改成对应介质的真实物性值——密度、比热容用错了，
   // 这里算出来的"效率"就跟实际不是一回事。
-  const deltaT = temp1 != null && temp2 != null ? Math.abs(temp2 - temp1) : null
+  // deltaT：加热应该让出水比进水热，所以这里取"有效升温" = max(0, 出水温度 − 进水温度)。
+  // 出水反而比进水冷（传感器装反 / 其实没在加热 / 读数异常）时按 0 处理——下面的换热
+  // 功率 heatTransferredW、换热效率 η 都会算成 0，直接把异常暴露出来；以前用 Math.abs
+  // 会把"出水更冷"也算成正的换热量，报一个"看着正常"的效率，反而掩盖问题。
+  // 两个温度任一缺失才返回 null（作为下面整块计算的前置判断）。
+  // 注意：指标 10 加热效率用的是**有向** temp2 − temp1（负值当异常信号），不走这个 deltaT。
+  const deltaT = temp1 != null && temp2 != null ? Math.max(0, temp2 - temp1) : null
   const powerW = Number(config.heaterRatedPower)
   if (flowLPerSec != null && deltaT != null && switches.heatOn === true && powerW > 0) {
     // 介质密度/比热容默认是水的物性参数，配置中心没配或不是正数时退回这两个默认值，
@@ -235,20 +272,45 @@ async function compute(info, timestampMs = Date.now(), knownDeviceNo = undefined
     // ρ × Cp × Q × ΔT：见上方注释里的公式，算出来的单位是瓦特（W），
     // 因为 kg/m³ × J/(kg·℃) × m³/s × ℃ 约分后正好剩下 J/s = W。
     const heatTransferredW = waterDensity * waterSpecificHeat * qM3PerSec * deltaT
-    // 效率 = 实际传给水的热功率 ÷ 加热器额定功率，理论上不该超过 100%（超过了
-    // 说明额定功率填错了，或者传感器读数有问题——这里不做上限裁剪，方便发现异常）。
-    const efficiency = safeDivide(heatTransferredW, powerW)
+    // 换热效率 η = 实际传给水的热功率 ÷ 加热器额定电功率 × 100%（value 直接是百分数，
+    // 不是 0~1 的比值）。理论上不该超过 100%（超过说明额定功率填小了、或温差/流量读数
+    // 有问题——这里不做上限裁剪，方便发现异常）。
+    const efficiencyRatio = safeDivide(heatTransferredW, powerW)
     result.heatExchangeEfficiency = {
-      value: efficiency == null ? null : Number(efficiency.toFixed(3)),
+      value: efficiencyRatio == null ? null : Number((efficiencyRatio * 100).toFixed(2)),
       unit: '%',
       heatTransferredW: Number(heatTransferredW.toFixed(2)),
     }
-    if (efficiency != null) {
+    // 热平衡：加热器额定电功率 = 水带走的热功率 + 没被水带走的部分。
+    //   heatTransferredW = ρ·Cp·Q·ΔT（见上），heatLossW = max(0, P_额定 − heatTransferredW)——
+    //   电功率里没进入水流的那部分（散到环境、加热体/管壁蓄热、或测量误差，不一定是"损耗"）。
+    // 电阻加热器的 COP 恒等于 1（电能几乎全变热），谈"能效比 COP"没意义，这里不再输出 cop，
+    // 只给电功率去向的 W 分解。
+    if (efficiencyRatio != null) {
       result.eerHeatBalance = {
-        cop: Number(efficiency.toFixed(3)),
         heatTransferredW: Number(heatTransferredW.toFixed(2)),
         heatLossW: Number(Math.max(0, powerW - heatTransferredW).toFixed(2)),
         unit: 'W',
+      }
+    }
+
+    // ---- 10. 加热效率 = 实际升温ΔT ÷ 理论升温ΔT × 100%（温度域表达） ----
+    // 计算方法：
+    //   理论升温ΔT_理 = P_额定 / (ρ·Cp·Q)  ——加热额定电功率如果全进入当前流量 Q 的水，
+    //                    能升多少度（W ÷ (kg/m³·J/(kg·℃)·m³/s) = ℃）
+    //   实际升温ΔT_实 = 出水温度 − 进水温度（有向，正常加热为正；出水更低会是负，
+    //                    便于发现装反/没在加热）
+    //   加热效率 = ΔT_实 / ΔT_理 × 100%
+    // 数值上等于换热效率 η（(温差·ρ·Cp·Q)/P_额定），这里换成两个 ℃ 值 + 比值，历史图上
+    // 画"实际升温 / 理论升温"两条线更直观，差距就是损失。
+    const actualRiseC = temp2 - temp1
+    const theoreticalRiseC = safeDivide(powerW, waterDensity * waterSpecificHeat * qM3PerSec)
+    if (theoreticalRiseC != null && theoreticalRiseC !== 0) {
+      result.heatingEfficiency = {
+        value: Number(((actualRiseC / theoreticalRiseC) * 100).toFixed(2)),
+        actualRiseC: Number(actualRiseC.toFixed(3)),
+        theoreticalRiseC: Number(theoreticalRiseC.toFixed(3)),
+        unit: '%',
       }
     }
   }
@@ -310,11 +372,15 @@ async function compute(info, timestampMs = Date.now(), knownDeviceNo = undefined
   if (state.series.length > 60) state.series.shift()
   result.series = state.series
 
-  // 更新滚动状态。
+  // 更新滚动状态。差分类指标（压降速率/温度变化率/加热速度）下一条消息会拿这里的值做
+  // "本次 − 上次"。heatOn 记的是"上一条消息加热是不是开着"，供指标 3.1 判断是不是"持续
+  // 加热中"；纯传感器消息没带行为字段时 switches.heatOn 是 null，这里就存 null（= 上次
+  // 状态未知），指标 3.1 会因此跳过，属于保守处理。
   state.last = {
     pressure: pressure != null ? pressure : state.last?.pressure ?? null,
     temp1: temp1 != null ? temp1 : state.last?.temp1 ?? null,
     temp2: temp2 != null ? temp2 : state.last?.temp2 ?? null,
+    heatOn: switches.heatOn,
     timestamp: nowMs,
   }
   state.latest = result
@@ -332,6 +398,8 @@ function currentFlags() {
     tempChangeRate: config.tempChangeRate !== false,
     heatExchangeEfficiency: config.heatExchangeEfficiency !== false,
     eerHeatBalance: config.eerHeatBalance !== false,
+    heatingEfficiency: config.heatingEfficiency !== false,
+    heatingRate: config.heatingRate !== false,
     flowPressureCurve: config.flowPressureCurve !== false,
     cumulativeFlow: config.cumulativeFlow !== false,
     averageVelocity: config.averageVelocity !== false,
