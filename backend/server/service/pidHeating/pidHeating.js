@@ -52,6 +52,8 @@ const { saveOperationHistory } = require('../operationHistory/saveOperationHisto
 // 取值逻辑只在 controlShared/controlHelpers.js 维护一份，这里直接复用。
 const { getTargetTemp } = require('../controlShared/controlHelpers')
 const { isLockedByFault, isAnyLocked } = require('../faultStatus/faultStatus')
+// 周期历史落库：供"历史图表"页面画 PID 加热开关阶梯图，仅展示用途，失败不影响控制。
+const { saveCycleRecord } = require('./pidHeatingCycleHistory')
 
 /** 每个设备的 PID 状态。
  *  - windowStart: 本 PWM 周期起始时间戳（ms，相对服务器时钟）
@@ -439,6 +441,17 @@ async function evaluatePidHeating(info) {
       }
       console.log(diag.join(' | '))
     }
+
+    // 本周期的开关计划已经确定（先开 onDurationMs、再关到周期结束），落库供历史图表复原
+    // 阶梯波形；不 await，避免历史记录的数据库往返拖慢下面的加热指令下发判断。
+    saveCycleRecord({
+      d_no: deviceNo,
+      cycleIndex: state.cycleIndex,
+      windowStart: state.windowStart,
+      windowMs,
+      onDurationMs: state.onDurationMs,
+      duty: state.lastDuty,
+    })
   }
 
   // ============================================================
@@ -491,4 +504,17 @@ async function evaluatePidHeating(info) {
   return actions
 }
 
-module.exports = { evaluatePidHeating, isPidEnabled, readSwitchOn, readTempOut, getTargetTemp, setHeater, resolveParamConfigId }
+/**
+ * 供实时上报使用：读取某设备当前 PID 周期内加热了多久，纯展示用途，不参与控制判断。
+ * 依赖 evaluatePidHeating 已经在本轮消息里跑过一次（同一 tick 内先调它、state 才是最新的）。
+ * 返回 null 表示 PID 未启用，或还没跑过第一个 PWM 周期。
+ */
+async function getPidHeatingStatus(info) {
+  const deviceNo = String((await resolveDeviceNo(info)) || '').trim() || null
+  if (!(await isPidEnabled(deviceNo))) return null
+  const state = stateMap.get(deviceNo || 'global')
+  if (!state || state.cycleIndex < 0) return null
+  return { deviceNo, onDurationMs: Math.round(state.onDurationMs) }
+}
+
+module.exports = { evaluatePidHeating, isPidEnabled, readSwitchOn, readTempOut, getTargetTemp, setHeater, resolveParamConfigId, getPidHeatingStatus }

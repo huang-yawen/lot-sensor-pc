@@ -180,15 +180,22 @@ function mergeDecision(...values) {
 
 /**
  * 水泵常开规则：这条最简单，完全不跟温度挂钩——只要没有故障、而且流量压力
- * 读数都在正常范围（不是 0、没顶到异常哨兵），就让水泵保持开着；一旦命中
- * 任意故障，直接关泵。读数不完整、或者两种情况都不满足时不表态（null），
+ * 读数没有顶到异常哨兵（代表传感器读数异常/掉线），就让水泵保持开着；一旦
+ * 命中任意故障，直接关泵。读数不完整、或者两种情况都不满足时不表态（null），
  * 留给其它规则或者维持现状。
+ *
+ * 注意：不要求流量/压力"不为 0"——水泵还没开的时候流量、压力本来就是 0，
+ * 这是正常的初始状态，不是异常；早期版本加了这条"不为0"要求，导致水泵从关
+ * 到开永远没法被这条规则触发（要先有流量才判定"正常该开"，但泵不开就不会
+ * 有流量，死循环），水泵冷启动时这条规则完全不起作用。"真的开着但流量长期
+ * 为0"这种情况由 faultStatus.js 的"水泵空转"(④)/"出水口堵塞"(②)专门检测，
+ * 检测到会计入 faults 让这条规则照样判"关"，不会因为去掉"不为0"就少一层保护。
  * @returns {{pump: 'on'|'off'|null, heater: null}} 这条规则从不管加热，heater 恒为 null
  */
 function rulePumpAlwaysOn(sensors, faults) {
   const allNormal = faults.length === 0
-    && sensors.flow != null && sensors.flow !== 0 && sensors.flow < getAbnormalMax()
-    && sensors.pressure != null && sensors.pressure !== 0 && sensors.pressure < getAbnormalMax()
+    && sensors.flow != null && sensors.flow < getAbnormalMax()
+    && sensors.pressure != null && sensors.pressure < getAbnormalMax()
   if (faults.length > 0) return { pump: 'off', heater: null }
   if (allNormal) return { pump: 'on', heater: null }
   return { pump: null, heater: null }

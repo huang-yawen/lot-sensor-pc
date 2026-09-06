@@ -1,18 +1,18 @@
 /**
  * 【文件职责】故障状态服务：检测五种硬故障，触发后保存故障前快照、强制关闭水泵和加热、
  *   把系统状态切到 FAULT、复位按钮自动拨到"开"（仅 UI 显示，不修改硬件），并锁定指令页面
- *   的所有其他开关和参数（只读），用户人工修复设备后手动把复位按钮拨回"关"，系统按快照
- *   恢复所有参数和开关显示、按快照重启执行器，回到 NORMAL。
+ *   的其他开关（只读；阈值/参数类指令项不锁，故障期间可以继续调整），用户人工修复设备后
+ *   手动把复位按钮拨回"关"，系统按快照恢复所有参数和开关显示、按快照重启执行器，回到 NORMAL。
  *
  * === 五种故障检测逻辑（编号对应需求文档）===
- *   ① pipe_blockage      进水口/管道堵塞：压力 < 压力下限 OR 压力 > 压力上限
+ *   ① pipe_blockage      进水口/管道堵塞：水泵预热完成后压力 < 压力下限 OR 压力 > 压力上限
  *   ② outlet_blockage    出水口堵塞：水泵预热完成后流量 < 流量下限
  *   ③ dry_burn           干烧：加热器开启后连续 dryBurnDurationMs (默认 5000ms)
  *                          出水温度变化 < dryBurnMinRiseC (默认 0.1℃)
  *   ④ pump_idle          水泵空转：水泵预热完成，流量传感器读数 == 0
  *   ⑤ pump_fault         水泵故障：水泵预热完成，进出水温差 > tempDiffThreshold
- * ②④⑤ 共用同一个"预热"前置条件：水泵必须已经连续开启满 pumpWarmupMs（默认
- * 5000ms，配置中心设置）才开始判断，水泵刚启动的瞬间流量/温差还没稳定，直接拿
+ * ①②④⑤ 共用同一个"预热"前置条件：水泵必须已经连续开启满 pumpWarmupMs（默认
+ * 5000ms，配置中心设置）才开始判断，水泵刚启动的瞬间压力/流量/温差还没稳定，直接拿
  * "水泵开着"当条件容易在启动瞬间误判。
  *
  * === 故障优先级（同时触发时按此排序取最高优先级处理和显示）===
@@ -214,8 +214,9 @@ async function detectFault(info, deviceNo, faultConfig) {
 
   const triggers = []
 
-  // ① 进水口/管道堵塞：压力 < 下限 或 > 上限
-  if (faultConfig.pipeBlockage !== false && sensors.pressure != null) {
+  // ① 进水口/管道堵塞：水泵预热完成后压力 < 下限 或 > 上限（水泵没开/刚启动时压力
+  // 读数不代表真实运行状态，前置条件跟②出水口堵塞保持一致）
+  if (faultConfig.pipeBlockage !== false && pumpWarmedUp && sensors.pressure != null) {
     if ((pressureLow != null && sensors.pressure < pressureLow)
       || (pressureHigh != null && sensors.pressure > pressureHigh)) {
       triggers.push({

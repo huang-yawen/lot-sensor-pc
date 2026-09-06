@@ -4,7 +4,7 @@ const promisePool = require('../../config/dbPool')
 const { saveMappedData, resolveDeviceNo } = require('../../utils/mappedData')
 const { saveOperationHistory } = require('../../service/operationHistory/saveOperationHistory')
 const { saveDirectData, getDirectValue } = require('../../service/directData/saveDirectConfig')
-const { getReportedTime, toWireValue, fromWireValue } = require('../../utils/protocol')
+const { getReportedTime } = require('../../utils/protocol')
 
 /** 按 preffix 查 t_direct_config 对应的 config_id。 */
 async function resolveConfigIdByPrefix(prefix) {
@@ -88,15 +88,23 @@ async function detectAndRecordChanges(info, d_no) {
                 continue // t_direct 中没有此配置的预期值，跳过
             }
 
-            // 开关类型需要映射：t_direct 存 on/off，设备实际回报 open/close
+            // 开关类型：t_direct 存的是 "on"/"off"，设备上报的是它自己的线上编码
+            // （这台设备实测行为数据是纯数字 "0"/"1"）——这跟下发指令用的
+            // CONTROL_VALUE_MAP（给没配 wire_template 的简单开关做 {preffix:值}
+            // 映射用的，比如 on->open）是两套独立的东西，水泵/加热这类配了
+            // wire_template+crc 下发的开关尤其如此。不能拿 toWireValue 去反查上报值，
+            // 那样 "1"/"0" 永远对不上 "open"/"close"，会把设备完全正常执行指令
+            // 也误判成"被物理操作过"。统一按 on/open/1/true 算开、其余算关这套
+            // 宽松识别去比较（跟 controlHelpers.js 的 readSwitchStates、
+            // updateDirectConfigAndPublish.js 的 isOnValue 同一套约定）。
             const isSwitch = String(config.f_type) === '1'
-            const compareExpected = isSwitch
-                ? String(toWireValue(expectedVal))
-                : expectedVal
+            const toOn = (v) => ['on', 'open', '1', 'true'].includes(String(v).trim().toLowerCase())
+            const compareExpected = isSwitch ? String(toOn(expectedVal)) : expectedVal
+            const comparableNew = isSwitch ? String(toOn(newVal)) : newVal
 
             // 如果 t_direct 中有这个配置的预期值，且与实际值不同
-            if (newVal !== compareExpected) {
-                console.log(`[BehaviorRealtime] 检测到变化: config_id=${configId}, infoKey=${infoKey}, 预期=${compareExpected}, 实际=${newVal}`)
+            if (comparableNew !== compareExpected) {
+                console.log(`[BehaviorRealtime] 检测到变化: config_id=${configId}, infoKey=${infoKey}, 预期=${compareExpected}, 实际=${comparableNew}`)
                 const historyResult = await saveOperationHistory({
                     d_no,
                     config_id: configId,
@@ -109,9 +117,10 @@ async function detectAndRecordChanges(info, d_no) {
                     // 记录完这次变化后，把 t_direct 的预期值更新成设备刚上报的这个新值，
                     // 作为新的比较基准。下一条 MQTT 消息再上报同样的值时，会跟这个新的
                     // "预期值"一致，不会被判定成又发生了一次变化，只有值再次不一样才会
-                    // 重新触发。
+                    // 重新触发。开关类存成 t_direct 一直在用的 "on"/"off" 规范值，
+                    // 不存设备的原始线上编码（"1"/"0"），保持跟其它写入路径一致。
                     const storedValue = isSwitch
-                        ? fromWireValue(newVal)
+                        ? (toOn(newVal) ? 'on' : 'off')
                         : newVal
                     await saveDirectData({ config_id: configId, value: storedValue, d_no })
                     expectedValues[configId] = storedValue

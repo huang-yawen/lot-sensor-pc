@@ -22,9 +22,12 @@
     </div>
 
     <div class="detail-nodes">
-      <DynamicNode v-for="node in detailNodes" :key="node.id" :node="node" :form-data="formData" :icons="icons"
-        @save="handleSave"
-        :id="prop.id" />
+      <template v-for="node in detailNodes" :key="node.id">
+        <DynamicNode :node="node" :form-data="formData" :icons="icons" @save="handleSave" :id="prop.id" />
+        <div v-if="node.preffix === 'pid_enabled' && pidHeatingDurationText" class="pid-duration-hint">
+          本周期加热时长：{{ pidHeatingDurationText }}
+        </div>
+      </template>
     </div>
   </div>
 </template>
@@ -61,6 +64,18 @@ const pendingUpdates = new Set();
 let unsubscribePendingCommands = null;
 let unsubscribeDirectUpdate = null;
 let unsubscribeBehaviorSync = null;
+let unsubscribePidHeating = null;
+
+// PID 本周期加热时长展示：跟 DirectSetting.vue 的定量停机进度一样订阅 sensor_data
+// 里的 _pidHeating 字段，deviceNo 要匹配当前设备号才展示，避免多设备时显示成别的设备。
+const pidHeatingStatus = ref(null);
+const pidHeatingDurationText = computed(() => {
+  if (!pidHeatingStatus.value) return null;
+  const targetId = String(prop.id ?? "null");
+  const infoId = pidHeatingStatus.value.deviceNo == null ? "null" : String(pidHeatingStatus.value.deviceNo);
+  if (infoId !== targetId) return null;
+  return (pidHeatingStatus.value.onDurationMs / 1000).toFixed(1) + "s";
+});
 
 // 硬编码的开关 preffix ↔ t_behavior_field_mapper.f_name 映射：数据库里没有能直接
 // 关联“指令项”和“行为数据字段”的字段，只能靠这份约定维护；如果以后改了水泵/加热
@@ -250,6 +265,10 @@ onMounted(async () => {
 
   unsubscribeBehaviorSync = wsOn("behavior_data", syncSwitchStates);
 
+  unsubscribePidHeating = wsOn("sensor_data", (payload) => {
+    if (payload && payload._pidHeating) pidHeatingStatus.value = payload._pidHeating;
+  });
+
   if (prop.storeData.length === 0) {
     await prop.fetchDirectData();
   }
@@ -261,6 +280,7 @@ onUnmounted(() => {
   unsubscribePendingCommands?.();
   unsubscribeDirectUpdate?.();
   unsubscribeBehaviorSync?.();
+  unsubscribePidHeating?.();
   if (faultTimer) clearInterval(faultTimer);
 });
 </script>
@@ -331,5 +351,11 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: 14px;
+}
+
+.pid-duration-hint {
+  margin: -8px 0 0 4px;
+  font-size: 12px;
+  color: #909399;
 }
 </style>

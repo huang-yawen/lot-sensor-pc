@@ -24,7 +24,9 @@ const SAFETY_TRIGGER_NAMES = {
 }
 
 /** category=fault（默认）只看真正的硬故障；category=safety 看安全联锁记录；
- * category=linkage 看联动控制记录，三者互不混淆。 */
+ * category=linkage 看联动控制记录；category=alarm 看场景配置 ALARM_RULES 触发的
+ * 规则告警——这类记录不属于前三类里任何一个固定 type，见 errorQueryFilter.js 里
+ * 对 alarm 类别的处理（排除掉这里列出的固定 type，不是再列一张新清单）。 */
 const CATEGORY_TYPES = {
   fault: ['故障保护'],
   safety: ['安全联锁', '安全告警'],
@@ -34,11 +36,16 @@ const CATEGORY_TYPES = {
 function resolveCategory(query) {
   if (query?.category === 'safety') return 'safety'
   if (query?.category === 'linkage') return 'linkage'
+  if (query?.category === 'alarm') return 'alarm'
   return 'fault'
 }
 
 /** e_no 命中不了名称表时（比如历史脏数据），退回原始 type，不让记录丢分类。 */
 function friendlyName(category, eNo, fallbackType) {
+  // alarm 类型（evaluateRules.js 触发）写库时 type 存的就是规则自己的 name
+  // （比如"循环流量偏低预警"），已经是最终显示名，不需要再按 e_no 查表转换——
+  // 跟 fault/safety/linkage 只存一个笼统大类、要靠 e_no 换成具体名称不是一回事。
+  if (category === 'alarm') return fallbackType || '未知类型'
   const map = category === 'safety' ? SAFETY_TRIGGER_NAMES
     : category === 'linkage' ? LINKAGE_RULE_NAMES
     : FAULT_NAMES

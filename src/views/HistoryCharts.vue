@@ -136,6 +136,14 @@
       </div>
     </section>
 
+    <!-- ==================== PID周期加热开关（按PWM周期边界精确复原开关阶梯波形） ==================== -->
+    <section v-if="showPidCycleChart" class="chart-section">
+      <h2 class="section-title">PID周期加热开关</h2>
+      <div class="chart-card chart-card-wide">
+        <div ref="pidCycleChartRef" class="chart-el chart-el-tall"></div>
+      </div>
+    </section>
+
     <!-- ==================== 累计流量（从累计统计里单独摘出来，自己一张图） ==================== -->
     <section v-if="cumulativeFlowEntry" class="chart-section">
       <h2 class="section-title">累计流量</h2>
@@ -207,6 +215,7 @@ const historyChartsConfig = computed(() => ({
   showFlowPressureChart: true,
   showPidTrackingChart: true,
   showDeviceStateChart: true,
+  showPidHeatingCycleChart: true,
   showHeaterEnergyChart: true,
   showDerivedMetricCharts: true,
   showTempFlowScatter: true,
@@ -220,6 +229,7 @@ const targetTemp = ref(null)
 const targetVelocity = ref(null)
 const scatterRows = ref([])
 const deviceStateRows = ref([])
+const pidCycleRows = ref([])
 const derivedMetricData = ref({})
 const heaterEnergyRows = ref([])
 
@@ -251,11 +261,12 @@ async function loadAll() {
   loading.value = true
   try {
     const params = currentRangeParams()
-    const [cumRes, twRes, avgRes, stateRes, derivedRes, scatterRes, energyRes] = await Promise.allSettled([
+    const [cumRes, twRes, avgRes, stateRes, pidCycleRes, derivedRes, scatterRes, energyRes] = await Promise.allSettled([
       api.get('/api/cumulative', { params }),
       api.get('/api/time-window', { params }),
       api.get('/api/average-chart', { params }),
       api.get('/api/device-state-trend', { params }),
+      api.get('/api/pid-heating-cycles', { params }),
       api.get('/api/derived-metrics/history', { params }),
       api.get('/api/temp-flow-scatter', { params }),
       api.get('/api/heater-energy', { params }),
@@ -266,6 +277,7 @@ async function loadAll() {
     targetTemp.value = avgRes.status === 'fulfilled' ? (avgRes.value.data?.data?.targetTemp ?? null) : null
     targetVelocity.value = avgRes.status === 'fulfilled' ? (avgRes.value.data?.data?.targetVelocity ?? null) : null
     deviceStateRows.value = stateRes.status === 'fulfilled' ? (stateRes.value.data?.data || []) : []
+    pidCycleRows.value = pidCycleRes.status === 'fulfilled' ? (pidCycleRes.value.data?.data || []) : []
     derivedMetricData.value = derivedRes.status === 'fulfilled' ? (derivedRes.value.data?.data || {}) : {}
     scatterRows.value = scatterRes.status === 'fulfilled' ? (scatterRes.value.data?.data || []) : []
     heaterEnergyRows.value = energyRes.status === 'fulfilled' ? (energyRes.value.data?.data?.rows || []) : []
@@ -983,6 +995,70 @@ watch([deviceStateRows, deviceStateChartRef], () => {
   })
 }, { deep: true })
 
+// ==================== PID周期加热开关（按PWM周期边界精确复原开关阶梯波形） ====================
+// 跟"设备状态时间线"的区别：那张图是按设备行为上报的采样频率取样，这张图直接用
+// pidHeating.js 落库的周期计划（周期起始时间 + 本周期加热应开启的时长）算出精确的
+// 开-关两个时间点，横轴按 PID 自己的周期边界对齐，不受上报频率影响，更适合观察占空比。
+const showPidCycleChart = computed(() => {
+  if (historyChartsConfig.value.showPidHeatingCycleChart === false) return false
+  return pidCycleRows.value.length > 0
+})
+
+// 每个周期两个点：周期起始时刻开始加热（1），加热满 on_duration_ms 后关闭（0）。
+const pidCyclePoints = computed(() => {
+  const points = []
+  for (const row of pidCycleRows.value) {
+    const start = new Date(row.window_start).getTime()
+    points.push({ time: start, value: 1 })
+    points.push({ time: start + Number(row.on_duration_ms), value: 0 })
+  }
+  return points
+})
+
+const pidCycleChartRef = ref(null)
+let pidCycleChartInstance = null
+
+function renderPidCycleChart() {
+  const points = pidCyclePoints.value
+  const el = pidCycleChartRef.value
+  if (!points.length || !el || el.offsetWidth === 0) {
+    if (el) setTimeout(renderPidCycleChart, 50)
+    return
+  }
+  if (pidCycleChartInstance) pidCycleChartInstance.dispose()
+  const chart = echarts.init(el)
+  pidCycleChartInstance = chart
+
+  const times = formatTimes(points.map((p) => ({ c_time: p.time })))
+  chart.setOption({
+    tooltip: { trigger: 'axis' },
+    legend: { data: ['加热'], top: 0 },
+    toolbox: {
+      feature: { saveAsImage: { title: '下载图片' } },
+      right: 10,
+      top: 0,
+    },
+    grid: { left: 50, right: 30, top: 50, bottom: 50 },
+    xAxis: { type: 'category', data: times, axisLabel: { rotate: 15, fontSize: 10 } },
+    yAxis: {
+      type: 'value',
+      min: 0,
+      max: 1,
+      interval: 1,
+      axisLabel: { formatter: (v) => (v === 1 ? '开' : v === 0 ? '关' : '') },
+    },
+    series: [
+      { name: '加热', type: 'line', step: 'end', data: points.map((p) => p.value), itemStyle: { color: '#f97316' }, lineStyle: { color: '#f97316', width: 2 } },
+    ],
+  }, true)
+}
+
+watch([pidCyclePoints, pidCycleChartRef], () => {
+  nextTick(() => {
+    if (pidCycleChartRef.value) renderPidCycleChart()
+  })
+}, { deep: true })
+
 // ==================== 累计流量（从累计统计里单独摘出来，自己一张图） ====================
 const cumulativeFlowEntry = computed(() => {
   if (historyChartsConfig.value.showCumulative === false) return null
@@ -1187,6 +1263,8 @@ function disposeAllCharts() {
   secChartInstance = null
   deviceStateChartInstance?.dispose()
   deviceStateChartInstance = null
+  pidCycleChartInstance?.dispose()
+  pidCycleChartInstance = null
   cumulativeFlowChartInstance?.dispose()
   cumulativeFlowChartInstance = null
   switchDurationChartInstance?.dispose()

@@ -17,16 +17,29 @@ const validateDateRange = (startTime, endTime) => {
 
 /**
  * 按查询参数拼出 WHERE 子句和参数数组。
- * 支持的筛选：category（fault/safety，决定 type 取值范围）、keyword（设备编号或记录信息
- * 模糊匹配）、startTime/endTime（按 c_time 闭区间过滤）。只为实际传入的条件拼片段。
+ * 支持的筛选：category（fault/safety/linkage/alarm，决定 type 取值范围）、keyword
+ * （设备编号或记录信息模糊匹配）、startTime/endTime（按 c_time 闭区间过滤）。只为
+ * 实际传入的条件拼片段。
  */
 const buildWhere = (query = {}) => {
     const keyword = query.keyword?.trim() || ''
     const startTime = query.startTime || ''
     const endTime = query.endTime || ''
-    const types = CATEGORY_TYPES[resolveCategory(query)]
-    const conditions = [`type IN (${types.map(() => '?').join(',')})`]
-    const params = [...types]
+    const category = resolveCategory(query)
+    const conditions = []
+    const params = []
+    if (category === 'alarm') {
+        // 场景配置 ALARM_RULES 触发的规则告警，type 是规则自己的显示名，各不相同、
+        // 没法像另外三类那样列一张固定清单去 IN 匹配——改成排除掉那三类已知的固定
+        // type，覆盖现在及以后任何新增的规则名，不用每加一条规则就来改这里。
+        const knownTypes = Object.values(CATEGORY_TYPES).flat()
+        conditions.push(`type NOT IN (${knownTypes.map(() => '?').join(',')})`)
+        params.push(...knownTypes)
+    } else {
+        const types = CATEGORY_TYPES[category]
+        conditions.push(`type IN (${types.map(() => '?').join(',')})`)
+        params.push(...types)
+    }
 
     if (startTime && !isValidDateTime(startTime)) {
         throw new Error('开始时间格式不正确，应为 YYYY-MM-DD 或 YYYY-MM-DD HH:MM:SS')

@@ -565,7 +565,8 @@ const defaultConfig = {
   // 同一执行器（水泵/加热）本轮如有多条规则同时命中且结论矛盾，“关闭”优先于
   // “打开”（fail-safe）。目标温度不在这里配置，统一用上面的 DEFAULT_TARGET_TEMP。
   //   enabled                  - 联动总开关
-  //   pumpAlwaysOn              - 水泵常开：无故障、流量/压力读数正常就保持运行
+  //   pumpAlwaysOn              - 水泵常开：无故障、流量/压力读数没顶到异常哨兵就保持运行
+  //                                （不要求已有流量，水泵关闭时流量本来就是0，这条从关到开也能生效）
   //   heaterHysteresisValue     - 加热滞回带回差（℃），滞回带通断这条规则的参数
   //   tempDiffOpenThreshold     - 温差过大判定阈值（℃），超过关闭加热，滞回带通断这条规则的参数
   //   （加热滞回带通断本身是否生效不在这里勾选，由指令中心独立开关
@@ -805,6 +806,7 @@ const defaultConfig = {
   //   showFlowPressureChart   - 显示"瞬时流量与压力"
   //   showPidTrackingChart    - 显示"PID跟踪对比"（目标温度参考线 + 温度2 实际值）
   //   showDeviceStateChart    - 显示"设备状态时间线"（水泵/加热开关阶梯图）
+  //   showPidHeatingCycleChart - 显示"PID周期加热开关"（按 PWM 周期边界复原的加热开关阶梯图）
   //   showHeaterEnergyChart   - 显示"加热能耗分析"（瞬时实际加热功率、累计耗电量与
   //     累计换热量对比、单位流量能耗），需要 COMPUTED_METRICS.heaterRatedPower 配置为
   //     正数才会有数据，加热额定功率没配置时这张图查询直接返回空
@@ -820,6 +822,7 @@ const defaultConfig = {
     showPidTrackingChart: true,
     showPumpVelocityTrackingChart: true,
     showDeviceStateChart: true,
+    showPidHeatingCycleChart: true,
     showHeaterEnergyChart: true,
     showDerivedMetricCharts: true,
     showTempFlowScatter: true,
@@ -1170,7 +1173,7 @@ function validate(config) {
   }
   const historyCharts = config.HISTORY_CHARTS
   if (!historyCharts || typeof historyCharts !== 'object' || Array.isArray(historyCharts)) throw new Error('HISTORY_CHARTS 必须是 JSON 对象')
-  for (const key of ['showCumulative', 'showTimeWindow', 'showAverageChart', 'showTempChart', 'showFlowPressureChart', 'showPidTrackingChart', 'showPumpVelocityTrackingChart', 'showDeviceStateChart', 'showHeaterEnergyChart', 'showDerivedMetricCharts', 'showTempFlowScatter']) {
+  for (const key of ['showCumulative', 'showTimeWindow', 'showAverageChart', 'showTempChart', 'showFlowPressureChart', 'showPidTrackingChart', 'showPumpVelocityTrackingChart', 'showDeviceStateChart', 'showPidHeatingCycleChart', 'showHeaterEnergyChart', 'showDerivedMetricCharts', 'showTempFlowScatter']) {
     if (typeof historyCharts[key] !== 'boolean') throw new Error(`HISTORY_CHARTS.${key} 必须是布尔值`)
   }
   if (!Number.isInteger(historyCharts.pointLimit) || historyCharts.pointLimit < 10 || historyCharts.pointLimit > 2000) {

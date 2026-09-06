@@ -10,7 +10,7 @@ const { evaluateRules } = require('../../service/alarm/evaluateRules')
 const { evaluateSafety } = require('../../service/safety/safetyInterlock')
 const { evaluateLinkageRules } = require('../../service/linkageRules/linkageRules')
 const { evaluateFaultStatus } = require('../../service/faultStatus/faultStatus')
-const { evaluatePidHeating } = require('../../service/pidHeating/pidHeating')
+const { evaluatePidHeating, getPidHeatingStatus } = require('../../service/pidHeating/pidHeating')
 const { evaluatePumpVelocityControl } = require('../../service/pumpVelocityControl/pumpVelocityControl')
 const { evaluateQuantityShutdown } = require('../../service/quantityShutdown/quantityShutdown')
 const { compute: computeMetrics } = require('../../service/computedMetrics/computedMetrics')
@@ -101,6 +101,9 @@ async function handleMessage(topic, payload) {
         // PID 恒温控制：仅接管加热这一个执行器，时间比例控制模拟 PWM 占空比。
         const pidActions = await evaluatePidHeating(info)
         if (pidActions.length) info._pidActions = pidActions
+        // PID 本周期加热时长：仅供指令页面展示，不影响控制。
+        const pidHeatingStatus = await getPidHeatingStatus(info)
+        if (pidHeatingStatus) info._pidHeating = pidHeatingStatus
         // 水泵恒流速控制：仅接管水泵这一个执行器，滞环通断或占空比二选一。
         const pumpVelocityActions = await evaluatePumpVelocityControl(info)
         if (pumpVelocityActions.length) info._pumpVelocityActions = pumpVelocityActions

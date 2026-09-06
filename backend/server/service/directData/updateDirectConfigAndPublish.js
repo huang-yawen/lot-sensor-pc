@@ -110,6 +110,16 @@ async function isHeaterConfig(configId) {
   return String(rows[0].preffix || '').trim().toLowerCase() === 'heater'
 }
 
+/** 判断给定 config_id 是否是开关类指令项（f_type=1）。故障锁定只锁开关，
+ * 阈值/参数类指令项（输入框、滑块等）不受影响，用来在锁定前区分两者。 */
+async function isSwitchConfig(configId) {
+  const [rows] = await promisePool.query(
+    "SELECT id FROM t_direct_config WHERE id = ? AND f_type = '1' LIMIT 1",
+    [configId]
+  )
+  return rows.length > 0
+}
+
 /** 按 preffix 查 t_direct_config.id，跟 controlShared/controlHelpers.js/safetyInterlock.js 里的同名函数逻辑一致。 */
 async function resolveConfigIdByPrefix(prefix) {
   if (!prefix) return null
@@ -123,6 +133,49 @@ async function resolveConfigIdByPrefix(prefix) {
 /** 把指令值统一判断成"开"，跟 faultSnapshot.js 的 getSwitchValueByPrefix 用同一套取值约定。 */
 function isOnValue(value) {
   return ['on', 'open', '1', 'true'].includes(String(value).trim().toLowerCase())
+}
+
+/** 项目里所有"下限/上限"成对出现的阈值指令项（按 preffix），下限必须 <= 上限。
+ * 新增阈值对时在这里补一行即可，不用改下面的校验逻辑。 */
+const BOUND_PAIRS = [
+  { low: 'temp_low', high: 'temp_high', label: '温度' },
+  { low: 'flow_low', high: 'flow_high', label: '流量' },
+  { low: 'pressure_low', high: 'pressure_high', label: '压力' },
+  { low: 'pid_duty_min', high: 'pid_duty_max', label: '占空比' },
+]
+
+/**
+ * 校验这次要设置的阈值，跟它配对的另一侧（下限/上限）比，是否仍满足"下限 <= 上限"。
+ * 不是阈值对里的字段（大多数指令项都不是）直接跳过，返回 null；配对的另一侧还没
+ * 配置过值时也跳过（没有基准可比，不应该因为对侧空着就拒绝这次设置）。
+ * @returns {Promise<string|null>} 校验失败时返回错误提示文案，通过返回 null
+ */
+async function validateBoundPair(configId, value, d_no) {
+  const [rows] = await promisePool.query(
+    'SELECT preffix FROM t_direct_config WHERE id = ? LIMIT 1',
+    [configId]
+  )
+  const preffix = String(rows[0]?.preffix || '').trim().toLowerCase()
+  const pair = BOUND_PAIRS.find(p => p.low === preffix || p.high === preffix)
+  if (!pair) return null
+
+  const isLow = pair.low === preffix
+  const counterpartId = await resolveConfigIdByPrefix(isLow ? pair.high : pair.low)
+  if (counterpartId == null) return null
+
+  const counterpartValue = await getDirectValue({ config_id: counterpartId, d_no })
+  if (counterpartValue == null) return null
+
+  const counterpartNum = Number(counterpartValue)
+  const newNum = Number(value)
+  if (!Number.isFinite(counterpartNum) || !Number.isFinite(newNum)) return null
+
+  const lowNum = isLow ? newNum : counterpartNum
+  const highNum = isLow ? counterpartNum : newNum
+  if (lowNum > highNum) {
+    return `${pair.label}下限(${lowNum})不能大于上限(${highNum})`
+  }
+  return null
 }
 
 /**
@@ -148,7 +201,8 @@ module.exports = async (req, res) => {
     //   - 拨到 off（用户人工修复后复位）：调 handleResetButtonOff 走快照恢复流程
     //   - 拨到 on：拒绝，复位按钮只能由系统在故障触发时自动拨到 on，不能由用户手动设为 on
     //     （正常运行时复位按钮始终为 off）
-    // 其他开关和参数：故障态且复位按钮为 on 期间全部锁定，只读不可改
+    // 其他开关：故障态且复位按钮为 on 期间锁定，只读不可改；阈值/参数类指令项
+    // （f_type≠1）不受锁定影响，故障期间也能正常调整（比如调阈值排查问题）
     const isResetBtn = await isResetButtonConfig(config_id)
     if (isResetBtn) {
       const v = String(value).trim().toLowerCase()
@@ -177,27 +231,30 @@ module.exports = async (req, res) => {
       })
     }
 
-    // 非复位按钮的其他开关/参数：故障态下锁定，禁止修改
+    // 非复位按钮的开关：故障态下锁定，禁止修改；阈值/参数类指令项（f_type≠1）
+    // 跳过锁定检查，故障期间照常允许调整。
     // 单设备模式下：系统只有一个设备，任意一把锁住就拒绝
     // 多设备模式下：按 d_no 精确匹配
-    if (singleDeviceMode) {
-      if (isAnyLocked()) {
-        console.warn(`[DirectUpdate] 指令 ${config_id} 被故障锁定拒绝（单设备模式）`)
-        return res.status(403).json({
-          success: false,
-          message: '系统处于故障态，指令页面已锁定，请先把复位按钮拨到"关"以恢复',
-          data: { status: 'locked' }
-        })
-      }
-    } else {
-      const lockDNo = (d_no && d_no !== 'null' && d_no !== 'undefined') ? String(d_no).trim() : null
-      if (isLockedByFault(lockDNo)) {
-        console.warn(`[DirectUpdate] 指令 ${config_id} 被故障锁定拒绝（设备=${lockDNo || '全局'}）`)
-        return res.status(403).json({
-          success: false,
-          message: '系统处于故障态，指令页面已锁定，请先把复位按钮拨到"关"以恢复',
-          data: { status: 'locked' }
-        })
+    if (await isSwitchConfig(config_id)) {
+      if (singleDeviceMode) {
+        if (isAnyLocked()) {
+          console.warn(`[DirectUpdate] 指令 ${config_id} 被故障锁定拒绝（单设备模式）`)
+          return res.status(403).json({
+            success: false,
+            message: '系统处于故障态，指令页面已锁定，请先把复位按钮拨到"关"以恢复',
+            data: { status: 'locked' }
+          })
+        }
+      } else {
+        const lockDNo = (d_no && d_no !== 'null' && d_no !== 'undefined') ? String(d_no).trim() : null
+        if (isLockedByFault(lockDNo)) {
+          console.warn(`[DirectUpdate] 指令 ${config_id} 被故障锁定拒绝（设备=${lockDNo || '全局'}）`)
+          return res.status(403).json({
+            success: false,
+            message: '系统处于故障态，指令页面已锁定，请先把复位按钮拨到"关"以恢复',
+            data: { status: 'locked' }
+          })
+        }
       }
     }
 
@@ -221,6 +278,20 @@ module.exports = async (req, res) => {
           data: { status: 'rejected' }
         })
       }
+    }
+
+    // ========== 阈值上下限校验 ==========
+    // 只有 BOUND_PAIRS 里配对的下限/上限指令项才会真的检查，其它指令项 validateBoundPair
+    // 直接返回 null 跳过，不影响这些指令项本来的保存流程。
+    const boundQueryDNo = singleDeviceMode ? await getDefaultDeviceId() : d_no
+    const boundError = await validateBoundPair(config_id, value, boundQueryDNo)
+    if (boundError) {
+      console.warn(`[DirectUpdate] 指令 ${config_id} 被拒绝：${boundError}`)
+      return res.status(400).json({
+        success: false,
+        message: boundError,
+        data: { status: 'rejected' }
+      })
     }
 
     // 1. 构建 MQTT 消息

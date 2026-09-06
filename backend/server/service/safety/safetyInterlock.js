@@ -8,15 +8,18 @@
  *   - 流量异常：流量为 0 / 顶到异常哨兵 / 低于流量下限        （evaluateValueConditions）
  *   - 压力异常：压力为 0 / 顶到异常哨兵 / 高于压力上限        （evaluateValueConditions）
  *   - 温度超上限：进水或出水温度顶到异常哨兵 / 高于温度上限   （evaluateValueConditions）
- *   - 温差过大：|进水-出水| > SAFETY_INTERLOCK.tempDiffThreshold（evaluateValueConditions）
+ *   - 温差过大：|进水-出水| > 温差阈值（指令中心 safety_temp_diff_threshold 优先，
+ *     没配置退回 SAFETY_INTERLOCK.tempDiffThreshold，evaluateValueConditions）
  *   - 流量剧烈波动：最近 N 个读数的极差 > flowVolatilityThreshold（疑似水锤/湍流，evaluateValueConditions）
  *   - 未开水泵却开加热：加热确认开、水泵确认关（两个开关状态都明确上报时才判，evaluateValueConditions）
  *   - 进入手动模式：控制模式从 auto 切到 manual 的那一刻，安全关闭一次（evaluateSafety）
  *   - 传感器掉线：设备心跳超时、完全没有消息进来（靠独立定时器 monitorOffline 主动查）
  *
- * 阈值分两类来源：温度/流量/压力上下限从**指令中心** t_direct 按 preffix 实时读
- * （getThresholdValue，用户在页面改完立即生效）；温差阈值、流量波动阈值、冷却时长、
- * 异常哨兵值、掉线检测周期从**配置中心** SAFETY_INTERLOCK 读。
+ * 阈值分两类来源：温度/流量/压力上下限、温差阈值、流量波动阈值都从**指令中心** t_direct
+ * 按 preffix 实时读（getThresholdValue/getNumberValue，指令项删掉才退回配置中心，
+ * 用户在页面改完立即生效，符合项目"指令配置优先、配置中心兜底"的统一约定）；
+ * 冷却时长、异常哨兵值、掉线检测周期这类纯软件行为参数没有对应硬件语义，只从
+ * **配置中心** SAFETY_INTERLOCK 读。
  *
  * 模式语义：安全联锁在自动和手动模式下**全程生效**——触发任一启用条件都会强制关闭
  * 水泵和加热。区别只在于：
@@ -209,13 +212,16 @@ async function evaluateValueConditions(info, deviceNo, safetyConfig) {
   }
 
   // 4. 温差过大。温差本身用共用的 getTempDiff 算（进水或出水读数缺一个就返回 null，
-  //    这里 `diff != null` 一并挡掉，不会拿 NaN 去比阈值）；阈值用的是**本模块自己的**
-  //    配置中心值 SAFETY_INTERLOCK.tempDiffThreshold——故障机的"水泵故障"和联动的
-  //    "双温度融合 / 滞回带"也各有一个温差阈值，互相独立，现场调参时注意它们不是同一个。
+  //    这里 `diff != null` 一并挡掉，不会拿 NaN 去比阈值）；阈值支持现场在指令中心调
+  //    （preffix=safety_temp_diff_threshold），指令项删掉才退回配置中心
+  //    SAFETY_INTERLOCK.tempDiffThreshold——故障机的"水泵故障"（preffix=temp_diff）
+  //    和联动的"双温度融合 / 滞回带"各自还有一个温差阈值，三个互相独立，现场调参时
+  //    注意别调错了对应的那一项。
   if (safetyConfig.tempDiff) {
     const diff = getTempDiff(sensors)
-    if (diff != null && diff > Number(safetyConfig.tempDiffThreshold)) {
-      triggers.push({ id: 'temp_diff', name: '温差过大', detail: `温差=${diff.toFixed(2)} > ${safetyConfig.tempDiffThreshold}℃` })
+    const tempDiffThreshold = await getNumberValue('safety_temp_diff_threshold', deviceNo, safetyConfig.tempDiffThreshold, 10)
+    if (diff != null && diff > tempDiffThreshold) {
+      triggers.push({ id: 'temp_diff', name: '温差过大', detail: `温差=${diff.toFixed(2)} > ${tempDiffThreshold}℃` })
     }
   }
 
