@@ -19,7 +19,7 @@ const SAFETY_TRIGGER_NAMES = {
   temp_diff: '温差过大',
   flow_volatility: '流量剧烈波动（疑似水锤/湍流）',
   manual_mode: '进入手动模式（人工修复）',
-  sensor_offline: '传感器掉线（无数据上报）',
+  sensor_offline: '传感器掉线',
   heater_without_pump: '未开水泵却开启加热',
 }
 

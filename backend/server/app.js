@@ -21,7 +21,7 @@ const { WebSocketServer } = require('ws');
 require('./config/env');
 const sensorRoutes = require('./routes/sensorRoutes');
 const systemConfig = require('./config/systemConfig');
-const { startMonitor: startSafetyMonitor } = require('./service/safety/safetyInterlock');
+const { startMonitor: startSafetyMonitor, onSafetyInterlock } = require('./service/safety/safetyInterlock');
 const { initFaultStateFromDb, onFault } = require('./service/faultStatus/faultStatus');
 const { onAlarm } = require('./service/alarm/evaluateRules');
 const { onHeaterBlocked } = require('./service/pidHeating/pidHeating');
@@ -204,6 +204,13 @@ app.set('wsBroadcast', broadcast);
 // 新故障触发时立即广播（不走节流），前端收到后弹窗提示当前故障情况。
 onFault((trigger) => {
     broadcast('fault_triggered', trigger);
+});
+
+// 安全联锁触发时立即广播（不走节流）。安全联锁触发时已经把水泵和加热强制关掉了，
+// 是"已动作、通知用户知悉"的性质，不需要用户处理，所以前端用非阻塞通知展示
+// （SafetyAlertNotifier.vue），不做成模态弹窗。
+onSafetyInterlock((trigger) => {
+    broadcast('safety_triggered', trigger);
 });
 
 // 自定义阈值告警规则（ALARM_RULES）触发时立即广播（不走节流）——这些规则可能比

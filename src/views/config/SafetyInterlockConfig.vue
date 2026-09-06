@@ -141,7 +141,7 @@ const conditions = [
   { key: 'tempDiff', preffix: 'safety_temp_diff_threshold', title: '温差过大', description: '两路温度差的绝对值超过温差阈值。' },
   { key: 'flowVolatility', title: '流量剧烈波动（疑似水锤/湍流）', description: '最近 10 个读数里最大值-最小值超过波动阈值，哪怕单次读数正常也会触发。' },
   { key: 'manualMode', title: '进入手动模式（人工修复）', description: '控制模式从自动切换到手动时，安全关闭一次水泵和加热。' },
-  { key: 'sensorOffline', title: '任一传感器数值掉线', description: '设备长时间无数据上报（心跳超时）时判定离线。' },
+  { key: 'sensorOffline', title: '传感器掉线（字段缺失 / 心跳超时）', description: 'MQTT 上报里缺少任一传感器字段（传感器与行为合并上报时也含控制器水泵/加热状态字段）即判定掉线，立即全关；设备完全无数据上报（心跳超时）也判定离线。' },
   { key: 'heaterWithoutPump', title: '加热开启但水泵未开', description: '加热器已开启但水泵未开启时触发，防止无水流干烧。仅当水泵、加热开关状态均明确上报时才判断，避免消息里缺行为字段时误触发。（事后检测；配套的事前拦截见下方"加热开启前置条件"）' },
 ]
 

@@ -22,6 +22,8 @@
         <!-- 全局挂载点：不管用户停在哪个页面，只要后端触发新故障就弹窗提示，
              不需要每个业务页面各自监听，组件内部自己监听 WebSocket。 -->
         <FaultAlertDialog />
+        <!-- 安全联锁触发的实时提示（非阻塞），见 SafetyAlertNotifier.vue 头部注释。 -->
+        <SafetyAlertNotifier />
         <!-- 自定义阈值告警（ALARM_RULES）的实时提示，跟上面故障弹窗是两套独立机制，
              各自监听不同的 WebSocket 事件，互不干扰，见 AlarmNotifier.vue 头部注释。 -->
         <AlarmNotifier />
@@ -32,6 +34,7 @@
 import SideBar from '@/components/SideBar.vue'
 import TopNav from '@/components/TopNav.vue'
 import FaultAlertDialog from '@/components/FaultAlertDialog.vue'
+import SafetyAlertNotifier from '@/components/SafetyAlertNotifier.vue'
 import AlarmNotifier from '@/components/AlarmNotifier.vue'
 import { DisplayStore } from '@/stores/DisplayStore'
 

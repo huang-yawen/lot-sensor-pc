@@ -14,7 +14,10 @@
  *   - 流量剧烈波动：最近 N 个读数的极差 > flowVolatilityThreshold（疑似水锤/湍流，evaluateValueConditions）
  *   - 未开水泵却开加热：加热确认开、水泵确认关（两个开关状态都明确上报时才判，evaluateValueConditions）
  *   - 进入手动模式：控制模式从 auto 切到 manual 的那一刻，安全关闭一次（evaluateSafety）
- *   - 传感器掉线：设备心跳超时、完全没有消息进来（靠独立定时器 monitorOffline 主动查）
+ *   - 传感器掉线：①收到消息但缺字段——传感器字段（SENSOR_FIELD_MAP）任缺其一即算掉线；
+ *     传感器与行为合并上报时（MQTT_TOPICS.sensor === behavior），控制器的水泵/加热状态字段缺失
+ *     同样算（evaluateValueConditions，每条消息判）；②设备心跳超时、完全没有消息进来（靠独立
+ *     定时器 monitorOffline 主动查）。两条共用 sensor_offline
  *
  * 阈值分两类来源：温度/流量/压力上下限、温差阈值、流量波动阈值都从**指令中心** t_direct
  * 按 preffix 实时读（getThresholdValue/getNumberValue，指令项删掉才退回配置中心，
@@ -31,6 +34,7 @@
  * 【配置中心关联】SAFETY_INTERLOCK 每次评估动态读取，保存配置后立即生效
  * （monitorIntervalMs 除外——它在启动时读一次，改后需重启后端）。
  */
+const EventEmitter = require('events')
 const systemConfig = require('../../config/systemConfig')
 const { getCurrentMode } = require('../directData/getControlMode')
 // 读传感器/开关、查阈值、下发开关、解析设备号——统一走 controlShared，不再本地重抄一份。
@@ -57,6 +61,10 @@ const { recordEvent } = require('../controlShared/recordEvent')
 const lastMode = new Map()
 /** 告警/联锁冷却：与故障状态机同一份实现（controlShared/cooldown），各自持有独立计时状态。 */
 const cooldown = createCooldown()
+/** 安全联锁事件总线：每次真正触发（非冷却期）时 emit 'safety'，供 app.js 转成
+ * WebSocket 的 safety_triggered 推给前端非阻塞提示。跟 faultStatus.js 的 onFault、
+ * evaluateRules.js 的 onAlarm 是同一套机制。 */
+const events = new EventEmitter()
 
 /** 每个设备最近若干个流量读数的滑动窗口，用于判断流量波动幅度（疑似水锤/湍流）。 */
 const flowWindowMap = new Map()
@@ -154,17 +162,20 @@ async function fire(trigger, deviceNo, safetyConfig, { interlock }) {
     outcome.interlocked = await closePumpHeater(deviceNo, trigger.id)
   }
   await recordAlarm(deviceNo, trigger, interlock)
+  // 广播这次触发，供 app.js 转成 WebSocket safety_triggered 推给前端非阻塞提示。
+  // 冷却期内上面已经 return null，能走到这里的都是真正动作过的触发。
+  events.emit('safety', { ...outcome, deviceNo: deviceNo || null })
   return outcome
 }
 
 /* ============================ 条件评估 ============================ */
 
 /**
- * 判断条件 1~4 和条件 7（编号对应文件头部的清单）：这几条的共同点是只需要看
- * "这一条消息本身携带的数值"就能判断，不需要额外记住跨消息的状态、也不需要
+ * 判断条件 1~4、条件 6 和条件 7（编号对应文件头部的清单）：这几条的共同点是只需要看
+ * "这一条消息本身携带的数值/字段"就能判断，不需要额外记住跨消息的状态、也不需要
  * 单独起个定时器——这跟条件 5（进入手动模式，得记住上一次的模式才能判断出
- * "切换"这个瞬间）和条件 6（掉线监测，完全没有消息进来时才要触发，必须靠
- * 定时器主动查）是不同类型的判断，所以拆成单独一个函数、不跟它们混在一起。
+ * "切换"这个瞬间）和"传感器掉线"里"完全没有消息进来"那部分（必须靠定时器
+ * monitorOffline 主动查）是不同类型的判断，所以拆成单独一个函数、不跟它们混在一起。
  * 命中的条件都会被塞进 triggers 数组一起返回，调用方 evaluateSafety 逐个拿去
  * 走"冷却判断 -> 记录告警 -> 联锁关闭"这一整套流程（见 fire 函数）。
  */
@@ -239,6 +250,31 @@ async function evaluateValueConditions(info, deviceNo, safetyConfig) {
         id: 'flow_volatility',
         name: '流量剧烈波动（疑似水锤/湍流）',
         detail: `最近${getFlowVolatilityWindow()}个读数波动幅度=${volatility.toFixed(2)} > ${threshold}`,
+      })
+    }
+  }
+
+  // 6. 数据结构不完整（有传感器/控制器掉线）：设备每条上报都带齐 SENSOR_FIELD_MAP 里的
+  // 全部传感器字段是常态，一旦本条消息里缺了任意一个（readSensors 解析出来是 null），就说明
+  // 对应那路传感器掉线/没上报，保守起见立即全关。传感器和行为字段合并在同一条消息上报时
+  // （MQTT_TOPICS.sensor === behavior），控制器的水泵/加热状态字段也必须齐全，缺了同样算掉线；
+  // 两类字段分主题上报时纯传感器消息本就不带行为字段，不参与这条判断（避免每条传感器消息误触发）。
+  // 这里只看"本条消息带没带齐字段"，跟 monitorOffline 靠定时器查"整台设备心跳超时、完全没
+  // 消息"是互补的两条路径，共用同一个 sensor_offline id 和冷却：任一条先触发，30 秒内另一条
+  // 就不会重复关。
+  if (safetyConfig.sensorOffline) {
+    const missingFields = Object.keys(systemConfig.getConfig().SENSOR_FIELD_MAP || {})
+      .filter((key) => sensors[key] == null)
+    const topics = systemConfig.getConfig().MQTT_TOPICS || {}
+    if (topics.sensor && topics.sensor === topics.behavior) {
+      if (states.pumpOn == null) missingFields.push('水泵状态')
+      if (states.heatOn == null) missingFields.push('加热状态')
+    }
+    if (missingFields.length > 0) {
+      triggers.push({
+        id: 'sensor_offline',
+        name: '传感器掉线（数据结构不完整）',
+        detail: `本条上报缺少字段：${missingFields.join('、')}`,
       })
     }
   }
@@ -337,4 +373,4 @@ function startMonitor() {
   monitorTimer.unref?.()
 }
 
-module.exports = { evaluateSafety, startMonitor }
+module.exports = { evaluateSafety, startMonitor, onSafetyInterlock: (listener) => events.on('safety', listener) }
