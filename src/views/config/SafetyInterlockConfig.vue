@@ -56,12 +56,12 @@
       <div class="section-heading">
         <div>
           <h3>温差阈值</h3>
-          <p>两路温度差的绝对值超过该值时，触发“温差过大”安全联锁。指令中心配置了“温差阈值”指令项就优先用指令中心的，这里只是没配置时的兜底默认值。</p>
+          <p>两路温度差的绝对值超过该值时，触发“温差过大”安全联锁。指令中心配置了安全联锁专用的“温差阈值”指令项（preffix=safety_temp_diff_threshold，独立指令项，不与联动“加热滞回带通断”③号短路、故障机“水泵故障”共用）就优先用指令中心的，这里只是没配置时的兜底默认值。</p>
         </div>
       </div>
       <el-form label-width="140px" class="safety-form">
         <el-form-item label="指令中心当前值">
-          <span>{{ thresholdValues.temp_diff ?? '未在指令中心配置，以下方兜底值为准' }}</span>
+          <span>{{ thresholdValues.safety_temp_diff_threshold ?? '未在指令中心配置，以下方兜底值为准' }}</span>
         </el-form-item>
         <el-form-item label="温差阈值（℃，兜底默认值）">
           <el-input-number v-model="form.tempDiffThreshold" :min="0" :step="0.5" :disabled="!form.enabled" />
@@ -138,7 +138,7 @@ const conditions = [
   { key: 'flowLow', preffix: 'flow_low', title: '流量低于下限阈值或流量为 0', description: '瞬时流量为 0、低于指令中心的流量下限阈值，或达到异常最大值。' },
   { key: 'pressureHigh', preffix: 'pressure_high', title: '压力高于上限阈值或压力为 0', description: '压力为 0、高于指令中心的压力上限阈值，或达到异常最大值。' },
   { key: 'tempHigh', preffix: 'temp_high', title: '任一温度高于上限阈值', description: '进水/出水任一温度高于指令中心的温度上限阈值，或达到异常最大值。' },
-  { key: 'tempDiff', preffix: 'temp_diff', title: '温差过大', description: '两路温度差的绝对值超过温差阈值。' },
+  { key: 'tempDiff', preffix: 'safety_temp_diff_threshold', title: '温差过大', description: '两路温度差的绝对值超过温差阈值。' },
   { key: 'flowVolatility', title: '流量剧烈波动（疑似水锤/湍流）', description: '最近 10 个读数里最大值-最小值超过波动阈值，哪怕单次读数正常也会触发。' },
   { key: 'manualMode', title: '进入手动模式（人工修复）', description: '控制模式从自动切换到手动时，安全关闭一次水泵和加热。' },
   { key: 'sensorOffline', title: '任一传感器数值掉线', description: '设备长时间无数据上报（心跳超时）时判定离线。' },

@@ -8,8 +8,9 @@
  *   - 流量异常：流量为 0 / 顶到异常哨兵 / 低于流量下限        （evaluateValueConditions）
  *   - 压力异常：压力为 0 / 顶到异常哨兵 / 高于压力上限        （evaluateValueConditions）
  *   - 温度超上限：进水或出水温度顶到异常哨兵 / 高于温度上限   （evaluateValueConditions）
- *   - 温差过大：|进水-出水| > 温差阈值（指令中心 safety_temp_diff_threshold 优先，
- *     没配置退回 SAFETY_INTERLOCK.tempDiffThreshold，evaluateValueConditions）
+ *   - 温差过大：|进水-出水| > 温差阈值（安全联锁专用的独立指令项 safety_temp_diff_threshold
+ *     优先，没配置才退回配置中心 SAFETY_INTERLOCK.tempDiffThreshold；与联动"加热滞回带通断"
+ *     ③号短路、故障机"水泵故障"各用各的指令项，互不影响，evaluateValueConditions）
  *   - 流量剧烈波动：最近 N 个读数的极差 > flowVolatilityThreshold（疑似水锤/湍流，evaluateValueConditions）
  *   - 未开水泵却开加热：加热确认开、水泵确认关（两个开关状态都明确上报时才判，evaluateValueConditions）
  *   - 进入手动模式：控制模式从 auto 切到 manual 的那一刻，安全关闭一次（evaluateSafety）
@@ -213,9 +214,10 @@ async function evaluateValueConditions(info, deviceNo, safetyConfig) {
 
   // 4. 温差过大。温差本身用共用的 getTempDiff 算（进水或出水读数缺一个就返回 null，
   //    这里 `diff != null` 一并挡掉，不会拿 NaN 去比阈值）；阈值支持现场在指令中心调
-  //    （preffix=safety_temp_diff_threshold），指令项删掉才退回配置中心
-  //    SAFETY_INTERLOCK.tempDiffThreshold——故障机的"水泵故障"（preffix=temp_diff）
-  //    和联动的"双温度融合 / 滞回带"各自还有一个温差阈值，三个互相独立，现场调参时
+  //    （preffix=safety_temp_diff_threshold，安全联锁专用的独立指令项），指令项删掉才退回
+  //    配置中心 SAFETY_INTERLOCK.tempDiffThreshold。这个阈值只归安全联锁"温差过大"用：
+  //    联动规则 ruleHeaterHysteresis 里③号短路判据用的是 temp_diff_open、联动"双温度融合"
+  //    用的是 dual_temp_diff、故障机"水泵故障"用的是 temp_diff，四处各自独立，现场调参时
   //    注意别调错了对应的那一项。
   if (safetyConfig.tempDiff) {
     const diff = getTempDiff(sensors)

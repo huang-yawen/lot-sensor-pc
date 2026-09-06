@@ -260,7 +260,8 @@ async function detectFault(info, deviceNo, faultConfig) {
   //    缺一个就返回 null，`diff != null` 一并挡掉，不拿 NaN 比阈值）。这里的 tempDiffThreshold
   //    是**故障机自己的**那一个：指令中心配了 temp_diff 指令项就用它，没配才退回
   //    FAULT_STATUS.tempDiffThreshold（见上方 tempDiffThreshold 的取法）。安全联锁的
-  //    "温差过大"、联动的"双温度融合"各有各的温差阈值，不是同一个。
+  //    "温差过大"用的是 safety_temp_diff_threshold、联动"加热滞回带通断"③号短路用的是
+  //    temp_diff_open、联动"双温度融合"用的是 dual_temp_diff，四个各自独立，不是同一个。
   if (faultConfig.pumpFault !== false && pumpWarmedUp && tempDiffThreshold != null) {
     const diff = getTempDiff(sensors)
     if (diff != null && diff > tempDiffThreshold) {
