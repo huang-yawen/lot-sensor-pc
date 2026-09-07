@@ -35,7 +35,10 @@
  * （monitorIntervalMs 除外——它在启动时读一次，改后需重启后端）。
  */
 const EventEmitter = require('events')
-const systemConfig = require('../../config/systemConfig')
+// 安全联锁自己的开关和参数（总开关、各条件、异常哨兵值、掉线监测周期等）都在这里。
+const CONFIG = require('./config')
+const { SENSOR_FIELD_MAP } = require('../../config/appSettings')
+const { MQTT_TOPICS } = require('../../config/mqtt')
 const { getCurrentMode } = require('../directData/getControlMode')
 // 读传感器/开关、查阈值、下发开关、解析设备号——统一走 controlShared，不再本地重抄一份。
 // 流量波动阈值支持现场在指令中心调（preffix=flow_volatility），删掉就退回配置中心。
@@ -74,7 +77,7 @@ const flowWindowMap = new Map()
  * 这个历史图表指标各自独立维护，不是同一份状态（那边查数据库算历史曲线，这里是
  * 实时联锁用内存滑动窗口判断），窗口大小不要求两边一致。 */
 function getFlowVolatilityWindow() {
-  const v = Number(systemConfig.getConfig().SAFETY_INTERLOCK?.flowVolatilityWindow)
+  const v = Number(CONFIG.flowVolatilityWindow)
   return Number.isInteger(v) && v >= 2 ? v : 10
 }
 
@@ -263,9 +266,9 @@ async function evaluateValueConditions(info, deviceNo, safetyConfig) {
   // 消息"是互补的两条路径，共用同一个 sensor_offline id 和冷却：任一条先触发，30 秒内另一条
   // 就不会重复关。
   if (safetyConfig.sensorOffline) {
-    const missingFields = Object.keys(systemConfig.getConfig().SENSOR_FIELD_MAP || {})
+    const missingFields = Object.keys(SENSOR_FIELD_MAP || {})
       .filter((key) => sensors[key] == null)
-    const topics = systemConfig.getConfig().MQTT_TOPICS || {}
+    const topics = MQTT_TOPICS || {}
     if (topics.sensor && topics.sensor === topics.behavior) {
       if (states.pumpOn == null) missingFields.push('水泵状态')
       if (states.heatOn == null) missingFields.push('加热状态')
@@ -295,7 +298,7 @@ async function evaluateValueConditions(info, deviceNo, safetyConfig) {
  * @returns {Array} 本次触发的安全联锁结果
  */
 async function evaluateSafety(info) {
-  const safetyConfig = systemConfig.getConfig().SAFETY_INTERLOCK || {}
+  const safetyConfig = CONFIG
   if (safetyConfig.enabled !== true) return []
 
   const deviceNo = await resolveDeviceNoStr(info)
@@ -336,7 +339,7 @@ async function evaluateSafety(info) {
 // "完全没有消息进来了"，没消息就不会调用 evaluateSafety。这里用一个独立的定时器，
 // 主动去查"每个设备上次收到心跳是多久之前"，而不是等消息来了才检查。
 async function monitorOffline() {
-  const safetyConfig = systemConfig.getConfig().SAFETY_INTERLOCK || {}
+  const safetyConfig = CONFIG
   if (safetyConfig.enabled !== true || safetyConfig.sensorOffline === false) return
 
   let mqttClient
@@ -361,7 +364,7 @@ async function monitorOffline() {
  * 属于"保存后需要重启后端才生效"的一类配置，不是热更新。 */
 function startMonitor() {
   if (monitorTimer) return
-  const configured = Number(systemConfig.getConfig().SAFETY_INTERLOCK?.monitorIntervalMs)
+  const configured = Number(CONFIG.monitorIntervalMs)
   const intervalMs = Number.isFinite(configured) && configured >= 1000 ? configured : 5000
   monitorTimer = setInterval(async () => {
     try {

@@ -41,7 +41,11 @@
  * 【配置中心关联】PID_HEATING 仅作兜底默认值，保存配置后立即生效。
  */
 const promisePool = require('../../config/dbPool')
-const systemConfig = require('../../config/systemConfig')
+// PID 自己的兜底参数（kp/ki/kd/周期/死区等）在这里；是否启用以指令中心 pid_enabled 为准。
+const CONFIG = require('./config')
+const SAFETY_CONFIG = require('../safety/config') // 只读一项：开加热前是否要求先开水泵
+const { SINGLE_DEVICE_MODE, DEFAULT_TARGET_TEMP } = require('../../config/appSettings')
+const { MQTT_QOS } = require('../../config/mqtt')
 const { firstValue, getTopic, buildSwitchPayload } = require('../../utils/protocol')
 const { resolveDeviceNo, resolveFieldAliases } = require('../../utils/mappedData')
 const { getDirectValue, saveDirectData } = require('../directData/saveDirectConfig')
@@ -157,7 +161,7 @@ async function isPidEnabled(deviceNo) {
   if (pid == null) {
     // 总开关明确是关时，兜底也不该生效（现场明确关掉了自动控制）
     if (master === false) return false
-    return systemConfig.getConfig().PID_HEATING?.enabled === true
+    return CONFIG.enabled === true
   }
   // PID 子开关配了，以指令页面为准
   return master === true && pid === true
@@ -227,8 +231,8 @@ async function setHeater(value, deviceNo, source) {
   if (!conf) return false
   const mqttClient = require('../../mqtt')
   const payload = buildSwitchPayload(conf, value)
-  if (!systemConfig.getConfig().SINGLE_DEVICE_MODE && deviceNo) payload.d_no = deviceNo
-  await mqttClient.publish(getTopic('control'), payload, { qos: systemConfig.getConfig().MQTT_QOS })
+  if (!SINGLE_DEVICE_MODE && deviceNo) payload.d_no = deviceNo
+  await mqttClient.publish(getTopic('control'), payload, { qos: MQTT_QOS })
   const oldValue = await getDirectValue({ config_id: conf.id, d_no: deviceNo })
   await saveDirectData({ config_id: conf.id, value, d_no: deviceNo })
   await saveOperationHistory({ d_no: deviceNo, config_id: conf.id, old_value: oldValue, new_value: value, source })
@@ -282,8 +286,7 @@ async function evaluatePidHeating(info) {
   // ====== 故障锁短路 ======
   // 故障态下 faultStatus 已经强制关闭水泵和加热、并锁定了指令页面，
   // 这里直接返回空数组，不再往下走 PID 计算和指令下发。
-  const rootConfig = systemConfig.getConfig()
-  if (rootConfig.SINGLE_DEVICE_MODE === true) {
+  if (SINGLE_DEVICE_MODE === true) {
     // 不看设备号，只要"系统里任意一台设备"故障锁定了就算数
     if (isAnyLocked()) return []
   } else {
@@ -301,7 +304,7 @@ async function evaluatePidHeating(info) {
   // 自动模式下再走完整的两级开关判定（master + pid）
   if (!(await isPidEnabled(deviceNo))) return []
 
-  const fallback = rootConfig.PID_HEATING || {}
+  const fallback = CONFIG
 
   // ⭐ PID 的被控量：T2 出水温度（temp_out / field2）
   const tempOut = await readTempOut(info)
@@ -313,7 +316,7 @@ async function evaluatePidHeating(info) {
   // 当前加热开关状态（行为上报）。允许为 null（未知），null 时做保守同步。
   const heatOn = await readHeatOn(info)
 
-  const targetTemp = await getTargetTemp(deviceNo, rootConfig.DEFAULT_TARGET_TEMP)
+  const targetTemp = await getTargetTemp(deviceNo, DEFAULT_TARGET_TEMP)
 
   // PID 参数读取（全部按 preffix 定位，t_name 仅做兜底）
   const windowMsRaw = await getPidNumber('windowMs', deviceNo, fallback.windowMs ?? 10000)
@@ -497,7 +500,7 @@ async function evaluatePidHeating(info) {
   // 同一条防线（SAFETY_INTERLOCK.requirePumpBeforeHeater，见 updateDirectConfigAndPublish.js），
   // 这里补上自动模式这一侧——PID 算出来要开，也得先看水泵是不是真的开着，不是就拦下
   // 这次下发，只在从"允许"变成"拦截"的那一刻提醒一次，避免每条消息都弹一次提示。
-  const requirePumpBeforeHeater = rootConfig.SAFETY_INTERLOCK?.requirePumpBeforeHeater !== false
+  const requirePumpBeforeHeater = SAFETY_CONFIG.requirePumpBeforeHeater !== false
   const blockedByPump = shouldSend && desired === 'on' && requirePumpBeforeHeater && !(await readSwitchOn('pump', deviceNo))
 
   if (blockedByPump) {

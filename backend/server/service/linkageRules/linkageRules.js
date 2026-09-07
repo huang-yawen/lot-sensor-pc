@@ -30,7 +30,9 @@
  * 阈值、目标温度实时读取指令中心 t_direct，页面修改即时生效。
  * 【配置中心关联】LINKAGE_RULES 每次评估动态读取。
  */
-const systemConfig = require('../../config/systemConfig')
+// 联动规则自己的开关和参数（总开关 + 9 条规则逐条开关 + 各滞回/温差阈值）在这里。
+const CONFIG = require('./config')
+const { SINGLE_DEVICE_MODE, DEFAULT_TARGET_TEMP } = require('../../config/appSettings')
 const { getCurrentMode } = require('../directData/getControlMode')
 const { recordEvent } = require('../controlShared/recordEvent')
 const { isPidEnabled, readSwitchOn } = require('../pidHeating/pidHeating')
@@ -466,14 +468,13 @@ function ruleTempPressure(sensors, states, pressureLow, pressureHigh, tempLow, d
  * @returns {Promise<Array>} 本次实际下发的动作（没有任何变化就是空数组）
  */
 async function evaluateLinkageRules(info) {
-  const rootConfig = systemConfig.getConfig()
-  const config = rootConfig.LINKAGE_RULES || {}
+  const config = CONFIG
   if (config.enabled !== true) return []
 
   const deviceNo = await resolveDeviceNoStr(info)
 
   // ====== 故障锁短路 ======
-  if (rootConfig.SINGLE_DEVICE_MODE === true) {
+  if (SINGLE_DEVICE_MODE === true) {
     if (isAnyLocked()) return []
   } else if (isLockedByFault(deviceNo)) {
     return []
@@ -484,7 +485,7 @@ async function evaluateLinkageRules(info) {
 
   const sensors = await readSensors(info)
   const states = await readSwitchStates(info)
-  const targetTemp = await getTargetTemp(deviceNo, rootConfig.DEFAULT_TARGET_TEMP)
+  const targetTemp = await getTargetTemp(deviceNo, DEFAULT_TARGET_TEMP)
   const [tempLow, tempHigh, flowLow, flowHigh, pressureLow, pressureHigh] = await Promise.all([
     getThresholdValue('tempLow', deviceNo),
     getThresholdValue('tempHigh', deviceNo),

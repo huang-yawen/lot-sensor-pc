@@ -7,7 +7,9 @@
  * 的普通阈值规则（可能频繁触发、只是提示，不需要用户处理，所以用非阻塞通知）。
  * 【配置中心关联】ALARM_RULES（enabled/autoInterlockEnabled/rules）每次评估读取。 */
 const promisePool = require('../../config/dbPool')
-const systemConfig = require('../../config/systemConfig')
+// 阈值告警自己的开关和规则数组在这里（enabled / autoInterlockEnabled / rules）。
+const CONFIG = require('./config')
+const { SINGLE_DEVICE_MODE } = require('../../config/appSettings')
 const EventEmitter = require('events')
 const { firstValue, getTopic, toWireValue, buildSwitchPayload } = require('../../utils/protocol')
 const { resolveDeviceNo, resolveFieldAliases } = require('../../utils/mappedData')
@@ -77,13 +79,12 @@ async function requirementMet(info, requirement) {
  * @returns {Promise<Array>} 本次命中的告警列表
  */
 async function evaluateRules(info) {
-  const config = systemConfig.getConfig()
-  if (!config.ALARM_RULES?.enabled) return []
+  if (!CONFIG.enabled) return []
   const deviceNo = String((await resolveDeviceNo(info)) || 'default')
   const state = { ...(latestState.get(deviceNo) || {}), ...info }
   latestState.set(deviceNo, state)
   const alarms = []
-  for (const rule of config.ALARM_RULES.rules || []) {
+  for (const rule of CONFIG.rules || []) {
     if (!rule.enabled || !OPERATORS[rule.operator]) continue
     if (!(await requirementMet(state, rule.require))) continue
     const candidates = await resolveFieldNames(rule)
@@ -103,7 +104,7 @@ async function evaluateRules(info) {
       [deviceNo === 'default' ? null : deviceNo, recordTime, message, rule.id, rule.name]
     )
     let interlock = null
-    if (config.ALARM_RULES.autoInterlockEnabled && rule.action?.field) {
+    if (CONFIG.autoInterlockEnabled && rule.action?.field) {
       const targetDevice = deviceNo === 'default' ? null : deviceNo
       // 故障状态触发后，指令页面（含所有开关和参数）会被锁定为只读，故障前状态由
       // 快照保护、等用户手动复位后才恢复。这里的自动联锁跟前端提交走的是不同代码
@@ -111,7 +112,7 @@ async function evaluateRules(info) {
       // 会绕过锁定直接改写 t_direct，打破"故障期间页面显示保持故障前状态"这个约定。
       // 单设备模式下用 isAnyLocked()（避免设备号映射不一致导致查不到故障态），
       // 多设备模式下按 targetDevice 精确匹配，跟 updateDirectConfigAndPublish.js 同一套判断。
-      const locked = config.SINGLE_DEVICE_MODE ? isAnyLocked() : isLockedByFault(targetDevice)
+      const locked = SINGLE_DEVICE_MODE ? isAnyLocked() : isLockedByFault(targetDevice)
       if (locked) {
         console.warn(`[Alarm] 联锁动作被故障锁定跳过 (${rule.id})，设备=${targetDevice || '全局'}`)
         interlock = { success: false, error: '系统处于故障态，指令页面已锁定，跳过自动联锁动作' }
@@ -127,7 +128,7 @@ async function evaluateRules(info) {
           const payload = directConfig && String(directConfig.f_type) === '1'
             ? buildSwitchPayload(directConfig, rule.action.value)
             : { [rule.action.field]: toWireValue(rule.action.value) }
-          if (!config.SINGLE_DEVICE_MODE && deviceNo !== 'default') payload.d_no = deviceNo
+          if (!SINGLE_DEVICE_MODE && deviceNo !== 'default') payload.d_no = deviceNo
           const oldValue = directConfig
             ? await getDirectValue({ config_id: directConfig.id, d_no: targetDevice })
             : null

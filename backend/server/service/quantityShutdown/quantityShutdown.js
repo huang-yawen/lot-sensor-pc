@@ -10,7 +10,10 @@
  * enabled 开关走）。
  * 【配置中心关联】QUANTITY_SHUTDOWN 每次评估动态读取。
  */
-const systemConfig = require('../../config/systemConfig')
+// 定量停机自己的开关和目标值在这里（指令中心同名指令项优先）。
+const CONFIG = require('./config')
+const { SINGLE_DEVICE_MODE } = require('../../config/appSettings')
+const { MQTT_QOS } = require('../../config/mqtt')
 const promisePool = require('../../config/dbPool')
 const { firstValue, getTopic, buildSwitchPayload } = require('../../utils/protocol')
 const { resolveDeviceNo, resolveFieldAliases } = require('../../utils/mappedData')
@@ -86,8 +89,8 @@ async function shutDown(deviceNo) {
   for (const conf of targets.filter(Boolean)) {
     try {
       const payload = buildSwitchPayload(conf, 'off')
-      if (!systemConfig.getConfig().SINGLE_DEVICE_MODE && deviceNo) payload.d_no = deviceNo
-      await mqttClient.publish(getTopic('control'), payload, { qos: systemConfig.getConfig().MQTT_QOS })
+      if (!SINGLE_DEVICE_MODE && deviceNo) payload.d_no = deviceNo
+      await mqttClient.publish(getTopic('control'), payload, { qos: MQTT_QOS })
       const oldValue = await getDirectValue({ config_id: conf.id, d_no: deviceNo })
       await saveDirectData({ config_id: conf.id, value: 'off', d_no: deviceNo })
       await saveOperationHistory({ d_no: deviceNo, config_id: conf.id, old_value: oldValue, new_value: 'off', source: 'quantity_shutdown' })
@@ -120,7 +123,7 @@ async function shutDown(deviceNo) {
  *   shutdown}），开关关闭、目标值无效时返回 null（代表这次不参与判断）
  */
 async function evaluateQuantityShutdown(info, timestampMs = Date.now()) {
-  const config = systemConfig.getConfig().QUANTITY_SHUTDOWN || {}
+  const config = CONFIG
   const deviceNo = String((await resolveDeviceNo(info)) || '').trim() || null
 
   // 总开关：指令中心 quantity_shutdown_enabled 优先，指令项被删/没配过（返回 null）

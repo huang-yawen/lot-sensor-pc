@@ -35,7 +35,9 @@
  *   退回 FAULT_STATUS.tempDiffThreshold 兜底（跟 PID 的 Kp/Ki/Kd 同一套"指令中心优先、
  *   配置中心兜底"模式）。
  */
-const systemConfig = require('../../config/systemConfig')
+// 故障状态自己的开关和参数（总开关、五种故障、预热宽限、干烧计时等）都在这里。
+const CONFIG = require('./config')
+const { SINGLE_DEVICE_MODE } = require('../../config/appSettings')
 const { getDefaultDeviceId, getAllDeviceIds } = require('../../utils/mappedData')
 // 读传感器/开关、查阈值、下发开关（skipPersist=只断电不改显示值）、算温差、解析设备号
 // ——统一走 controlShared，不再本地重抄一份。
@@ -466,7 +468,7 @@ async function handleResetButtonOff(deviceNo) {
  *   "故障未修复时立即重新触发"。
  */
 async function evaluateFaultStatus(info) {
-  const faultConfig = systemConfig.getConfig().FAULT_STATUS || {}
+  const faultConfig = CONFIG
   if (faultConfig.enabled !== true) return []
 
   const deviceNo = await resolveDeviceNoStr(info)
@@ -560,7 +562,7 @@ async function initFaultStateFromDb() {
     const resetConfId = await resolveConfigIdByPrefix('reset_button')
     if (resetConfId == null) return
 
-    const singleDeviceMode = systemConfig.getConfig().SINGLE_DEVICE_MODE === true
+    const singleDeviceMode = SINGLE_DEVICE_MODE === true
     // 跟指令保存/渲染路径统一用 mappedData.js 的 getDefaultDeviceId/getAllDeviceIds，
     // 不再自己查 t_device.number——以前这里只查 number，跟别处优先取 d_no 不一致，
     // 两个字段值不同时这里会用错设备号，恢复不到正确设备的故障态。

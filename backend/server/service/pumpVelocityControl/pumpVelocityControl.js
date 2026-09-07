@@ -41,7 +41,10 @@
  * 【配置中心关联】PUMP_VELOCITY_CONTROL 每次评估动态读取，保存后立即生效；
  * COMPUTED_METRICS.pipeAreaCm2 用于流速换算，同样实时读取。
  */
-const systemConfig = require('../../config/systemConfig')
+// 恒流速自己的兜底参数（两套算法的开关、目标流速、防短循环时长、PID 参数）在这里。
+const CONFIG = require('./config')
+const { SINGLE_DEVICE_MODE } = require('../../config/appSettings')
+const { COMPUTED_METRICS } = require('../../config/metrics')
 const { resolveDeviceNo } = require('../../utils/mappedData')
 const { getCurrentMode } = require('../directData/getControlMode')
 const { readSwitchOn } = require('../pidHeating/pidHeating')
@@ -112,7 +115,7 @@ async function resolvePumpVelocityMode(deviceNo) {
   // 只看算法开关：两个算法开关都没配才走配置中心兜底（对齐恒温 isPidEnabled）。
   // 任一算法开关配了就以指令页面为准；总开关明确是关时兜底也不生效。
   if (pidOn == null && hysOn == null) {
-    const fallback = systemConfig.getConfig().PUMP_VELOCITY_CONTROL || {}
+    const fallback = CONFIG
     if (fallback.enabled !== true) return null
     if (master === false) return null
     return fallback.mode === 'pid' ? 'pid' : 'hysteresis'
@@ -287,11 +290,10 @@ function decideByDuty(state, now, velocity, targetVelocity, params) {
  * @returns {Promise<Array>} 本次实际下发的动作（没动作就是空数组）
  */
 async function evaluatePumpVelocityControl(info) {
-  const rootConfig = systemConfig.getConfig()
 
   // ====== 故障锁短路 ======
   // 故障态下 faultStatus 已经强制关泵并锁定指令页面，这里不再参与控制。
-  if (rootConfig.SINGLE_DEVICE_MODE === true) {
+  if (SINGLE_DEVICE_MODE === true) {
     if (isAnyLocked()) return []
   } else {
     const preDeviceNo = String((await resolveDeviceNo(info)) || '').trim() || null
@@ -306,7 +308,7 @@ async function evaluatePumpVelocityControl(info) {
   const mode = await resolvePumpVelocityMode(deviceNo)
   if (mode == null) return []
 
-  const fallback = rootConfig.PUMP_VELOCITY_CONTROL || {}
+  const fallback = CONFIG
   const sensors = await readSensors(info)
   const states = await readSwitchStates(info)
 
@@ -318,7 +320,7 @@ async function evaluatePumpVelocityControl(info) {
     const now = Date.now()
     if (now - (lastAreaWarnTs.get(key) || 0) >= AREA_WARN_INTERVAL_MS) {
       lastAreaWarnTs.set(key, now)
-      console.warn(`[PumpVelocityControl] 设备 ${key} 算不出流速（流量读数=${sensors.flow}，管道横截面积=${rootConfig.COMPUTED_METRICS?.pipeAreaCm2}），本轮不动作。请到配置中心"计算数据"页填写管道横截面积。`)
+      console.warn(`[PumpVelocityControl] 设备 ${key} 算不出流速（流量读数=${sensors.flow}，管道横截面积=${COMPUTED_METRICS?.pipeAreaCm2}），本轮不动作。请到配置中心"计算数据"页填写管道横截面积。`)
     }
     return []
   }
