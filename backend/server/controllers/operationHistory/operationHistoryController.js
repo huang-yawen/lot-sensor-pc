@@ -67,5 +67,3 @@ module.exports = {
   getHistoryList,
   getConfigOptions
 }
-/** 【文件职责】操作历史查询接口，返回人工控制和系统补发的审计记录。
- * 【配置中心关联】OPERATION_HISTORY_MODE 影响记录策略，具体逻辑在 service 中执行。 */

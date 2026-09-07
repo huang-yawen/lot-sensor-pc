@@ -42,5 +42,3 @@ module.exports = async (req, res) => {
         res.status(500).json({ success: false, message: err.message })
     }
 }
-/** 【文件职责】ECharts 示例数据接口，供图表组件开发验证。
- * 【配置中心关联】无；返回演示数据，不读写业务配置。 */

@@ -197,5 +197,3 @@ function chartSettings(metrics) {
 }
 
 module.exports = { BASE_FIELDS, ensureTable, validateMetric, listMetrics, saveMetric, deleteMetric, getEnabledMetrics, compileMetricSql, previewMetric, chartSettings }
-/** 【文件职责】派生指标服务，读取原始指标并调用表达式引擎生成计算结果。
- * 【配置中心关联】DERIVED_METRICS；配置项定义名称、依赖字段和计算表达式。 */

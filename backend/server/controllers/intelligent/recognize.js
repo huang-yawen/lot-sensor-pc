@@ -333,6 +333,3 @@ module.exports = async (req, res) => {
 }
 
 module.exports.ensureTable = ensureTable
-/** 【文件职责】智能判定接口，发起一次传感器或行为数据的分析流程，支持
- * json/form-data 请求体、GET/POST 方法、json/text 响应解析、同步/异步任务模式。
- * 【配置中心关联】INTELLIGENT_JUDGMENT 与功能开关由下层服务/调用链读取。 */

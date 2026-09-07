@@ -23,5 +23,3 @@ module.exports = async (data) => {
     const dNo = String(device.d_no ?? '').trim() || device.number
     return { success: result.affectedRows > 0, deviceNumber: device.number, dNo }
 }
-/** 【文件职责】删除设备的数据访问服务。
- * 【配置中心关联】无直接读取；调用方需同步清理设备运行时状态。 */

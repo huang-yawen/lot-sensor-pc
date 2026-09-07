@@ -172,7 +172,3 @@ async function saveMappedData({ table, mapperTable, info, dateTime }) {
 }
 
 module.exports = { saveMappedData, resolveDeviceNo, resolveDNoByNumber, resolveFieldAliases, getDefaultDeviceId, getAllDeviceIds }
-/**
- * 【文件职责】数据字段映射工具，将数据库或设备的原始字段转换为前端可用结构。
- * 【配置中心关联】如涉及显示字段，会按调用方传入的场景映射处理；本模块不持久化配置。
- */

@@ -28,5 +28,3 @@ module.exports = async (req, res) => {
         res.status(500).json({ success: false, message: 'Server error' })
     }
 }
-/** 【文件职责】批量更新控制配置服务，保证同一批页面修改按统一规则处理。
- * 【配置中心关联】控制主题和值转换由单条发布服务按 MQTT_TOPICS/CONTROL_VALUE_MAP 读取。 */

@@ -31,5 +31,3 @@ module.exports = async function getDirectConfigTree() {
         data: treeData['null'],
     }
 }
-/** 【文件职责】读取并组装 t_direct_config 父子树，供指令配置页面使用。
- * 【配置中心关联】不直接读取；preffix/f_type 是可在配置中心场景导入导出中的数据库元数据。 */

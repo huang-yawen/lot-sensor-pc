@@ -48,5 +48,3 @@ module.exports = async function getErrorHistory(query) {
         },
     }
 }
-/** 【文件职责】异常历史查询服务，封装筛选、分页和排序逻辑。
- * 【配置中心关联】无直接读取；数据由 MQTT 告警处理链路按当前主题写入。 */

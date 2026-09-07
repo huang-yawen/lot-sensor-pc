@@ -20,5 +20,3 @@ module.exports = async (req, res) => {
     res.status(500).json({ success: false, message: err.message })
   }
 }
-/** 【文件职责】时间窗口派生指标 HTTP 控制器。
- * 【配置中心关联】TIME_WINDOW_METRICS 由时间窗口服务动态读取，配置保存后立即生效。 */

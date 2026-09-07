@@ -38,5 +38,3 @@ module.exports = {
     saveSensorData,
     getSensorDataByDevice
 }
-/** 【文件职责】实时传感器数据仓储层，封装传感器数据的数据库读写。
- * 【配置中心关联】无直接读取；上游已完成配置驱动的协议解析。 */

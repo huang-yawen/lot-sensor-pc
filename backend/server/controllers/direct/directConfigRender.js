@@ -64,5 +64,3 @@ module.exports = async (req, res) => {
         res.status(500).json({ success: false, message: 'Server error' })
     }
 }
-/** 【文件职责】控制配置渲染接口，读取 t_direct_config 供指令页面生成控件。
- * 【配置中心关联】字段映射由每行 preffix 决定；页面场景开关由前端配置中心处理。 */

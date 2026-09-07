@@ -55,5 +55,3 @@ const history = async (req, res) => {
 }
 
 module.exports = { list, save, remove, preview, history }
-/** 【文件职责】派生指标 HTTP 控制器，负责把查询参数交给表达式计算服务。
- * 【配置中心关联】DERIVED_METRICS 由下层服务读取，保存配置后下一请求即生效。 */

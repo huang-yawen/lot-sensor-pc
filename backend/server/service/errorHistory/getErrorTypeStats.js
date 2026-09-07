@@ -37,5 +37,3 @@ module.exports = async function getErrorTypeStats(query) {
     total: data.reduce((sum, item) => sum + item.count, 0),
   }
 }
-/** 【文件职责】异常类型统计查询服务。
- * 【配置中心关联】无直接读取；基于已保存的异常历史进行统计。 */

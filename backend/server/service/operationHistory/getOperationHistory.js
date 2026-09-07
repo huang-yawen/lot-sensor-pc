@@ -82,5 +82,3 @@ async function getOperationHistory({ currentPage = 1, pageSize = 5, startTime = 
 }
 
 module.exports = { getOperationHistory }
-/** 【文件职责】操作历史查询服务，供页面审计控制、缓存和补发记录。
- * 【配置中心关联】OPERATION_HISTORY_MODE 影响哪些操作会被记录，查询本身不改配置。 */

@@ -44,5 +44,3 @@ module.exports = async (req, res) => {
         res.status(500).json({ success: false, message: err.message });
     }
 };
-/** 【文件职责】图表示例数据接口，用于前端联调或演示。
- * 【配置中心关联】无；仅返回固定测试数据，不参与真实设备处理。 */

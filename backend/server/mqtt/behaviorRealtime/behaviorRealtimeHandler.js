@@ -110,5 +110,3 @@ module.exports = {
     parsePayload,
     normalizeDateTime
 }
-/** 【文件职责】处理行为/运行状态 MQTT 消息：解析、校验并交给仓储层落库。
- * 【配置中心关联】DEVICE_ID_FIELDS、TIME_FIELDS 通过协议工具解析，配置热更新后新消息立即采用新规则。 */

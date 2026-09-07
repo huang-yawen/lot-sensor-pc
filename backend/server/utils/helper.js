@@ -128,8 +128,3 @@ exports.buildDisplayFieldUnits = (fieldMapping, fieldUnit) => {
 exports.formatLocalDateTime = formatLocalDateTime;
 exports.normalizeDateTime = normalizeDateTime;
 exports.nowLocalDateTime = nowLocalDateTime;
-
-/**
- * 【文件职责】后端通用小工具集合，放置与具体业务无关的格式化、转换或校验函数。
- * 【配置中心关联】无直接读取；若某工具需要场景配置，应由调用方显式传入，避免隐式耦合。
- */

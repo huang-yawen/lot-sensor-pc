@@ -162,6 +162,3 @@ module.exports = {
   evaluateRules,
   onAlarm: (listener) => events.on('alarm', listener),
 }
-/** 【文件职责】告警规则计算与可选自动联锁服务。
- * 【配置中心关联】ALARM_RULES（enabled/autoInterlockEnabled/rules）、CONTROL_VALUE_MAP；
- * 每次评估都读取最新配置，自动联锁默认应保持关闭。 */

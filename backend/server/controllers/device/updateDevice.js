@@ -22,5 +22,3 @@ module.exports = async (req, res) => {
         })
     }
 }
-/** 【文件职责】更新设备资料接口，并同步 DeviceManager 中的设备元数据。
- * 【配置中心关联】无直接读取；设备编号变更会影响后续 MQTT 心跳匹配。 */

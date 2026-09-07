@@ -105,5 +105,3 @@ module.exports = async function getDeviceManageList(query) {
 
     return responsePayload
 }
-/** 【文件职责】设备管理列表的数据查询服务。
- * 【配置中心关联】无直接读取；展示名称由前端按 DEVICE_LABEL 等配置处理。 */

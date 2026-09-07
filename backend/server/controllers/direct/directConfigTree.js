@@ -15,5 +15,3 @@ module.exports = async (req, res) => {
         })
     }
 }
-/** 【文件职责】控制配置树接口，按父子关系组织 t_direct_config。
- * 【配置中心关联】不直接读取；导入配置中心场景时会校验该表的 parent_id 和 preffix。 */

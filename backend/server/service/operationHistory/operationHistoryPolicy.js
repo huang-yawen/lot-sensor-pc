@@ -18,5 +18,3 @@ function shouldRecord(source) {
 }
 
 module.exports = { shouldRecord }
-/** 【文件职责】定义操作历史的记录策略和可读描述。
- * 【配置中心关联】OPERATION_HISTORY_MODE 决定记录范围；每次判定读取最新值。 */

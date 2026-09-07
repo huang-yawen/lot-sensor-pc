@@ -68,5 +68,3 @@ async function saveOperationHistory({ d_no, config_id, old_value = null, new_val
 }
 
 module.exports = { ensureOperationHistoryTable, shouldRecord, saveOperationHistory }
-/** 【文件职责】写入操作历史服务，记录在线下发、离线暂存和缓存补发等动作。
- * 【配置中心关联】OPERATION_HISTORY_MODE 控制是否及如何记录，避免不同调用方规则不一致。 */

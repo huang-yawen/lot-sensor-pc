@@ -20,5 +20,3 @@ module.exports = async (req, res) => {
     res.status(500).json({ success: false, message: err.message })
   }
 }
-/** 【文件职责】累计派生指标 HTTP 控制器，校验请求并调用累计计算服务。
- * 【配置中心关联】CUMULATIVE_METRICS 由下层服务读取；本控制器不缓存配置。 */

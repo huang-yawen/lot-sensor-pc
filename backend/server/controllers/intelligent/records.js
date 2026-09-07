@@ -27,5 +27,3 @@ module.exports = async (req, res) => {
     res.status(500).json({ success: false, message: `查询判定记录失败: ${error.message}` })
   }
 }
-/** 【文件职责】智能判定记录查询接口。
- * 【配置中心关联】无直接读取；仅返回历史判定结果。 */
