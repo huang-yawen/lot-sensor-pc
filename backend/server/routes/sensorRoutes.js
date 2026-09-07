@@ -123,14 +123,11 @@ router.post('/api/multipleDirectData', updateMultipleDirectConfigs)
 router.post('/api/directData/update', updateDirectConfigAndPublish)
 
 /* ============================================================
- * 系统配置接口
- *   全局场景配置的增删改查 + 导出导入，配置中心热更新后立即生效。
+ * 系统配置接口（只读）
+ *   配置已改为代码常量（见各 config.js），此接口只把拼装后的完整配置返回给前端展示。
+ *   不再有更新 / 重置 / 导入 / 导出。
  * ============================================================ */
 router.get('/api/system-config', configController.getConfig)
-router.post('/api/system-config', configController.updateConfig)
-router.post('/api/system-config/reset', configController.resetConfig)
-router.get('/api/system-config/export', configController.exportConfig)
-router.post('/api/system-config/import', configController.importConfig)
 
 /* ============================================================
  * MQTT 诊断接口
