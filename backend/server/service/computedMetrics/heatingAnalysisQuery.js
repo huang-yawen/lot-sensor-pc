@@ -24,19 +24,19 @@
  * SAFETY_INTERLOCK.abnormalMax，每次查询实时读取。
  */
 const promisePool = require('../../config/dbPool')
-const systemConfig = require('../../config/systemConfig')
+const { COMPUTED_METRICS } = require('../../config/metrics')
+const SAFETY_CONFIG = require('../safety/config')
 const { calcBucketSeconds } = require('../../utils/timeRange')
 
 /** 采样间隔上限（秒），超出视为离线间隙——跟 heaterEnergyQuery.js / cumulativeService.js 一致。 */
 const MAX_GAP_SEC = 10
 
 function readParams() {
-  const config = systemConfig.getConfig()
-  const cm = config.COMPUTED_METRICS || {}
+  const cm = COMPUTED_METRICS || {}
   const heaterRatedPower = Number(cm.heaterRatedPower) > 0 ? Number(cm.heaterRatedPower) : 0
   const waterDensity = Number(cm.waterDensity) > 0 ? Number(cm.waterDensity) : 1000
   const waterSpecificHeat = Number(cm.waterSpecificHeat) > 0 ? Number(cm.waterSpecificHeat) : 4200
-  const abnRaw = Number(config.SAFETY_INTERLOCK?.abnormalMax)
+  const abnRaw = Number(SAFETY_CONFIG.abnormalMax)
   const abnormalMax = Number.isFinite(abnRaw) && abnRaw > 0 ? abnRaw : 9999
   return { heaterRatedPower, waterDensity, waterSpecificHeat, abnormalMax }
 }

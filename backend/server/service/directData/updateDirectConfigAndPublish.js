@@ -37,7 +37,8 @@ const promisePool = require('../../config/dbPool')
 const mqttClient = require('../../mqtt')
 const { saveDirectData, getDirectValue } = require('./saveDirectConfig')
 const { saveOperationHistory } = require('../operationHistory/saveOperationHistory')
-const systemConfig = require('../../config/systemConfig')
+const { SINGLE_DEVICE_MODE } = require('../../config/appSettings')
+const SAFETY_CONFIG = require('../safety/config')
 const { getTopic, buildSwitchPayload } = require('../../utils/protocol')
 const { isLockedByFault, isAnyLocked, getAnyLockedDeviceNo, handleResetButtonOff } = require('../faultStatus/faultStatus')
 const { getDefaultDeviceId } = require('../../utils/mappedData')
@@ -49,7 +50,7 @@ const { getDefaultDeviceId } = require('../../utils/mappedData')
 // true  - 单设备模式（默认）
 // false - 多设备模式
 // ============================================================
-const isSingleDeviceMode = () => systemConfig.getConfig().SINGLE_DEVICE_MODE === true
+const isSingleDeviceMode = () => SINGLE_DEVICE_MODE === true
 
 /** 单设备模式下的默认设备编号（从 t_device 表获取的第一个设备） */
 const DEFAULT_DEVICE_ID = null // 将在启动时从数据库加载
@@ -279,7 +280,7 @@ module.exports = async (req, res) => {
     // 只拦截"要把加热打开"这一种操作；关闭加热、以及水泵本身的开关都不受影响。
     // 是否启用这条拦截由 SAFETY_INTERLOCK.requirePumpBeforeHeater 单独控制，
     // 跟安全联锁评估循环是两处独立的代码，这里只在指令入口做这一次检查。
-    const requirePumpBeforeHeater = systemConfig.getConfig().SAFETY_INTERLOCK?.requirePumpBeforeHeater !== false
+    const requirePumpBeforeHeater = SAFETY_CONFIG.requirePumpBeforeHeater !== false
     if (requirePumpBeforeHeater && isOnValue(value) && await isHeaterConfig(config_id)) {
       const pumpConfigId = await resolveConfigIdByPrefix('pump')
       // 单设备模式下水泵的值存在真实设备号下（不是 d_no IS NULL 的全局行），

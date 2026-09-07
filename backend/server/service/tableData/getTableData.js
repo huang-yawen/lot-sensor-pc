@@ -14,7 +14,7 @@
 const promisePool = require('../../config/dbPool')
 const { formatDataWithUnit, buildDisplayFieldUnits, applyValueLabels, parseValueMap } = require('../../utils/helper')
 const { getEnabledMetrics, compileMetricSql, chartSettings } = require('../derivedMetric/derivedMetricService')
-const systemConfig = require('../../config/systemConfig')
+const { DEFAULT_PAGE_SIZE } = require('../../config/appSettings')
 const { buildInlineCumulativeSql } = require('../cumulative/cumulativeService')
 const { buildInlineTimeWindowSql } = require('../timeWindow/timeWindowService')
 const { buildRecencyFilter, REALTIME_LABEL, HISTORY_LABEL } = require('../../utils/recencyFilter')
@@ -92,7 +92,7 @@ module.exports = async function getTableData(query) {
     }
 
     const page = parseInt(query.page) || 1
-    const pageSize = Math.min(100, Math.max(1, parseInt(query.pageSize) || systemConfig.getConfig().DEFAULT_PAGE_SIZE))
+    const pageSize = Math.min(100, Math.max(1, parseInt(query.pageSize) || DEFAULT_PAGE_SIZE))
     const offset = (page - 1) * pageSize
     const keyword = query.keyword || null
     const keywordLike = keyword ? `%${keyword}%` : null

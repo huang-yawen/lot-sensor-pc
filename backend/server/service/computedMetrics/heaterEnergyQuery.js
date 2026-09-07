@@ -52,7 +52,8 @@
  * 每次查询实时读取。
  */
 const promisePool = require('../../config/dbPool')
-const systemConfig = require('../../config/systemConfig')
+const { COMPUTED_METRICS } = require('../../config/metrics')
+const SAFETY_CONFIG = require('../safety/config')
 const { calcBucketSeconds } = require('../../utils/timeRange')
 
 /** 采样间隔上限（秒），超出视为离线间隙，不计入累计——跟项目里其他累计类查询
@@ -71,11 +72,10 @@ async function queryHeaterEnergy(options = {}) {
   const { d_no, limit = 300, startTime, endTime } = options
   const safeLimit = Math.min(2000, Math.max(1, Number.parseInt(limit, 10) || 300))
 
-  const config = systemConfig.getConfig()
-  const heaterRatedPower = Number(config.COMPUTED_METRICS?.heaterRatedPower) > 0 ? Number(config.COMPUTED_METRICS.heaterRatedPower) : 0
-  const waterDensity = Number(config.COMPUTED_METRICS?.waterDensity) > 0 ? Number(config.COMPUTED_METRICS.waterDensity) : 1000
-  const waterSpecificHeat = Number(config.COMPUTED_METRICS?.waterSpecificHeat) > 0 ? Number(config.COMPUTED_METRICS.waterSpecificHeat) : 4200
-  const abnormalMaxRaw = Number(config.SAFETY_INTERLOCK?.abnormalMax)
+  const heaterRatedPower = Number(COMPUTED_METRICS?.heaterRatedPower) > 0 ? Number(COMPUTED_METRICS.heaterRatedPower) : 0
+  const waterDensity = Number(COMPUTED_METRICS?.waterDensity) > 0 ? Number(COMPUTED_METRICS.waterDensity) : 1000
+  const waterSpecificHeat = Number(COMPUTED_METRICS?.waterSpecificHeat) > 0 ? Number(COMPUTED_METRICS.waterSpecificHeat) : 4200
+  const abnormalMaxRaw = Number(SAFETY_CONFIG.abnormalMax)
   const abnormalMax = Number.isFinite(abnormalMaxRaw) && abnormalMaxRaw > 0 ? abnormalMaxRaw : 9999
 
   // 加热额定功率没配置/是 0 时，电耗和换热量必然全是 0，直接短路返回空数组，

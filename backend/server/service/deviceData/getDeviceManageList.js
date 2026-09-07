@@ -1,7 +1,7 @@
 /** 【文件职责】设备列表的数据查询服务。
  * 【配置中心关联】无直接读取。 */
 const promisePool = require('../../config/dbPool')
-const systemConfig = require('../../config/systemConfig')
+const { DEFAULT_PAGE_SIZE } = require('../../config/appSettings')
 
 const buildDeviceQuery = (searchMode, keywordLike, useCollate = false) => {
     if (searchMode === 'deviceName') {
@@ -29,7 +29,7 @@ module.exports = async function getDeviceManageList(query) {
 
     // 分页参数
     const currentPage = Math.max(1, parseInt(query.currentPage, 10) || 1)
-    const pageSize = Math.min(100, Math.max(1, parseInt(query.pageSize, 10) || systemConfig.getConfig().DEFAULT_PAGE_SIZE))
+    const pageSize = Math.min(100, Math.max(1, parseInt(query.pageSize, 10) || DEFAULT_PAGE_SIZE))
     const offset = (currentPage - 1) * pageSize
 
     const queryFields = buildDeviceQuery(searchMode, keywordLike)

@@ -1,7 +1,7 @@
 /** 【文件职责】异常历史查询服务。
  * 【配置中心关联】无直接读取。 */
 const promisePool = require('../../config/dbPool')
-const systemConfig = require('../../config/systemConfig')
+const { DEFAULT_PAGE_SIZE } = require('../../config/appSettings')
 const { resolveCategory, friendlyName } = require('./errorTypeNames')
 // 筛选条件构造跟类型统计（getErrorTypeStats）共用同一份实现，两边口径必须一致。
 const { buildWhere } = require('./errorQueryFilter')
@@ -9,7 +9,7 @@ const { buildWhere } = require('./errorQueryFilter')
 // 查询带分页的故障历史记录，支持关键字和时间筛选。
 module.exports = async function getErrorHistory(query) {
     const page = parseInt(query.page) || 1
-    const pageSize = Math.min(100, Math.max(1, parseInt(query.pageSize) || systemConfig.getConfig().DEFAULT_PAGE_SIZE))
+    const pageSize = Math.min(100, Math.max(1, parseInt(query.pageSize) || DEFAULT_PAGE_SIZE))
     const offset = (page - 1) * pageSize
     const category = resolveCategory(query)
     const { whereClause, params } = buildWhere(query)

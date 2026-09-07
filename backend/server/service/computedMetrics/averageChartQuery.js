@@ -11,7 +11,9 @@
  * PUMP_VELOCITY_CONTROL.defaultTargetVelocity 用作目标流速兜底，每次查询实时读取。
  */
 const promisePool = require('../../config/dbPool')
-const systemConfig = require('../../config/systemConfig')
+const { SINGLE_DEVICE_MODE, DEFAULT_TARGET_TEMP } = require('../../config/appSettings')
+const { COMPUTED_METRICS } = require('../../config/metrics')
+const PUMP_VELOCITY_CONFIG = require('../pumpVelocityControl/config')
 const { getTargetTemp } = require('../pidHeating/pidHeating')
 const { getTargetVelocity } = require('../pumpVelocityControl/pumpVelocityControl')
 const { calcBucketSeconds } = require('../../utils/timeRange')
@@ -29,7 +31,7 @@ async function queryAverageChart(options = {}) {
   const { d_no, limit = 300, startTime, endTime } = options
   const safeLimit = Math.min(2000, Math.max(1, Number.parseInt(limit, 10) || 300))
 
-  const areaCm2 = Number(systemConfig.getConfig().COMPUTED_METRICS?.pipeAreaCm2)
+  const areaCm2 = Number(COMPUTED_METRICS?.pipeAreaCm2)
   const hasArea = Number.isFinite(areaCm2) && areaCm2 > 0
   // 跟 computedMetrics.js 的"平均流速 v = Q / A"完全一致的单位链条：
   // field3 管路流量按 t_sensor_field_mapper 的声明是 L/min，先 /60 转 L/s，
@@ -92,10 +94,10 @@ async function queryAverageChart(options = {}) {
  * @returns {Promise<number>}
  */
 async function getCurrentTargetTemp(d_no) {
-  const resolvedDNo = systemConfig.getConfig().SINGLE_DEVICE_MODE === true
+  const resolvedDNo = SINGLE_DEVICE_MODE === true
     ? await getDefaultDeviceId()
     : d_no
-  const fallback = systemConfig.getConfig().DEFAULT_TARGET_TEMP
+  const fallback = DEFAULT_TARGET_TEMP
   return getTargetTemp(resolvedDNo, fallback)
 }
 
@@ -109,10 +111,10 @@ async function getCurrentTargetTemp(d_no) {
  * @returns {Promise<number>}
  */
 async function getCurrentTargetVelocity(d_no) {
-  const resolvedDNo = systemConfig.getConfig().SINGLE_DEVICE_MODE === true
+  const resolvedDNo = SINGLE_DEVICE_MODE === true
     ? await getDefaultDeviceId()
     : d_no
-  const fallback = systemConfig.getConfig().PUMP_VELOCITY_CONTROL?.defaultTargetVelocity
+  const fallback = PUMP_VELOCITY_CONFIG.defaultTargetVelocity
   return getTargetVelocity(resolvedDNo, fallback)
 }
 

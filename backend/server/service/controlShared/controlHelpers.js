@@ -4,7 +4,10 @@
  * 那是规则之间真正不同、需要保持独立的部分。
  * 【配置中心关联】SENSOR_FIELD_MAP、SINGLE_DEVICE_MODE、MQTT_QOS 每次调用实时读取。 */
 const promisePool = require('../../config/dbPool')
-const systemConfig = require('../../config/systemConfig')
+const { SENSOR_FIELD_MAP, SINGLE_DEVICE_MODE } = require('../../config/appSettings')
+const { COMPUTED_METRICS } = require('../../config/metrics')
+const { MQTT_QOS } = require('../../config/mqtt')
+const SAFETY_CONFIG = require('../safety/config')
 const { firstValue, getTopic, buildSwitchPayload } = require('../../utils/protocol')
 const { resolveFieldAliases, resolveDeviceNo } = require('../../utils/mappedData')
 const { getDirectValue, saveDirectData } = require('../directData/saveDirectConfig')
@@ -17,7 +20,7 @@ const { saveOperationHistory } = require('../operationHistory/saveOperationHisto
  * safetyInterlock.js 和 linkageRules.js 共用这一处判断，不再各自维护一份。
  */
 function getAbnormalMax() {
-  const v = Number(systemConfig.getConfig().SAFETY_INTERLOCK?.abnormalMax)
+  const v = Number(SAFETY_CONFIG.abnormalMax)
   return Number.isFinite(v) && v > 0 ? v : 9999
 }
 
@@ -126,7 +129,7 @@ async function getThresholdValue(slot, deviceNo) {
 async function readSensors(info) {
   const out = {}
   // SENSOR_FIELD_MAP 来自配置中心，不能在模块顶层缓存（要求实时取值，热更新才能生效）。
-  for (const [key, field] of Object.entries(systemConfig.getConfig().SENSOR_FIELD_MAP)) {
+  for (const [key, field] of Object.entries(SENSOR_FIELD_MAP)) {
     const aliases = await resolveFieldAliases('t_sensor_data', field)
     out[key] = await toNumber(firstValue(info, aliases))
   }
@@ -203,7 +206,7 @@ async function getNumberValue(prefix, deviceNo, fallback, hardFallback) {
  */
 function toVelocity(flowLPerMin) {
   if (flowLPerMin == null || !Number.isFinite(flowLPerMin)) return null
-  const areaCm2 = Number(systemConfig.getConfig().COMPUTED_METRICS?.pipeAreaCm2)
+  const areaCm2 = Number(COMPUTED_METRICS?.pipeAreaCm2)
   if (!Number.isFinite(areaCm2) || areaCm2 <= 0) return null
   const qM3PerSec = (flowLPerMin / 60) / 1000
   const areaM2 = areaCm2 / 10000
@@ -229,8 +232,8 @@ async function setSwitch(prefix, name, value, deviceNo, source, skipPersist = fa
   if (!conf) return false
   const mqttClient = require('../../mqtt')
   const payload = buildSwitchPayload(conf, value)
-  if (!systemConfig.getConfig().SINGLE_DEVICE_MODE && deviceNo) payload.d_no = deviceNo
-  await mqttClient.publish(getTopic('control'), payload, { qos: systemConfig.getConfig().MQTT_QOS })
+  if (!SINGLE_DEVICE_MODE && deviceNo) payload.d_no = deviceNo
+  await mqttClient.publish(getTopic('control'), payload, { qos: MQTT_QOS })
   if (!skipPersist) {
     const oldValue = await getDirectValue({ config_id: conf.id, d_no: deviceNo })
     await saveDirectData({ config_id: conf.id, value, d_no: deviceNo })

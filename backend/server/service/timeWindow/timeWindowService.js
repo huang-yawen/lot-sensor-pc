@@ -2,12 +2,12 @@
  * 时间窗口派生指标服务：滑动平均、波动幅度和相邻变化量。
  */
 const promisePool = require('../../config/dbPool')
-const systemConfig = require('../../config/systemConfig')
+const { TIME_WINDOW_METRICS } = require('../../config/metrics')
 const { calcBucketSeconds } = require('../../utils/timeRange')
 
 /** 取出配置中心已启用的所有时间窗口指标（TIME_WINDOW_METRICS 里 enabled=true 的那些）。 */
 function getEnabledTimeWindowMetrics() {
-  return (systemConfig.getConfig().TIME_WINDOW_METRICS || []).filter(metric => metric.enabled)
+  return (TIME_WINDOW_METRICS || []).filter(metric => metric.enabled)
 }
 
 /**

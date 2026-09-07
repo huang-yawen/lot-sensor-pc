@@ -6,7 +6,7 @@
  * 由控制器层负责判断，本文件只管查询。
  */
 const promisePool = require('../../config/dbPool')
-const systemConfig = require('../../config/systemConfig')
+const { CUMULATIVE_METRICS } = require('../../config/metrics')
 
 const MAX_GAP_SEC = 10 // 单次采样间隔上限（秒），超出视为离线间隙，不计入累计时长
 const CACHE_TTL_MS = 60000 // “累计运行时长”全表扫描结果缓存 60 秒，避免高频轮询下反复全表计算
@@ -91,7 +91,7 @@ async function getFieldLabel(dbName) {
 
 /** 根据 CUMULATIVE_METRICS 中的 metric_key 查一份 { isOn, totalMinutes, currentSessionMinutes, fieldLabel }。 */
 async function querySwitchDuration(metricKey, d_no) {
-  const metrics = systemConfig.getConfig().CUMULATIVE_METRICS || []
+  const metrics = CUMULATIVE_METRICS || []
   const metric = metrics.find(m => m.metric_key === metricKey)
   if (!metric) return null // 配置中心里已删除或改名该指标，前端不展示
 

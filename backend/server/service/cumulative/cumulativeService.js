@@ -14,7 +14,7 @@
  *     min(与上一条的秒差, MAX_GAP_SEC)。走独立的 querySingleFlowIntegralCumulative。
  */
 const promisePool = require('../../config/dbPool')
-const systemConfig = require('../../config/systemConfig')
+const { CUMULATIVE_METRICS } = require('../../config/metrics')
 const { calcBucketSeconds } = require('../../utils/timeRange')
 
 // 相邻两条读数的秒差上限：超过视为设备离线间隙，积分时只按上限计，避免离线期间
@@ -27,8 +27,7 @@ const MAX_GAP_SEC = 10
  * @returns {Array} 已启用指标配置数组
  */
 function getEnabledCumulativeMetrics() {
-  const config = systemConfig.getConfig()
-  const metrics = config.CUMULATIVE_METRICS || []
+  const metrics = CUMULATIVE_METRICS || []
   return metrics.filter(m => m.enabled)
 }
 
