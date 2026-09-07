@@ -12,21 +12,22 @@ const REALTIME_WINDOW = 5
 
 /**
  * @param {string} table - 数据表名（调用方传入的固定字符串，不接受外部输入，避免拼接注入）
- * @param {string} [onlineFilter] - 前端传入的筛选值：'实时数据' | '保存数据' | 其他/空
+ * @param {string} [dataScope] - 前端传入的数据范围筛选值：'实时数据' | '保存数据' | 其他/空。
+ *   注意跟设备在线状态无关——历史遗留参数名 online 已改名为 dataScope。
  * @returns {{ whereClause: string, dataTypeExpr: string, isLatest: string }}
  *   whereClause  - 拼在 SQL 里的 WHERE 片段（可能为空字符串，表示不筛选）
- *   dataTypeExpr - 可作为查询列使用的表达式，等价于原来的 "online AS 数据类型"
+ *   dataTypeExpr - 可作为查询列使用的表达式，给每行打上"实时数据/保存数据"类型标签
  *   isLatest     - 判断某一行是否落在最新 N 条窗口内的裸条件，供需要自定义拼接的调用方使用
  */
-function buildRecencyFilter(table, onlineFilter) {
+function buildRecencyFilter(table, dataScope) {
     const latestIdsExpr = `(SELECT id FROM (SELECT id FROM ${table} ORDER BY id DESC LIMIT ${REALTIME_WINDOW}) AS recent_${table})`
     const isLatest = `id IN ${latestIdsExpr}`
     const dataTypeExpr = `IF(${isLatest}, '${REALTIME_LABEL}', '${HISTORY_LABEL}')`
 
     let whereClause = ''
-    if (onlineFilter === REALTIME_LABEL) {
+    if (dataScope === REALTIME_LABEL) {
         whereClause = ` WHERE ${isLatest}`
-    } else if (onlineFilter === HISTORY_LABEL) {
+    } else if (dataScope === HISTORY_LABEL) {
         whereClause = ` WHERE id NOT IN ${latestIdsExpr}`
     }
 

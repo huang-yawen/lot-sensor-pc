@@ -1,6 +1,15 @@
-/** 【文件职责】按类型查询传感器/行为汇总数据的服务（前端"汇总数据"页面的数据来源，
- * 函数名和文件名沿用旧称，项目里已没有独立的"历史数据"概念，只有"实时数据/保存
- * 数据"这一对标签，可选按 online 参数筛选）。
+/** 【文件职责】按类型查询传感器/行为数据的服务，是分页表格页面（传感器汇总数据、
+ * 行为汇总数据、传感器实时数据、行为实时数据）的统一数据来源。函数名和文件名沿用
+ * 旧称，项目里已没有独立的"历史数据"概念，只有"实时数据/保存数据"这一对标签，
+ * 可选按 dataScope 参数筛选。
+ *
+ * 【metricScope 参数说明】
+ *   - 'history'（默认）：用 show_history 过滤派生指标，返回值里拼接单位（如 "25.5 ℃"），
+ *     适合表格展示（TableContainer 组件直接显示字符串）。
+ *   - 'realtime'：用 show_realtime 过滤派生指标，返回值不拼接单位（纯数值如 25.5），
+ *     适合卡片和图表展示（CardContainer / LineBarCharts 需要纯数值 + 单独的 fieldUnits）。
+ *   两种模式的数据格式跟原来 getDashboardData 的实时返回完全兼容，切换 store 不会
+ *   破坏前端组件。
  * 【配置中心关联】无直接读取。 */
 const promisePool = require('../../config/dbPool')
 const { formatDataWithUnit, buildDisplayFieldUnits, applyValueLabels, parseValueMap } = require('../../utils/helper')
@@ -8,7 +17,7 @@ const { getEnabledMetrics, compileMetricSql, chartSettings } = require('../deriv
 const systemConfig = require('../../config/systemConfig')
 const { buildInlineCumulativeSql } = require('../cumulative/cumulativeService')
 const { buildInlineTimeWindowSql } = require('../timeWindow/timeWindowService')
-const { buildRecencyFilter, REALTIME_LABEL, HISTORY_LABEL } = require('../../utils/realtimeFilter')
+const { buildRecencyFilter, REALTIME_LABEL, HISTORY_LABEL } = require('../../utils/recencyFilter')
 
 // 校验时间字符串格式：支持 "YYYY-MM-DD"、"YYYY-MM-DD HH:MM"、"YYYY-MM-DD HH:MM:SS"
 // 三种精度，空值直接放行（代表用户没填这个时间条件，不参与过滤）。
@@ -38,9 +47,10 @@ const validateDateRange = (startTime, endTime) => {
 }
 
 /**
- * 查询传感器或行为汇总数据，是"汇总数据"页面表格的唯一数据来源，用一份
- * 通用逻辑同时服务两张表（type='sensor' 查 t_sensor_data，'behavior' 查
- * t_behavior_data），整体分五步：
+ * 查询传感器或行为数据，是分页表格页面（传感器汇总数据、行为汇总数据、
+ * 传感器实时数据、行为实时数据）的统一数据来源，用一份通用逻辑同时服务
+ * 两张表（type='sensor' 查 t_sensor_data，'behavior' 查 t_behavior_data），
+ * 整体分五步：
  *   1. 确定查哪张表、哪张字段映射表，解析分页/关键词/时间范围参数并校验。
  *   2. 按字段映射表动态拼出 SELECT 列表（数据库物理字段名 -> 中文展示名），
  *      不是写死的列名，字段映射表改了这里自动跟着变。
@@ -52,12 +62,24 @@ const validateDateRange = (startTime, endTime) => {
  *      buildRecencyFilter），再根据前端传的筛选值决定要不要按这个条件过滤。
  *   5. 用同一套过滤条件跑两次查询：一次要数据（带分页），一次只要总数
  *      （用于分页组件），两次的 WHERE 条件必须完全一致，总数才对得上。
- * @param {Object} query - 请求参数（type/online/page/pageSize/keyword/startTime/endTime）
+ *
+ * 【metricScope 参数】默认 'history'，用 show_history 过滤派生指标且返回值
+ *   拼接单位（适合表格）；传 'realtime' 时用 show_realtime 过滤且不拼单位
+ *   （适合卡片+图表，数据格式跟 getDashboardData 的实时返回一致）。
+ *
+ * @param {Object} query - 请求参数（type/dataScope/metricScope/page/pageSize/keyword/startTime/endTime）
  * @returns {Promise<Object>} { success, data: { list, fieldUnits, chartSettings, total, page, size } }
  */
-module.exports = async function getHistoryDataByType(query) {
+module.exports = async function getTableData(query) {
     const type = query.type || 'sensor'
-    const onlineFilter = query.online || null
+    // dataScope 是数据范围筛选值（'实时数据' | '保存数据' | 空），只决定查哪段数据，
+    // 跟设备在线状态无关（历史遗留参数名 online 已改为 dataScope）。
+    const dataScope = query.dataScope || null
+    // metricScope 决定派生指标过滤维度和是否拼接单位：
+    //   'realtime' → getEnabledMetrics('realtime') + 不拼单位（纯数值，给图表用）
+    //   默认 'history' → getEnabledMetrics('history') + 拼单位（给表格用）
+    const isRealtimeMode = query.metricScope === 'realtime'
+    const metricVisibility = isRealtimeMode ? 'realtime' : 'history'
 
     let dataTable = ''
     let fieldMappingTable = ''
@@ -115,9 +137,11 @@ module.exports = async function getHistoryDataByType(query) {
     }
     // 自定义公式指标（DERIVED_METRICS）只在传感器类型的表格里显示——公式引用的
     // field1~field10 目前只映射到 t_sensor_data，放进行为数据表格里跑不通。
+    // metricScope='realtime' 时按 show_realtime 过滤（跟 getDashboardData 一致），
+    // 默认按 show_history 过滤（历史表格用）。
     let derivedMetrics = []
     if (type === 'sensor') {
-        derivedMetrics = await getEnabledMetrics('history')
+        derivedMetrics = await getEnabledMetrics(metricVisibility)
         for (const metric of derivedMetrics) {
             const alias = String(metric.metric_name).replace(/`/g, '``')
             searchMapper.push(`${compileMetricSql(metric)} AS \`${alias}\``)
@@ -144,15 +168,15 @@ module.exports = async function getHistoryDataByType(query) {
     searchMapper.push('c_time AS 创立时间')
     // 实时数据 = 该表当前最新一条记录，保存数据 = 除最新记录外的其余记录，
     // 不再依赖设备上报时是否自带 online 字段。
-    const recency = buildRecencyFilter(dataTable, onlineFilter)
+    const recency = buildRecencyFilter(dataTable, dataScope)
     searchMapper.push(`${recency.dataTypeExpr} AS 数据类型`)
 
-    // onlineFilter 为空/其他值时不筛选；等于两个固定标签之一时按最新记录换算成条件。
-    let onlineCondition = '1=1'
-    if (onlineFilter === REALTIME_LABEL) {
-        onlineCondition = recency.isLatest
-    } else if (onlineFilter === HISTORY_LABEL) {
-        onlineCondition = `NOT (${recency.isLatest})`
+    // dataScope 为空/其他值时不筛选；等于两个固定标签之一时按最新记录换算成条件。
+    let scopeCondition = '1=1'
+    if (dataScope === REALTIME_LABEL) {
+        scopeCondition = recency.isLatest
+    } else if (dataScope === HISTORY_LABEL) {
+        scopeCondition = `NOT (${recency.isLatest})`
     }
 
     const sql = `
@@ -162,7 +186,7 @@ module.exports = async function getHistoryDataByType(query) {
           AND (? IS NULL OR c_time >= ?)
           AND (? IS NULL OR c_time <= ?)
           AND (? IS NULL OR id = ? OR d_no LIKE ?)
-          AND (${onlineCondition})
+          AND (${scopeCondition})
         ORDER BY id DESC
         LIMIT ? OFFSET ?
     `
@@ -176,7 +200,12 @@ module.exports = async function getHistoryDataByType(query) {
 
     const [rows] = await promisePool.query(sql, params)
     const labeledRows = applyValueLabels(rows, fieldMapping, valueMaps)
-    const processedData = formatDataWithUnit(labeledRows, fieldMapping, fieldUnit)
+    // realtime 模式不拼接单位到值里（返回纯数值如 25.5），跟 getDashboardData 的
+    // 实时返回一致，卡片和图表组件需要纯数值 + 单独的 fieldUnits 来展示单位。
+    // 默认（history 模式）拼接单位到值里（如 "25.5 ℃"），表格组件直接显示字符串。
+    const processedData = isRealtimeMode
+        ? labeledRows
+        : formatDataWithUnit(labeledRows, fieldMapping, fieldUnit)
     const fieldUnits = buildDisplayFieldUnits(fieldMapping, fieldUnit)
 
     const countSql = `
@@ -186,7 +215,7 @@ module.exports = async function getHistoryDataByType(query) {
           AND (? IS NULL OR c_time >= ?)
           AND (? IS NULL OR c_time <= ?)
           AND (? IS NULL OR id = ? OR d_no LIKE ?)
-          AND (${onlineCondition})
+          AND (${scopeCondition})
     `
     const [countResult] = await promisePool.query(countSql, params.slice(0, 7))
 

@@ -11,7 +11,7 @@ const ALLOWED_DATA_FIELDS = new Set(
 
 /** 把上报数据里的 online 字段转成中文展示标签，这里只是"存进数据库的标签
  * 值"，跟"实时数据/保存数据"真正的判定逻辑（看是不是这张表最新一条记录，
- * 见 utils/realtimeFilter.js）是两回事，不要混淆。 */
+ * 见 utils/recencyFilter.js）是两回事，不要混淆。 */
 function getOnlineLabel(value) {
   return String(value).trim() === '1' || value === true ? '实时数据' : '保存数据'
 }

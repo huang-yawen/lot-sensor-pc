@@ -28,7 +28,8 @@ import { useSystemConfigStore } from '@/stores/SystemConfigStore'
 
 const store = PaginationStore()
 const systemStore = useSystemConfigStore()
-const online = '实时数据'
+// 数据范围筛选值：实时页只看最新窗口内（最新 5 条）的记录，跟设备在线状态无关。
+const dataScope = '实时数据'
 let refreshTimer = null
 
 // 接口按 id DESC（最新在前）返回，卡片默认取第 0 项展示最新数据是对的；
@@ -38,7 +39,7 @@ const chartsEnabled = computed(() => systemStore.config.ENABLE_CHARTS !== false)
 
 const reloadData = () => store.fetchPaginationData({
   type: 'behavior',
-  online: online,
+  dataScope,
   pageSize: systemStore.config.DEFAULT_PAGE_SIZE || 5,
 })
 

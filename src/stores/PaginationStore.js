@@ -31,8 +31,12 @@ export const PaginationStore = defineStore("paginationStore", () => {
                 keyword: params.keyword || '',
                 pageSize: params.pageSize ? Number(params.pageSize) : pageSize.value
             }
-            // 只发送有值的参数，避免 null 序列化为 "null" 字符串
-            if (params.online) queryParams.online = params.online
+            // 只发送有值的参数，避免 null 序列化为 "null" 字符串。
+            // dataScope 是数据范围筛选值（'实时数据' | '保存数据'），跟设备在线状态无关。
+            if (params.dataScope) queryParams.dataScope = params.dataScope
+            // metricScope 决定派生指标过滤维度和是否拼单位：
+            // 'realtime' = 用 show_realtime 过滤 + 纯数值（给图表/卡片用），不传 = 默认 history。
+            if (params.metricScope) queryParams.metricScope = params.metricScope
             if (params.startTime) queryParams.startTime = params.startTime
             if (params.endTime) queryParams.endTime = params.endTime
 

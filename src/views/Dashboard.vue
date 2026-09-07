@@ -321,7 +321,7 @@ async function loadDashboard(showLoading = true) {
     // 开关运行时长展示总开关关闭时不请求 /api/switch-duration，避免白跑一趟。
     const requests = [
       // chart:false —— 首页不渲染 LineBarCharts，用不上 chartSettings，跳过这份数据。
-      api.get('/api/data', { params: { online: '实时数据', chart: 'false' } }),
+      api.get('/api/data', { params: { dataScope: '实时数据', chart: 'false' } }),
       api.get('/api/deviceData', { params: { currentPage: 1, pageSize: 100 } }),
       api.get('/api/mqtt/status'),
       api.get('/api/computed-metrics'),

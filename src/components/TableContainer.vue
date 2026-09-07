@@ -110,7 +110,8 @@ const props = defineProps({
     type: Number,
     default: 5
   },
-  online: {
+  // 数据范围筛选值（'实时数据' | '保存数据' | 空），跟设备在线状态无关。
+  dataScope: {
     type: String,
     default: ''
   },
@@ -165,7 +166,7 @@ const handleSearch = (page = 1) => {
     keyword: keyword.value,
     startTime: dateRange.value?.[0] || null,
     endTime: dateRange.value?.[1] || null,
-    online: props.online,
+    dataScope: props.dataScope,
     type: props.type,
     currentPage: page,
     pageSize: localPageSize.value

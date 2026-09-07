@@ -12,7 +12,7 @@
       :loading="loading"
       :total="total"
       :pageSize="pageSize"
-      :online="online"
+      :data-scope="dataScope"
       type="behavior"
       searchPlaceholder="输入设备编号"
       @search="handleSearch"
@@ -57,8 +57,8 @@ import { useSystemConfigStore } from '@/stores/SystemConfigStore'
 const store = PaginationStore()
 const systemStore = useSystemConfigStore()
 
-// 汇总数据页面不再按实时/历史筛选，留空即可查到该表全部数据（含最新的实时数据）。
-const online = ''
+// 汇总数据页面不再按实时/保存筛选，dataScope 留空即可查到全部类型的数据（含最新的实时数据）。
+const dataScope = ''
 const selectedRows = ref([])
 const showRecognizeBtn = ref(false)
 const recognizing = ref(false)
@@ -118,7 +118,7 @@ const handleSearch = async (params) => {
     keyword: params.keyword,
     startTime: params.startTime,
     endTime: params.endTime,
-    online: params.online
+    dataScope: params.dataScope
   })
 }
 
@@ -130,7 +130,7 @@ const handlePageChange = (page) => {
     keyword: currentFilters.value.keyword,
     startTime: currentFilters.value.startTime,
     endTime: currentFilters.value.endTime,
-    online
+    dataScope
   })
 }
 
@@ -143,7 +143,7 @@ const handleSizeChange = (size) => {
     keyword: currentFilters.value.keyword,
     startTime: currentFilters.value.startTime,
     endTime: currentFilters.value.endTime,
-    online
+    dataScope
   })
 }
 
@@ -158,7 +158,7 @@ const refreshFromPush = () => {
     keyword: currentFilters.value.keyword,
     startTime: currentFilters.value.startTime,
     endTime: currentFilters.value.endTime,
-    online
+    dataScope
   }, { silent: true })
 }
 
@@ -179,7 +179,7 @@ onMounted(async () => {
     keyword: '',
     startTime: null,
     endTime: null,
-    online: online
+    dataScope
   })
 
   connect()

@@ -9,7 +9,7 @@ const router = express.Router()
 
 // ==================== 传感器相关控制器 ====================
 const getDashboardData = require('../controllers/sensor/getDashboardData')
-const getHistoryDataByType = require('../controllers/sensor/historyData')
+const getTableData = require('../controllers/sensor/tableData')
 
 // ==================== 设备管理控制器 ====================
 const getDeviceManageList = require('../controllers/device/deviceManageList')
@@ -84,7 +84,7 @@ const systemConfig = require('../config/systemConfig')
 
 // ---------- 传感器数据 ----------
 router.get('/api/data', getDashboardData)
-router.get('/api/dataByType', getHistoryDataByType)
+router.get('/api/dataByType', getTableData)
 
 // ---------- 设备管理 ----------
 router.get('/api/deviceData', getDeviceManageList)

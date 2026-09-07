@@ -1,54 +1,64 @@
 <!--
- * 【文件职责】
- * 业务页面，负责组合数据、状态和用户操作，呈现完整功能界面。
+ * 【文件职责】传感器实时数据页面。
+ * 跟传感器汇总数据（SensorHistory）、行为实时/汇总数据页面统一使用 PaginationStore
+ * 和 /api/dataByType 接口，通过 metricScope='realtime' 区分实时模式：
+ *   - 用 show_realtime 过滤派生指标（跟原 getDashboardData 的实时返回一致）
+ *   - 返回纯数值不拼接单位（卡片和图表组件需要纯数值 + 单独的 fieldUnits）
  * 【配置中心关联】
- * 页面通过状态仓库读取配置中心；场景开关保存后，相关显示与交互按最新配置更新。
+ * 页面通过 SystemConfigStore 读取配置中心；REALTIME_REFRESH_INTERVAL 控制自动刷新间隔。
  * -->
 <template>
   <div>
     <div class="card-chart-wrapper">
       <div class="card-container-wrapper">
         <CardContainer
-          :data="store.sensorData?.processedData || []"
+          :data="store.paginationData || []"
           :fieldUnits="store.fieldUnits"
         />
       </div>
 
       <div class="chart-wrapper" v-if="chartsEnabled">
-        <LineBarCharts :data="data" :settings="store.sensorData?.chartSettings || {}" />
+        <LineBarCharts :data="data" :settings="store.chartSettings || {}" />
       </div>
     </div>
   </div>
 </template>
 <script setup>
 import LineBarCharts from '@/components/LineBarCharts.vue'
-import { SensorStore } from '@/stores/SensorStore'
+import { PaginationStore } from '@/stores/PaginationStore.js'
 import { computed, onMounted, onUnmounted } from 'vue'
 import CardContainer from '@/components/CardContainer.vue'
 import { useSystemConfigStore } from '@/stores/SystemConfigStore'
 
-const store = SensorStore()
+// 跟传感器汇总数据页面（SensorHistory）使用同一个 store（PaginationStore）。
+// 区别在于：实时页传 dataScope='实时数据'（只取最新窗口 5 条）+ metricScope='realtime'
+// （用 show_realtime 过滤指标 + 不拼单位），汇总页 dataScope 留空（全部数据）+ 不传
+// metricScope（默认 history 模式 + 拼单位给表格用）。
+const store = PaginationStore()
 const systemStore = useSystemConfigStore()
 let refreshTimer = null
 
-const reloadData = async (showLoading = true) => {
-  await store.fetchData('实时数据')
-  console.log('数据加载完成：', store.sensorData)
+// metricScope='realtime' 让后端按 show_realtime 过滤派生指标，且返回纯数值不拼单位。
+// dataScope='实时数据' 让后端只返回最新窗口内（最新 5 条）的记录。
+const reloadData = async (silent = false) => {
+  await store.fetchPaginationData({
+    type: 'sensor',
+    dataScope: '实时数据',
+    metricScope: 'realtime',
+    currentPage: 1,
+    pageSize: systemStore.config.DEFAULT_PAGE_SIZE || 5,
+  }, { silent })
 }
 
-const data = computed(() => {
-  const result = store.sensorData?.processedData
-  console.log('computed data:', result)
-  return result
-})
-// 接口按 id DESC（最新在前）最多返回 20 条；LineBarCharts 组件内部会自动截取最新
-// pageSize 条（默认 5）并反转成时间递增顺序，卡片和图表都直接用原始顺序的 data 即可。
+const data = computed(() => store.paginationData || [])
+// 接口按 id DESC（最新在前）最多返回 5 条；LineBarCharts 组件内部会自动反转成
+// 时间递增顺序，卡片和图表都直接用原始顺序的 data 即可。
 const chartsEnabled = computed(() => systemStore.config.ENABLE_CHARTS !== false)
 
 const startAutoRefresh = () => {
   if (refreshTimer) clearInterval(refreshTimer)
   const interval = Number(systemStore.config.REALTIME_REFRESH_INTERVAL)
-  if (interval > 0) refreshTimer = setInterval(() => reloadData(false), interval)
+  if (interval > 0) refreshTimer = setInterval(() => reloadData(true), interval)
 }
 
 onMounted(async () => {
