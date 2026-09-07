@@ -1,15 +1,16 @@
 /**
  * 【文件职责】MQTT 连接参数、主题名、心跳判定方式。
  * 【值的来源】从原"配置中心"持久化文件固化下来的当前实际生效值。改完重启后端生效。
- * 环境变量 MQTT_URL/MQTT_USERNAME/MQTT_PASSWORD 仍可覆盖对应默认值（见 .env）。
+ * 注意：这几项以前是"持久化配置 > .env > 源码默认"，现在就以本文件为准，.env 里的
+ * MQTT_URL/MQTT_USERNAME/MQTT_PASSWORD 不再生效（MQTT_CLIENT_ID 仍从 .env 读，见 mqtt/index.js）。
  * 【谁在读】mqtt/index.js（建连接、订阅、心跳）、mqtt/deviceManager.js（离线阈值）、
  * app.js 和若干服务（拿 MQTT_TOPICS 判断主题）。
  */
 module.exports = {
   // Broker 地址，必须以 mqtt:// 或 mqtts:// 开头。
-  MQTT_URL: process.env.MQTT_URL || 'mqtt://192.168.1.110:1883',
-  MQTT_USERNAME: process.env.MQTT_USERNAME || '', // Broker 用户名；无认证时留空
-  MQTT_PASSWORD: process.env.MQTT_PASSWORD || '', // Broker 密码；无认证时留空
+  MQTT_URL: 'mqtt://192.168.1.110:1883',
+  MQTT_USERNAME: '', // Broker 用户名；无认证时留空
+  MQTT_PASSWORD: '', // Broker 密码；无认证时留空
   MQTT_QOS: 1, // 0=最多一次，1=至少一次，2=仅一次。现场通常用 1
 
   // 语义主题。值必须与设备固件一致，键名 sensor/behavior/heartbeat/control 不可改名。

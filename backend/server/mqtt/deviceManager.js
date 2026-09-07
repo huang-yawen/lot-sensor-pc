@@ -29,14 +29,14 @@
 const promisePool = require('../config/dbPool')
 const { saveDirectData, getDirectValue } = require('../service/directData/saveDirectConfig')
 const { saveOperationHistory } = require('../service/operationHistory/saveOperationHistory')
-const systemConfig = require('../config/systemConfig')
+const { HEARTBEAT_TIMEOUT } = require('../config/mqtt')
 const fs = require('fs')
 const path = require('path')
 const { getTopic, buildSwitchPayload } = require('../utils/protocol')
 
-/** 动态读取超时配置，确保热更新立即生效。 */
+/** 设备多久没收到心跳判离线（毫秒），见 config/mqtt.js。 */
 function getOfflineTimeout() {
-  const timeout = Number(systemConfig.getConfig().HEARTBEAT_TIMEOUT)
+  const timeout = Number(HEARTBEAT_TIMEOUT)
   return Number.isFinite(timeout) && timeout > 0 ? timeout : 10000
 }
 
