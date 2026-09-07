@@ -20,7 +20,8 @@ const http = require('http');
 const { WebSocketServer } = require('ws');
 require('./config/env');
 const sensorRoutes = require('./routes/sensorRoutes');
-const systemConfig = require('./config/systemConfig');
+const { MQTT_URL, MQTT_TOPICS } = require('./config/mqtt');
+const { REALTIME_REFRESH_INTERVAL } = require('./config/appSettings');
 const { startMonitor: startSafetyMonitor, onSafetyInterlock } = require('./service/safety/safetyInterlock');
 const { initFaultStateFromDb, onFault } = require('./service/faultStatus/faultStatus');
 const { onAlarm } = require('./service/alarm/evaluateRules');
@@ -93,7 +94,7 @@ console.log('Dist Path:', distPath);
 
 // ==================== MQTT 初始化 ====================
 console.log('正在初始化 MQTT 连接...');
-console.log('MQTT Broker URL:', systemConfig.getConfig().MQTT_URL);
+console.log('MQTT Broker URL:', MQTT_URL);
 
 // ==================== WebSocket 服务器 ====================
 // 和 HTTP 共用同一个 http.Server，避免多进程端口冲突。
@@ -201,7 +202,7 @@ function broadcastThrottled(type, data) {
     }
 
     // 0 表示不限制服务端推送；前端实时页同时会关闭自动刷新。
-    const interval = Number(systemConfig.getConfig().REALTIME_REFRESH_INTERVAL)
+    const interval = Number(REALTIME_REFRESH_INTERVAL)
     if (!Number.isFinite(interval) || interval <= 0) {
         broadcast(type, data)
         return
@@ -225,7 +226,7 @@ function broadcastThrottled(type, data) {
 
 // 监听 MQTT 处理后的消息，先缓存最新数据，按节流间隔广播
 mqttClient.on('processedMessage', (topic, data) => {
-    const topics = systemConfig.getConfig().MQTT_TOPICS
+    const topics = MQTT_TOPICS
 
     // 传感器和行为主题被配置成同一个主题时，说明设备把两类字段放在一条消息里上报，
     // 两种前端实时页都要能收到推送，所以同一条数据要广播成两种类型。

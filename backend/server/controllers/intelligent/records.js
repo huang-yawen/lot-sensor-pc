@@ -2,13 +2,13 @@
  * 【配置中心关联】无直接读取。 */
 const promisePool = require('../../config/dbPool')
 const { ensureTable } = require('./recognize')
-const systemConfig = require('../../config/systemConfig')
+const { DEFAULT_PAGE_SIZE } = require('../../config/appSettings')
 
 module.exports = async (req, res) => {
   try {
     await ensureTable()
     const page = Math.max(1, Number.parseInt(req.query.page, 10) || 1)
-    const pageSize = Math.min(100, Math.max(1, Number.parseInt(req.query.pageSize, 10) || systemConfig.getConfig().DEFAULT_PAGE_SIZE))
+    const pageSize = Math.min(100, Math.max(1, Number.parseInt(req.query.pageSize, 10) || DEFAULT_PAGE_SIZE))
     const where = []
     const values = []
     if (req.query.d_no) { where.push('d_no LIKE ?'); values.push(`%${req.query.d_no}%`) }

@@ -5,7 +5,7 @@
  * 单独切换，不需要现场改代码去适配不同赛题提供的判定服务。
  * 【配置中心关联】INTELLIGENT_JUDGMENT 及相关开关由处理链路读取。 */
 const promisePool = require('../../config/dbPool')
-const systemConfig = require('../../config/systemConfig')
+const CONFIG = require('./config')  // 智能判定适配器参数
 const { getDeviceNo } = require('../../utils/protocol')
 
 /** 判定的数据来源类型 -> 对应的原始数据表，请求体里的 type 只能是这两个之一。 */
@@ -312,7 +312,7 @@ module.exports = async (req, res) => {
     records = rows
     if (records.length === 0) return res.status(404).json({ success: false, message: '未找到待判定数据' })
 
-    const config = systemConfig.getConfig().INTELLIGENT_JUDGMENT
+    const config = CONFIG
     const serviceResult = await callService(records, config)
     const responseData = serviceResult.mock ? serviceResult : serviceResult.data
     const summary = serviceResult.mock

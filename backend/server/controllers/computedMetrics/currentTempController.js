@@ -2,13 +2,13 @@
  * 【配置中心关联】SENSOR_FIELD_MAP.temp2 决定查 t_sensor_data 哪个物理字段；
  * 每次请求实时读取，跟其他模块用同一份映射，改了字段布局这里自动跟着变。 */
 const promisePool = require('../../config/dbPool')
-const systemConfig = require('../../config/systemConfig')
+const { SENSOR_FIELD_MAP } = require('../../config/appSettings')
 
 module.exports = async (req, res) => {
     try {
         // SENSOR_FIELD_MAP.temp2 在配置中心保存时已经校验过必须是 field1~field10
         // 这样的格式（见 systemConfig.js validate），可以安全拼进 SQL。
-        const field = systemConfig.getConfig().SENSOR_FIELD_MAP?.temp2
+        const field = SENSOR_FIELD_MAP?.temp2
         if (!field) {
             return res.json({ success: true, data: null })
         }

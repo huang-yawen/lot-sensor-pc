@@ -76,7 +76,9 @@ const { getLatest: getLatestComputed, refreshFromDB: refreshComputedFromDB } = r
 const mqttClient = require('../mqtt/index')
 
 // ==================== 配置中心 ====================
-const systemConfig = require('../config/systemConfig')
+const { SINGLE_DEVICE_MODE } = require('../config/appSettings')
+const { CUMULATIVE_METRICS, COMPUTED_METRICS } = require('../config/metrics')
+const FAULT_CONFIG = require('../service/faultStatus/config')
 
 /* ============================================================
  * 业务 API 路由
@@ -195,9 +197,8 @@ router.get('/api/computed-metrics', async (req, res) => {
     //     重启归零，跟液位反推共用同一个累加器）。
     // 查询失败时保留 computedMetrics 的内存值兜底。
     try {
-        const cfg = systemConfig.getConfig()
-        const cm = cfg.COMPUTED_METRICS || {}
-        const flowMetric = (cfg.CUMULATIVE_METRICS || []).find(
+        const cm = COMPUTED_METRICS || {}
+        const flowMetric = (CUMULATIVE_METRICS || []).find(
             (m) => m.metric_key === 'cumulative_flow' && m.enabled && m.aggregation === 'flow_integral'
         )
         if (cm.cumulativeFlow !== false && cm.cumulativeFlowMode !== 'session' && flowMetric) {
@@ -239,8 +240,8 @@ router.get('/api/computed-metrics', async (req, res) => {
 //   }
 router.get('/api/faultStatus/state', async (req, res) => {
   try {
-    const singleDeviceMode = systemConfig.getConfig().SINGLE_DEVICE_MODE === true
-    const faultConfig = systemConfig.getConfig().FAULT_STATUS || {}
+    const singleDeviceMode = SINGLE_DEVICE_MODE === true
+    const faultConfig = FAULT_CONFIG
 
     if (singleDeviceMode) {
       const deviceNo = getAnyLockedDeviceNo()
@@ -284,7 +285,7 @@ router.get('/api/faultStatus/state', async (req, res) => {
 //   行为：等价于把"复位按钮"开关从 on 拨到 off，触发 handleResetButtonOff 走快照恢复流程。
 router.post('/api/faultStatus/reset', async (req, res) => {
   try {
-    const singleDeviceMode = systemConfig.getConfig().SINGLE_DEVICE_MODE === true
+    const singleDeviceMode = SINGLE_DEVICE_MODE === true
     let resetDNo = null
 
     if (singleDeviceMode) {
