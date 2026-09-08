@@ -36,7 +36,7 @@
 const promisePool = require('../../config/dbPool')
 const mqttClient = require('../../mqtt')
 const { saveDirectData, getDirectValue } = require('./saveDirectConfig')
-const { saveOperationHistory } = require('../operationHistory/saveOperationHistory')
+const { saveOperationHistory } = require('../operationHistory')
 const { SINGLE_DEVICE_MODE } = require('../../config/appSettings')
 const SAFETY_CONFIG = require('../safety/config')
 const { getTopic, buildSwitchPayload } = require('../../utils/protocol')

@@ -18,7 +18,7 @@
  *   service/linkageRules/config.js ... 正常状况联动
  *   service/quantityShutdown/config.js  定量停机
  *   service/alarm/config.js ......... 阈值告警
- *   service/operationHistory/config.js  操作历史记录模式
+ *   service/operationHistory.js       操作历史记录模式
  *   service/switchDuration/config.js .. 首页开关运行时长显示
  *   controllers/intelligent/config.js  智能判定适配器
  *
@@ -30,7 +30,7 @@ const appSettings = require('./appSettings')
 const mqtt = require('./mqtt')
 const protocol = require('./protocol')
 const { CUMULATIVE_METRICS, TIME_WINDOW_METRICS, COMPUTED_METRICS } = require('./metrics')
-const { OPERATION_HISTORY_MODE } = require('../service/operationHistory/config')
+const { OPERATION_HISTORY_MODE } = require('../service/operationHistory')
 const SAFETY_INTERLOCK = require('../service/safety/config')
 const FAULT_STATUS = require('../service/faultStatus/config')
 const PID_HEATING = require('../service/pidHeating/config')

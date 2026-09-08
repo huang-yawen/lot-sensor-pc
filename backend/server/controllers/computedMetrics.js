@@ -1,0 +1,110 @@
+/**
+ * 【文件职责】"历史图表"页面的 6 个查询接口。
+ * （原来是 controllers/computedMetrics/ 下 6 个几乎一样的薄控制器，合并到这里。）
+ * 每个都只做：解析 d_no / 时间范围 / limit → 调 service/computedMetrics 里对应的 *Query →
+ * 包成 { success, data }。公式全在 service 层，这里不写任何计算。
+ * 【配置】currentTemp 读 SENSOR_FIELD_MAP（config/appSettings.js），其余不直接读配置。
+ */
+const promisePool = require('../config/dbPool')
+const { SENSOR_FIELD_MAP } = require('../config/appSettings')
+const { resolveTimeRange } = require('../utils/timeRange')
+const { queryAverageChart, getCurrentTargetTemp, getCurrentTargetVelocity } = require('../service/computedMetrics/averageChartQuery')
+const { queryTempFlowScatter } = require('../service/computedMetrics/scatterChartQuery')
+const { queryDeviceStateTrend } = require('../service/computedMetrics/deviceStateQuery')
+const { queryHeaterEnergy } = require('../service/computedMetrics/heaterEnergyQuery')
+const { queryHeatingEfficiency, queryHeatingRate } = require('../service/computedMetrics/heatingAnalysisQuery')
+
+// GET /api/average-chart —— 平均温度/平均流速时间线，附带当前目标温度、目标流速（给 PID/恒流速跟踪图当参考线）
+async function averageChart(req, res) {
+  try {
+    const d_no = req.query.d_no || null
+    const limit = req.query.limit
+    const { startTime, endTime } = resolveTimeRange(req.query)
+    const [rows, targetTemp, targetVelocity] = await Promise.all([
+      queryAverageChart({ d_no, limit, startTime, endTime }),
+      getCurrentTargetTemp(d_no),
+      getCurrentTargetVelocity(d_no),
+    ])
+    res.json({ success: true, data: { rows, targetTemp, targetVelocity } })
+  } catch (err) {
+    console.error('[AverageChartController] 查询失败:', err)
+    res.status(500).json({ success: false, message: err.message })
+  }
+}
+
+// GET /api/temp-flow-scatter —— 温度-流量相关性散点图
+async function scatterChart(req, res) {
+  try {
+    const d_no = req.query.d_no || null
+    const limit = req.query.limit
+    const { startTime, endTime } = resolveTimeRange(req.query)
+    const rows = await queryTempFlowScatter({ d_no, limit, startTime, endTime })
+    res.json({ success: true, data: rows })
+  } catch (err) {
+    console.error('[ScatterChartController] 查询失败:', err)
+    res.status(500).json({ success: false, message: err.message })
+  }
+}
+
+// GET /api/current-temp —— 首页仪表盘：最新一条出水温度读数
+async function currentTemp(req, res) {
+    try {
+        const field = SENSOR_FIELD_MAP?.temp2
+        if (!field) {
+            return res.json({ success: true, data: null })
+        }
+        const [[row]] = await promisePool.query(
+            `SELECT CAST(NULLIF(\`${field}\`, '') AS DECIMAL(20, 2)) AS value FROM t_sensor_data ORDER BY id DESC LIMIT 1`
+        )
+        res.json({ success: true, data: row?.value ?? null })
+    } catch (err) {
+        console.error('[CurrentTempController] 查询失败:', err)
+        res.status(500).json({ success: false, message: err.message })
+    }
+}
+
+// GET /api/device-state-trend —— 设备状态时间线（水泵/加热开关阶梯图）
+async function deviceStateTrend(req, res) {
+  try {
+    const d_no = req.query.d_no || null
+    const limit = req.query.limit
+    const { startTime, endTime } = resolveTimeRange(req.query)
+    const data = await queryDeviceStateTrend({ d_no, limit, startTime, endTime })
+    res.json({ success: true, data })
+  } catch (err) {
+    console.error('[DeviceStateTrendController] 查询失败:', err)
+    res.status(500).json({ success: false, message: err.message })
+  }
+}
+
+// GET /api/heater-energy —— 加热能耗分析（瞬时功率 / 累计耗电 / 累计换热量）
+async function heaterEnergy(req, res) {
+  try {
+    const d_no = req.query.d_no || null
+    const limit = req.query.limit
+    const { startTime, endTime } = resolveTimeRange(req.query)
+    const rows = await queryHeaterEnergy({ d_no, limit, startTime, endTime })
+    res.json({ success: true, data: { rows } })
+  } catch (err) {
+    console.error('[HeaterEnergyController] 查询失败:', err)
+    res.status(500).json({ success: false, message: err.message })
+  }
+}
+
+// GET /api/heating-analysis —— 加热效率 + 加热速度，一次请求返回两条数据画两张图
+async function heatingAnalysis(req, res) {
+  try {
+    const limit = req.query.limit
+    const { startTime, endTime } = resolveTimeRange(req.query)
+    const [efficiency, rate] = await Promise.all([
+      queryHeatingEfficiency({ limit, startTime, endTime }),
+      queryHeatingRate({ limit, startTime, endTime }),
+    ])
+    res.json({ success: true, data: { efficiency, rate } })
+  } catch (err) {
+    console.error('[HeatingAnalysisController] 查询失败:', err)
+    res.status(500).json({ success: false, message: err.message })
+  }
+}
+
+module.exports = { averageChart, scatterChart, currentTemp, deviceStateTrend, heaterEnergy, heatingAnalysis }

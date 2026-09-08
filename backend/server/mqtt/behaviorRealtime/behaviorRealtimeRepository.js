@@ -2,7 +2,7 @@
  * 【配置】无直接读取。 */
 const promisePool = require('../../config/dbPool')
 const { saveMappedData, resolveDeviceNo } = require('../../utils/mappedData')
-const { saveOperationHistory } = require('../../service/operationHistory/saveOperationHistory')
+const { saveOperationHistory } = require('../../service/operationHistory')
 const { saveDirectData, getDirectValue } = require('../../service/directData/saveDirectConfig')
 const { getReportedTime } = require('../../utils/protocol')
 

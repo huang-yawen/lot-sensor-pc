@@ -1,13 +1,12 @@
 /**
- * 操作历史 API 控制器
- * GET    /api/operation-history         — 获取操作历史列表（分页）
- * GET    /api/operation-history/configs — 获取指令配置下拉选项
+ * 【文件职责】操作历史的 2 个 HTTP 接口。
+ * GET /api/operation-history         — 分页列表
+ * GET /api/operation-history/configs — 指令配置下拉选项
+ * 【配置】读 DEFAULT_PAGE_SIZE（config/appSettings.js）。
  */
-
-const promisePool = require('../../config/dbPool')
-const { getOperationHistory } = require('../../service/operationHistory/getOperationHistory')
-const { ensureOperationHistoryTable } = require('../../service/operationHistory/saveOperationHistory')
-const { DEFAULT_PAGE_SIZE } = require('../../config/appSettings')
+const promisePool = require('../config/dbPool')
+const { getOperationHistory, ensureOperationHistoryTable } = require('../service/operationHistory')
+const { DEFAULT_PAGE_SIZE } = require('../config/appSettings')
 
 // GET /api/operation-history — 获取操作历史列表
 const getHistoryList = async (req, res) => {
@@ -63,7 +62,4 @@ const getConfigOptions = async (req, res) => {
   }
 }
 
-module.exports = {
-  getHistoryList,
-  getConfigOptions
-}
+module.exports = { getHistoryList, getConfigOptions }

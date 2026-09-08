@@ -28,7 +28,7 @@
 
 const promisePool = require('../config/dbPool')
 const { saveDirectData, getDirectValue } = require('../service/directData/saveDirectConfig')
-const { saveOperationHistory } = require('../service/operationHistory/saveOperationHistory')
+const { saveOperationHistory } = require('../service/operationHistory')
 const { HEARTBEAT_TIMEOUT } = require('../config/mqtt')
 const fs = require('fs')
 const path = require('path')

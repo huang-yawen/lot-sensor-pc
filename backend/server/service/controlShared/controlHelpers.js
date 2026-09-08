@@ -11,7 +11,7 @@ const SAFETY_CONFIG = require('../safety/config')
 const { firstValue, getTopic, buildSwitchPayload } = require('../../utils/protocol')
 const { resolveFieldAliases, resolveDeviceNo } = require('../../utils/mappedData')
 const { getDirectValue, saveDirectData } = require('../directData/saveDirectConfig')
-const { saveOperationHistory } = require('../operationHistory/saveOperationHistory')
+const { saveOperationHistory } = require('../operationHistory')
 
 /**
  * 异常最大值哨兵：读数达到或超过它视为传感器异常（掉线/短路，比如传感器故障时

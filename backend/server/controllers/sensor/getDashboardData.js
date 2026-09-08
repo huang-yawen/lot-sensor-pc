@@ -56,7 +56,7 @@ module.exports = async (req, res) => {
         }
         res.json(responseBody)
     } catch (err) {
-        console.error('处理失败:', err)
-        res.status(500).send('数据处理失败')
+        console.error('[Dashboard] 处理失败:', err)
+        res.status(500).json({ success: false, message: '数据处理失败' })
     }
 }

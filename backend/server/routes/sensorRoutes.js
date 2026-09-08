@@ -12,14 +12,10 @@ const getDashboardData = require('../controllers/sensor/getDashboardData')
 const getTableData = require('../controllers/sensor/tableData')
 
 // ==================== 设备管理控制器 ====================
-const getDeviceManageList = require('../controllers/device/deviceManageList')
-const addDevice = require('../controllers/device/addDevice')
-const deleteDevice = require('../controllers/device/deleteDevice')
-const updateDevice = require('../controllers/device/updateDevice')
+const device = require('../controllers/device')
 
 // ==================== 故障记录控制器 ====================
-const getErrorHistory = require('../controllers/error/errorHistory')
-const getErrorTypeStats = require('../controllers/error/errorTypeStats')
+const error = require('../controllers/error')
 
 // ==================== 指令配置控制器 ====================
 const getDirectConfigTree = require('../controllers/direct/directConfigTree')
@@ -30,7 +26,7 @@ const intelligentRecognize = require('../controllers/intelligent/recognize')
 const judgmentRecords = require('../controllers/intelligent/records')
 
 // ==================== 操作历史控制器 ====================
-const operationHistoryController = require('../controllers/operationHistory/operationHistoryController')
+const operationHistoryController = require('../controllers/operationHistory')
 const derivedMetricController = require('../controllers/derivedMetric/derivedMetricController')
 
 // ==================== 测试图表控制器 ====================
@@ -43,12 +39,7 @@ const { queryFlowIntegralTotal } = require('../service/cumulative/cumulativeServ
 const timeWindowController = require('../controllers/timeWindow/timeWindowController')
 
 // ==================== 历史图表控制器 ====================
-const averageChartController = require('../controllers/computedMetrics/averageChartController')
-const scatterChartController = require('../controllers/computedMetrics/scatterChartController')
-const currentTempController = require('../controllers/computedMetrics/currentTempController')
-const deviceStateTrendController = require('../controllers/computedMetrics/deviceStateTrendController')
-const heaterEnergyController = require('../controllers/computedMetrics/heaterEnergyController')
-const heatingAnalysisController = require('../controllers/computedMetrics/heatingAnalysisController')
+const chart = require('../controllers/computedMetrics')
 const pidHeatingCycleController = require('../controllers/pidHeating/pidHeatingCycleController')
 const switchDurationController = require('../controllers/switchDuration/switchDurationController')
 
@@ -89,18 +80,19 @@ router.get('/api/data', getDashboardData)
 router.get('/api/dataByType', getTableData)
 
 // ---------- 设备管理 ----------
-router.get('/api/deviceData', getDeviceManageList)
-router.post('/api/deviceData/add', addDevice)
-router.post('/api/deviceData/delete', deleteDevice)
-router.post('/api/deviceData/update', updateDevice)
+router.get('/api/deviceData', device.getDeviceManageList)
+router.post('/api/deviceData/add', device.addDevice)
+router.post('/api/deviceData/delete', device.deleteDevice)
+router.post('/api/deviceData/update', device.updateDevice)
 
 // ---------- 故障记录 ----------
-router.get('/api/errData', getErrorHistory)
-router.get('/api/errTypeStats', getErrorTypeStats)
+router.get('/api/errData', error.getErrorHistory)
+router.get('/api/errTypeStats', error.getErrorTypeStats)
 
 // ---------- 智能判定 ----------
-router.post('/api/intelligent/recognize', intelligentRecognize)
+// 前端用的是 /judge；/recognize 是旧别名，保留兼容，两个指向同一个处理器。
 router.post('/api/intelligent/judge', intelligentRecognize)
+router.post('/api/intelligent/recognize', intelligentRecognize)
 router.get('/api/intelligent/records', judgmentRecords)
 
 // ---------- 操作历史 ----------
@@ -161,12 +153,12 @@ router.get('/api/time-window', timeWindowController)
  *   为"历史图表"页面提供聚合查询：平均温度/流速时间线、温流散点图、
  *   当前温度、设备开关状态时间线、加热能耗分析（瞬时功率/累计耗电/换热量）。
  * ============================================================ */
-router.get('/api/average-chart', averageChartController)
-router.get('/api/temp-flow-scatter', scatterChartController)
-router.get('/api/current-temp', currentTempController)
-router.get('/api/device-state-trend', deviceStateTrendController)
-router.get('/api/heater-energy', heaterEnergyController)
-router.get('/api/heating-analysis', heatingAnalysisController)
+router.get('/api/average-chart', chart.averageChart)
+router.get('/api/temp-flow-scatter', chart.scatterChart)
+router.get('/api/current-temp', chart.currentTemp)
+router.get('/api/device-state-trend', chart.deviceStateTrend)
+router.get('/api/heater-energy', chart.heaterEnergy)
+router.get('/api/heating-analysis', chart.heatingAnalysis)
 router.get('/api/pid-heating-cycles', pidHeatingCycleController)
 
 /* ============================================================

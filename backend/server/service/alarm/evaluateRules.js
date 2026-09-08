@@ -14,7 +14,7 @@ const EventEmitter = require('events')
 const { firstValue, getTopic, toWireValue, buildSwitchPayload } = require('../../utils/protocol')
 const { resolveDeviceNo, resolveFieldAliases } = require('../../utils/mappedData')
 const { saveDirectData, getDirectValue } = require('../directData/saveDirectConfig')
-const { saveOperationHistory } = require('../operationHistory/saveOperationHistory')
+const { saveOperationHistory } = require('../operationHistory')
 const { formatLocalDateTime } = require('../../utils/helper')
 const { isLockedByFault, isAnyLocked } = require('../faultStatus/faultStatus')
 

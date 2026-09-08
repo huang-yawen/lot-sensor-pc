@@ -1,11 +1,46 @@
-/** 【文件职责】智能判定 API 控制器：把选中的传感器/行为数据记录，按配置中心
- * INTELLIGENT_JUDGMENT 定义的格式发给现场判定服务，解析并落库判定结果。
- * 兼容多种现场接口形态：JSON/表单请求体、GET/POST 方法、JSON/纯文本响应、
- * 同步直接返回结果/异步先提交任务再轮询结果——这几个维度都能在配置中心
- * 单独切换，不需要现场改代码去适配不同赛题提供的判定服务。
- * 【配置】INTELLIGENT_JUDGMENT 及相关开关由处理链路读取。 */
+/**
+ * 【文件职责】智能判定 API 控制器（POST /api/intelligent/judge）。
+ * 把前端选中的几条传感器/行为记录，按 ./config.js 定义的格式发给"现场判定服务"，
+ * 解析结果、落库到 t_judgment_record、返回给前端。
+ * 现场每道赛题给的判定服务接口形态都不一样，本文件用配置把差异都吸收掉，不用改代码。
+ *
+ * ────────────── 请求 / 响应长什么样 ──────────────
+ * 前端发：  POST /api/intelligent/judge   { "type": "sensor", "ids": [101, 102, 103] }
+ * 本文件回：{ success: true, data: { results, conclusion, confidence, mock }, message }
+ *          出错时 HTTP 502（服务报错）/ 504（超时），body 同样是 { success:false, message }
+ *
+ * ────────────── 主流程（module.exports 那个函数）──────────────
+ *   1. 校验 type（只能 sensor/behavior）和 ids（非空整数数组，去重，最多 100 条）
+ *   2. 按 ids 从 t_sensor_data / t_behavior_data 查出原始记录（一条都查不到 → 404）
+ *   3. callService(records)  ── 真正发请求，见下面的决策树
+ *   4. summarize(...)        ── 把响应汇总成 { results, conclusion, confidence }
+ *   5. 不管成功失败都往 t_judgment_record 落一条（失败时 status='failed'）
+ *
+ * ────────────── 决策树：改行为看哪个配置键（都在 ./config.js）──────────────
+ *   config.enabled = false
+ *        └─ mockWhenDisabled=true → 本地占位判定（任一字段绝对值 > 10000 判"数据异常"），status='mock'
+ *        └─ mockWhenDisabled=false → 直接报错"服务未启用"
+ *   config.enabled = true
+ *        ├─ requestMode='single' → 每条记录单独发一次请求再汇总；'batch'（默认）→ 所有记录一次发完
+ *        ├─ 发请求（sendHttpRequest）:
+ *        │     method / url / headers 直接用；请求体 = renderTemplate(requestTemplate, {records,record,ids})
+ *        │     bodyFormat='json'（默认）→ JSON.stringify；'form-data' → multipart（每个顶层字段一个表单项）
+ *        │     method=GET/HEAD → 请求体不进 body，拼成 URL 查询参数
+ *        ├─ asyncMode=false（默认）→ 这次响应就是最终结果
+ *        └─ asyncMode=true → 这次响应只是回执，从 asyncJobIdPath 取 jobId，然后轮询：
+ *              反复请求 asyncPollUrl（{{jobId}} 占位符），看 asyncStatusPath 的值：
+ *              命中 asyncDoneStatusValues → 成功；命中 asyncFailedStatusValues → 失败；
+ *              超过 asyncMaxWaitMs → 超时。轮询间隔 asyncPollIntervalMs，容忍 3 次连续网络抖动。
+ *   汇总结果（summarize）:
+ *        responseFormat='json'（默认）→ 用点路径取值：resultPath → conclusionPath / confidencePath
+ *        responseFormat='text'         → 用正则从原始文本抠：conclusionRegex / confidenceRegex
+ *
+ * 占位符（requestTemplate 里可用）：{{records}}=全部记录数组，{{record}}=第一条，{{ids}}=id 数组，
+ * {{record.field1}}=取具体字段，{{jobId}}=异步任务 ID（仅 asyncPollUrl）。
+ * 占位符独占整个字符串时保留原始类型（数组/对象不会被转成字符串）。
+ */
 const promisePool = require('../../config/dbPool')
-const CONFIG = require('./config')  // 智能判定适配器参数
+const CONFIG = require('./config')  // 智能判定适配器参数，见上面的决策树
 const { getDeviceNo } = require('../../utils/protocol')
 
 /** 判定的数据来源类型 -> 对应的原始数据表，请求体里的 type 只能是这两个之一。 */
