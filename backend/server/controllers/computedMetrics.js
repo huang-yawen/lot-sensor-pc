@@ -1,9 +1,24 @@
 /**
- * 【文件职责】"历史图表"页面的 6 个查询接口。
- * （原来是 controllers/computedMetrics/ 下 6 个几乎一样的薄控制器，合并到这里。）
- * 每个都只做：解析 d_no / 时间范围 / limit → 调 service/computedMetrics 里对应的 *Query →
- * 包成 { success, data }。公式全在 service 层，这里不写任何计算。
- * 【配置】currentTemp 读 SENSOR_FIELD_MAP（config/appSettings.js），其余不直接读配置。
+ * 【文件职责】"历史图表"页面的 6 个查询接口（HistoryCharts.vue 直接调，没走 store）。
+ * 每个只做：解析 d_no / 时间范围 / limit → 调 service/computedMetrics 里对应的 *Query → 包成 { success, data }。
+ * 公式全在 service 层，这里不写计算。出错统一 500 { success:false, message }。
+ *
+ * 公共 query：d_no?（单设备可不传）、limit?、range?('1h'|'6h'|'24h'|'custom')、
+ *            startTime?/endTime?（range=custom 时用）。heatingAnalysis 不吃 d_no。
+ *
+ *  GET /api/average-chart      averageChart     平均温度/流速时间线 + 当前目标温度/目标流速（PID/恒流速跟踪图参考线）
+ *     → data:{ rows:[...], targetTemp, targetVelocity }
+ *  GET /api/temp-flow-scatter  scatterChart     温度-流量相关性散点
+ *     → data:[ 散点... ]
+ *  GET /api/current-temp       currentTemp      首页：最新一条出水温度（读 SENSOR_FIELD_MAP.temp2 对应槽位）
+ *     → data: number | null
+ *  GET /api/device-state-trend deviceStateTrend 水泵/加热开关阶梯图
+ *     → data:[ 时间点... ]
+ *  GET /api/heater-energy      heaterEnergy     加热能耗分析（需 COMPUTED_METRICS.heaterRatedPower > 0，否则 rows 为空）
+ *     → data:{ rows:[...] }
+ *  GET /api/heating-analysis   heatingAnalysis  加热效率 + 加热速度，一次返回两条画两张图
+ *     → data:{ efficiency:[...], rate:[...] }
+ * 【配置】currentTemp 读 SENSOR_FIELD_MAP（config/appSettings.js），其余靠 service 层实时读。
  */
 const promisePool = require('../config/dbPool')
 const { SENSOR_FIELD_MAP } = require('../config/appSettings')

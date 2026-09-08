@@ -1,10 +1,20 @@
 /**
- * 【文件职责】指令配置与下发状态仓库。
- * 加载控制树和设备渲染值，提交单条/批量控制命令，并把后端返回的“已发送/已暂存”结果
- * 交给组件显示。它是避免多个控件重复下发、重复弹出消息的前端统一入口。
- * 【配置中心关联】SINGLE_DEVICE_MODE 由 /directRender 返回；实际 MQTT 主题、值转换和
- * t_direct_config.preffix 字段映射均在后端配置中心/数据库完成，前端只传 config_id、value、d_no。
- * */
+ * 【干什么】"设备设置"页（指令中心）的统一入口：加载指令项树、加载某设备的当前值、
+ * 下发一条控制指令。所有控件都走这里，避免多个控件各自重复下发、重复弹提示。
+ *
+ * 【导出】DirectStore()
+ * 【状态】data（指令项树）、renderData（当前设备各指令项的值）、loading
+ * 【方法】
+ *   fetchDirectData()          → GET /api/directData     加载指令项树
+ *   handleRender(d_no)         → GET /api/directRender    加载该设备各指令项当前值，
+ *                                返回 { data, singleDeviceMode }
+ *   handleUpdateData({ id, value, d_no })  → POST /api/directData/update
+ *                                下发一条指令。后端决定：设备在线立即发 MQTT / 离线只暂存；
+ *                                返回带 cached 标记（true=只暂存了）。在线时会自动 handleRender 刷新。
+ * 【调的接口】GET /api/directData、GET /api/directRender、POST /api/directData/update
+ * 【谁在用】DirectSetting.vue（唯一）
+ * 【说明】前端只传 config_id / value / d_no；MQTT 主题、值转换、preffix 映射都在后端做。
+ */
 import { defineStore } from "pinia";
 import { ref } from "vue";
 import api from "@/api";

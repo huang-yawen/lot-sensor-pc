@@ -1,9 +1,18 @@
 /**
- * 【文件职责】
- * Pinia 状态仓库，集中管理前端共享状态和异步业务操作。
- * 【配置中心关联】
- * 如读取配置中心，必须通过接口或 SystemConfigStore 获取最新值，不能长期写死场景参数。
- * */
+ * 【干什么】传感器/行为 4 个页面（实时、汇总各一份传感器和行为）共用的分页表格数据源。
+ * 一个 store 实例被这 4 个页面共用，靠 type 参数切数据表。
+ *
+ * 【导出】PaginationStore()
+ * 【状态】paginationData（当前页行）、total、currentPage、pageSize、fieldUnits、chartSettings、
+ *        loading、type
+ * 【方法】
+ *   fetchPaginationData(params, { silent })  → GET /api/dataByType
+ *     params: { type:'sensor'|'behavior', currentPage, pageSize, keyword, dataScope, metricScope, startTime, endTime }
+ *     silent=true：WebSocket 推送触发的静默刷新，不切 loading（避免"加载中"跟着推送闪）
+ * 【调的接口】GET /api/dataByType
+ * 【谁在用】SensorRealtime.vue、SensorHistory.vue、BehaviorRealtime.vue、BehaviorHistory.vue
+ * 【依赖】DisplayStore.formatTime（格式化"创立时间"列）
+ */
 import { defineStore } from "pinia";
 import { ref } from 'vue'
 import api from '@/api'

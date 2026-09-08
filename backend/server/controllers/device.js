@@ -1,7 +1,23 @@
-/** 【文件职责】设备管理 4 个 HTTP 接口：列表 / 新增 / 删除 / 更新。
- * （原来是 controllers/device/ 下 4 个文件，合并到这里，逻辑没变。）
- * 每个接口只做：解析 req → 调 service/deviceData → 成功时同步 mqtt 的设备追踪 → 返回 JSON。
- * 【配置】无直接读取。 */
+/**
+ * 【文件职责】设备管理（t_device）4 个 HTTP 接口。业务/SQL 在 service/deviceData.js，
+ * 这里只解析 req、成功时同步 mqtt 的设备在线追踪、返回 JSON。前端 DeviceStore 调这些。
+ *
+ *  GET  /api/deviceData          getDeviceManageList  设备列表（分页 + 模糊搜索）
+ *    query { input?, searchMode?('all'|'deviceName'), currentPage?=1, pageSize?, debug?('1') }
+ *    → { success:true, data:{ list:[{ id, 设备编号, 内部编号, 设备名称, 备注, 创建时间 }...],
+ *                             total, currentPage, pageSize } }
+ *  POST /api/deviceData/add      addDevice            新增（成功后 mqtt 开始追踪）
+ *    body { 设备名称, 设备编号, 内部编号?, 备注? }
+ *    → { success:true, message, id, deviceName, deviceNumber, dNo } | { success:false, message }
+ *  POST /api/deviceData/delete   deleteDevice         删除（成功后 mqtt 停止追踪）
+ *    body { id }  → { success:true, deviceNumber, dNo } | { success:false, message }
+ *  POST /api/deviceData/update   updateDevice         更新（成功后 mqtt 同步编号/元数据）
+ *    body { oldId, 设备名称, 设备编号, 内部编号?, 备注? }
+ *    → { success:true, message, id, deviceName, oldDNo, dNo, ... } | { success:false, message }
+ *
+ *  出错（异常）500 { success:false, message }。
+ * 【配置】无直接读取。
+ */
 const deviceData = require('../service/deviceData')
 const mqttClient = require('../mqtt')
 

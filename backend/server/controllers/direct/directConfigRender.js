@@ -1,15 +1,23 @@
-/** 【文件职责】控制项渲染 API：合并全局和设备专属 t_direct_config 值。
- * 【配置】SINGLE_DEVICE_MODE 见对应 config.js，决定设备选择方式。 */
+/**
+ * 【接口】GET /api/directRender —— 指令项的"当前值"（"设备设置"页右侧控件的初始值）
+ *
+ * 请求 query：d_no（多设备模式指定设备；单设备模式忽略，自动取默认设备）
+ * 响应 200：{ success:true, singleDeviceMode:bool,
+ *             data:[ { config_id:number, value:string }... ] }   // 全局值 + 设备专属值覆盖后的结果
+ * 出错 500：{ success:false, message:'Server error' }
+ *
+ * 读 t_direct（当前值表）：先取 d_no IS NULL 的全局默认，再用该设备的专属值覆盖。
+ * 【配置】SINGLE_DEVICE_MODE（config/appSettings.js）决定取默认设备还是按 d_no。
+ */
 const promisePool = require('../../config/dbPool')
 const { SINGLE_DEVICE_MODE } = require('../../config/appSettings')
 const { getDefaultDeviceId } = require('../../utils/mappedData')
 
-// 组装全局配置和设备配置的最终渲染结果。
 module.exports = async (req, res) => {
     try {
         const d_no = req.query.d_no
         const singleDeviceMode = SINGLE_DEVICE_MODE
-        console.log(`[Backend Render] 接收到请求 d_no: ${d_no}, mode: ${singleDeviceMode ? '单设备' : '多设备'}`)
+        console.log(`[DirectRender] 请求 d_no: ${d_no}, mode: ${singleDeviceMode ? '单设备' : '多设备'}`)
 
         const queryGlobal = `SELECT config_id, value FROM t_direct WHERE d_no IS NULL`
         const [globalResult] = await promisePool.query(queryGlobal)
@@ -53,12 +61,12 @@ module.exports = async (req, res) => {
         }))
 
         console.log(
-            `[Backend Render] 全局配置项数: ${globalResult.length}, 设备特定项数: ${deviceResult.length}, 合并后项数: ${finalResult.length}`
+            `[DirectRender] 全局配置项数: ${globalResult.length}, 设备特定项数: ${deviceResult.length}, 合并后项数: ${finalResult.length}`
         )
 
         res.json({ success: true, data: finalResult, singleDeviceMode })
     } catch (err) {
-        console.error('Backend /directRender 错误:', err)
+        console.error('[DirectRender] 渲染失败:', err)
         res.status(500).json({ success: false, message: 'Server error' })
     }
 }

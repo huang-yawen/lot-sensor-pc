@@ -1,7 +1,15 @@
 /**
- * 【文件职责】操作历史的 2 个 HTTP 接口。
- * GET /api/operation-history         — 分页列表
- * GET /api/operation-history/configs — 指令配置下拉选项
+ * 【文件职责】"操作历史"页面的 2 个 HTTP 接口。业务/SQL 在 service/operationHistory.js（读 t_operation_history）。
+ * 前端 OperationHistory.vue 直接调（没走 store）。
+ *
+ *  GET /api/operation-history          getHistoryList   分页列表
+ *    query { currentPage?=1, pageSize?, config_id?（按指令项筛选）, startTime?, endTime? }
+ *    → { success:true, data:{ list:[{ id, 设备编号, 操作名称, 旧值, 新值, 来源, 操作时间 }...],
+ *                             total, currentPage, pageSize } }
+ *  GET /api/operation-history/configs  getConfigOptions 指令项下拉选项（筛选用）
+ *    → { success:true, data:[{ value:config_id, label:t_name }...] }
+ *
+ *  出错 500 { success:false, message }。
  * 【配置】读 DEFAULT_PAGE_SIZE（config/appSettings.js）。
  */
 const promisePool = require('../config/dbPool')

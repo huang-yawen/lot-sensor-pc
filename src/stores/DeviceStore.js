@@ -1,9 +1,18 @@
 /**
- * 【文件职责】
- * Pinia 状态仓库，集中管理前端共享状态和异步业务操作。
- * 【配置中心关联】
- * 如读取配置中心，必须通过接口或 SystemConfigStore 获取最新值，不能长期写死场景参数。
- * */
+ * 【干什么】设备管理页的数据和增删改操作。列表加载时顺手把设备编号去重存进 ids，
+ * 供"设备设置"页选择设备时复用。
+ *
+ * 【导出】DeviceStore()
+ * 【状态】deviceData（列表）、total、loading、ids（去重后的设备编号数组）
+ * 【方法】
+ *   fetchDeviceData({ currentPage, pageSize, input, searchMode })  → GET /api/deviceData
+ *   handleAdd(item)     → POST /api/deviceData/add     （item: { 设备名称, 设备编号, 内部编号?, 备注? }）
+ *   handleUpdate(item)  → POST /api/deviceData/update  （item 另带 oldId）
+ *   handleDelete(id)    → POST /api/deviceData/delete
+ * 【调的接口】GET /api/deviceData、POST /api/deviceData/{add,update,delete}
+ * 【谁在用】DeviceManagement.vue（增删改）、DirectSetting.vue（拿 ids 做设备下拉）
+ * 【依赖】DisplayStore.formatTime（格式化"创建时间"列）
+ */
 import { defineStore } from "pinia";
 import { ref } from 'vue';
 import api from '@/api';

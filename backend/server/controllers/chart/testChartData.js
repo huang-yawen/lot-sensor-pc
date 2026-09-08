@@ -1,23 +1,15 @@
 /**
- * 测试图表数据控制器
- * 
- * 返回适用于 LineBarCharts.vue 组件的模拟 ECharts 折线图数据。
- * LineBarCharts 组件期望的数据结构：
- * [
- *   {
- *     "创立时间": "2026-07-13T08:00:00.000Z",   // X 轴时间
- *     "温度(℃)": "25.3",                         // 数值字段1（折线1）
- *     "湿度(%)": "68.5",                         // 数值字段2（折线2）
- *     "气压(hPa)": "1013.2",                     // 数值字段3（折线3）
- *     ...
- *   },
- *   ...
- * ]
+ * 【接口】GET /api/chart/test-data —— 造一批假数据，用来单独调 LineBarCharts.vue（跟真实数据无关）
+ *
+ * 请求 query：count（可选，默认 10）
+ * 响应 200：{ success:true, total, data:[ { "创立时间":ISO字符串, "温度(℃)":..., "湿度(%)":..., ... }... ] }
+ *           每行一个对象，"创立时间" 是 X 轴，其余数值字段各画一条折线。
+ * 出错 500：{ success:false, message }
  */
 
 module.exports = async (req, res) => {
     try {
-        const count = parseInt(req.query.count) || 10; // 默认返回10条数据
+        const count = parseInt(req.query.count) || 10
         const now = new Date();
 
         // 生成模拟数据

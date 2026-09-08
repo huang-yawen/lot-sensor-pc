@@ -1,5 +1,21 @@
-/** 【文件职责】派生指标 API 控制器，负责请求校验和响应格式。
- * 【配置】DERIVED_METRICS 由服务层实时读取。 */
+/**
+ * 【文件职责】SQL 派生指标（自定义公式指标）的增删改查 5 个接口。
+ * 数据存 t_derived_metric；公式引擎见 service/derivedMetric/expressionEngine.js。
+ *
+ *  GET    /api/derived-metrics          list()    列出全部公式配置
+ *     → { success:true, data:[ 指标定义... ] }
+ *  POST   /api/derived-metrics          save()    新增或更新（body 带 id 就是更新）
+ *     → { success:true, data:指标, message } ；标识重复 409 ；参数错 400
+ *  DELETE /api/derived-metrics/:id      remove()  删除
+ *     → { success:true, message } ；不存在 404
+ *  POST   /api/derived-metrics/preview  preview() 试算，不落库
+ *     body { metric:{公式定义}, values:{字段名:值} } → { success:true, data:算出的值 } ；公式错 400
+ *  GET    /api/derived-metrics/history  history() 已勾"历史图表"的公式指标曲线（历史图表页用）
+ *     query d_no / limit / range / startTime / endTime → { success:true, data:{ metric_key:[{time,value}] } }
+ *
+ *  出错统一 { success:false, message }。
+ * 【配置】无（公式定义存数据库，不在 config/*.js）。
+ */
 const service = require('../../service/derivedMetric/derivedMetricService')
 const { queryDerivedMetricHistory } = require('../../service/derivedMetric/derivedMetricHistoryQuery')
 const { resolveTimeRange } = require('../../utils/timeRange')
@@ -40,8 +56,6 @@ const preview = async (req, res) => {
   }
 }
 
-// GET /api/derived-metrics/history —— 已勾选"历史图表"的公式指标，历史图表页面专用。
-// Query: ?d_no=xxx&limit=300&range=1h（或 range=custom&startTime=...&endTime=...）
 const history = async (req, res) => {
   try {
     const d_no = req.query.d_no || null

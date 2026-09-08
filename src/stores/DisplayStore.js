@@ -1,22 +1,18 @@
 /**
- * 【文件职责】
- * Pinia 状态仓库，集中管理前端共享状态和异步业务操作。
- * 【配置中心关联】
- * 如读取配置中心，必须通过接口或 SystemConfigStore 获取最新值，不能长期写死场景参数。
- * */
-/**
- * 显示控制 Store
- * 
- * 【说明】
- * 之前 SideBar 上的"显示ID/隐藏编号"按钮已被移除，
- * 字段可见性改由后端 systemConfig.js 统一控制。
- * 
- * 此 store 目前保留 isFieldVisible 函数供前端表格/卡片过滤字段使用，
- * 并新增 showSeconds 控制全局时间格式是否显示秒。
- * 默认所有字段都显示（true），用户如需隐藏字段则通过后端 API 设置。
- * 
- * 后续如需完全由后端控制字段可见性，可在 isFieldVisible 中调用后端API，
- * 但目前先保持简单——所有字段默认显示。
+ * 【干什么】两件事：① 全站统一的时间格式化（是否显示秒）；② 表格/卡片渲染时判断某一列
+ * 要不要显示（隐藏 id 列 / 编号列）。这些开关值来自后端配置，本 store 缓存一份。
+ *
+ * 【导出】DisplayStore()
+ * 【状态】hideIdFields、hideNumberFields、showSeconds（都来自 GET /api/system-config）
+ * 【方法】
+ *   loadDisplayConfig()          调 GET /api/system-config，填上面 3 个开关
+ *   isFieldVisible(列名)          表格/卡片渲染前调，隐藏 id 列或编号列时返回 false
+ *   formatTime(值)               把时间值格式化成统一字符串（按 showSeconds 决定要不要秒）—— 用得最多
+ *   getTimeFormatOptions()       formatTime 内部用的 toLocaleString 选项
+ * 【调的接口】GET /api/system-config
+ * 【谁在用】组件 TableContainer / CardContainer / LineBarCharts / MainLayout / direct/DynamicNode；
+ *        页面 Dashboard / DeviceManagement / OperationHistory / JudgmentHistory / ErrorInfo；
+ *        以及 store DeviceStore / ErrorStore / PaginationStore（它们拿 formatTime 格式化列表时间）
  */
 
 import { defineStore } from 'pinia'

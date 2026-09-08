@@ -1,19 +1,9 @@
 /**
- * ECharts 曲线图测试数据控制器
- * 
- * 返回基础的 xdata（时间轴）和 ydata（数值），方便前端直接绑定到 ECharts。
- * 
- * GET /chart/test-echarts?count=10
- * 
- * 返回格式：
- * {
- *   success: true,
- *   data: {
- *     xdata: ["13:00", "13:05", "13:10", ...],
- *     ydata: [25.3, 26.1, 27.5, ...]
- *   },
- *   total: 10
- * }
+ * 【接口】GET /api/testChartData —— 造一批假的 xdata/ydata，用来单独调 ECharts 绑定（跟真实数据无关）
+ *
+ * 请求 query：count（可选，默认 10，最大 200）
+ * 响应 200：{ success:true, total, data:{ xdata:["13:00","13:05",...], ydata:[25.3, 26.1, ...] } }
+ * 出错 500：{ success:false, message }
  */
 
 module.exports = async (req, res) => {

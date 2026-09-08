@@ -1,9 +1,16 @@
 /**
- * 【文件职责】配置中心前端缓存。
- * 负责从 /api/system-config 读取场景配置，供标题、设备名称、单设备模式、菜单和页面开关使用。
- * 【配置中心关联】config 是后端配置中心的前端镜像；load(true) 强制刷新。加载成功后同步
- * SYSTEM_TITLE 到浏览器标题。业务页面应读取此仓库，不能复制配置后长期缓存。
- * */
+ * 【干什么】全站配置的前端缓存。整个应用共用这一份 —— 页面标题、术语、单设备模式、
+ * 分页大小、各页面显示开关、智能判定按钮显隐 都从这里读。
+ *
+ * 【导出】useSystemConfigStore()   （注意：只有这个 store 用 useXxx 命名，其余用 XxxStore）
+ * 【状态】config（整份配置对象，字段见后端 config/appSettings.js 等）、loaded
+ * 【方法】load(force=false)  首次调后端 GET /api/system-config 填充 config，并把 SYSTEM_TITLE
+ *        写进 document.title；已加载后再调直接返回缓存，force=true 强制重新拉。
+ * 【调的接口】GET /api/system-config（只读，后端配置是代码常量）
+ * 【谁在用】几乎所有页面：SideBar / TopNav / Dashboard / SensorRealtime / SensorHistory /
+ *        BehaviorRealtime / BehaviorHistory / DeviceManagement / DirectSetting / HistoryCharts /
+ *        OperationHistory / JudgmentHistory / ErrorInfo
+ */
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import api from '@/api'
