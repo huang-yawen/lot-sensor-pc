@@ -430,7 +430,8 @@ waterSpecificHeat: 4200, // 介质比热容 J/(kg·℃)
 - **直接删**（更彻底）：前端 `src/views/HistoryCharts.vue` 里把不要的图表组件整段删掉/注释掉，前端重新打包。赛场按赛题裁剪就用这个。
 
 ### 5.5 自定义 SQL 公式指标
-"配置中心"页删掉了，但 `/api/derived-metrics` 接口和 `t_derived_metric` 表还在，已定义的公式照常算、照常出图。
+"配置中心"页删掉了，公式的增删改接口也一并删了，只留下 `GET /api/derived-metrics/history`（历史图表页画公式曲线用）。
+`t_derived_metric` 表和公式引擎照旧，已定义的公式照常算、照常出图（表格内联指标走 `service/tableData/getTableData.js`，不经接口）。
 要新增/改公式，直接改库：
 ```sql
 SELECT * FROM t_derived_metric;   -- 看现有的

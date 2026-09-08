@@ -100,10 +100,8 @@ router.get('/api/operation-history', operationHistoryController.getHistoryList)
 router.get('/api/operation-history/configs', operationHistoryController.getConfigOptions)
 
 // ---------- SQL 派生指标 ----------
-router.get('/api/derived-metrics', derivedMetricController.list)
-router.post('/api/derived-metrics', derivedMetricController.save)
-router.delete('/api/derived-metrics/:id', derivedMetricController.remove)
-router.post('/api/derived-metrics/preview', derivedMetricController.preview)
+// 公式的增删改在数据库里手工维护（原配置中心的公式编辑页已删除）。
+// 表格里内联派生指标由 service/tableData/getTableData.js 直接调 service 层完成，不走接口。
 router.get('/api/derived-metrics/history', derivedMetricController.history)
 
 // ---------- 测试图表 ----------
