@@ -10,6 +10,13 @@
  * enabled 开关走）。
  * 【配置】QUANTITY_SHUTDOWN 见对应 config.js。
  */
+
+// ========== 赛场速改索引（要改什么 → 去哪） ==========
+//  关掉定量停机     指令页面 preffix=quantity_shutdown_enabled；或 config.js enabled=false
+//  改定量值(L)      指令页面 total_flow_target；兜底 config.js totalFlowTarget
+//  累计/判定逻辑    evaluateQuantityShutdown() 约 L132
+//  到量后关泵关热   shutDown() 约 L89
+// ===================================================
 // 定量停机自己的开关和目标值在这里（指令中心同名指令项优先）。
 const CONFIG = require('./config')
 const { SINGLE_DEVICE_MODE } = require('../../config/appSettings')

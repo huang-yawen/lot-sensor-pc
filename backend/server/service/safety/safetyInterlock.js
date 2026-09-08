@@ -34,6 +34,16 @@
  * 【配置】SAFETY_INTERLOCK 见对应 config.js，改后需重启后端
  * （monitorIntervalMs 除外——它在启动时读一次，改后需重启后端）。
  */
+
+// ========== 赛场速改索引（要改什么 → 去哪） ==========
+//  关掉安全联锁         config.js enabled=false（或逐条关 flowLow/tempHigh/tempDiff/...）
+//  改温差/波动阈值等     指令中心 t_direct 优先；兜底 config.js（tempDiffThreshold/flowVolatilityThreshold/abnormalMax）
+//  "开加热必须先开泵"    config.js requirePumpBeforeHeater=true（不受 enabled 总开关约束）
+//  各条判定逻辑          evaluateValueConditions() 约 L195
+//  掉线检测             monitorOffline() 约 L351（周期 config.js monitorIntervalMs，改后重启）
+//  触发后关泵关热        closePumpHeater() 约 L144
+//  每条消息的入口        evaluateSafety() 约 L310
+// ===================================================
 const EventEmitter = require('events')
 // 安全联锁自己的开关和参数（总开关、各条件、异常哨兵值、掉线监测周期等）都在这里。
 const CONFIG = require('./config')

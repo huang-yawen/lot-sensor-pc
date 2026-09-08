@@ -30,6 +30,15 @@
  * 阈值、目标温度实时读取指令中心 t_direct，页面修改即时生效。
  * 【配置】LINKAGE_RULES 见对应 config.js。
  */
+
+// ========== 赛场速改索引（要改什么 → 去哪） ==========
+//  关掉全部联动         config.js enabled=false（或把 9 条规则布尔逐条关）
+//  开/关某一条规则      config.js 对应布尔（pumpAlwaysOn/flowSingle/tempSingle/dualTemp/...）
+//  改滞回/温差等参数    config.js（heaterHysteresisValue/tempDiffOpenThreshold/dualTempDiffThreshold/...）
+//  改温度/流量/压力阈值  指令中心 t_direct（页面即时生效），不在本文件
+//  某条规则的判定逻辑    文件下半部 ruleXxx()（rulePumpAlwaysOn 约 L206 起，逐条排列）
+//  多规则冲突怎么合并    mergeDecision() 约 L183 + evaluateLinkageRules() 约 L479；"关"优先于"开"
+// ===================================================
 // 联动规则自己的开关和参数（总开关 + 9 条规则逐条开关 + 各滞回/温差阈值）在这里。
 const CONFIG = require('./config')
 const { SINGLE_DEVICE_MODE, DEFAULT_TARGET_TEMP } = require('../../config/appSettings')

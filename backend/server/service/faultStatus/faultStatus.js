@@ -35,6 +35,16 @@
  *   退回 FAULT_STATUS.tempDiffThreshold 兜底（跟 PID 的 Kp/Ki/Kd 同一套"指令中心优先、
  *   配置中心兜底"模式）。
  */
+
+// ========== 赛场速改索引（要改什么 → 去哪） ==========
+//  关掉故障保护         config.js enabled=false（或逐条关 pipeBlockage/dryBurn/pumpIdle/...）
+//  改干烧计时/温差等     config.js（dryBurnDurationMs/dryBurnMinRiseC/tempDiffThreshold/pumpWarmupMs）
+//  改压力/流量下限等阈值  指令中心 t_direct，不在本文件
+//  五种故障怎么判        detectFault() 约 L196（干烧另有 checkDryBurn() 约 L166）
+//  触发后做什么          triggerFault() 约 L312
+//  复位按钮拨回后恢复    handleResetButtonOff() 约 L384
+//  每条消息的入口        evaluateFaultStatus() 约 L480
+// ===================================================
 // 故障状态自己的开关和参数（总开关、五种故障、预热宽限、干烧计时等）都在这里。
 const CONFIG = require('./config')
 const { SINGLE_DEVICE_MODE } = require('../../config/appSettings')

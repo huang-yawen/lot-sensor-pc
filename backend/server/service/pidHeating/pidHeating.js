@@ -40,6 +40,15 @@
  *
  * 【配置】PID_HEATING 仅作兜底默认值，改后需重启后端。
  */
+
+// ========== 赛场速改索引（要改什么 → 去哪） ==========
+//  关掉 PID 恒温        指令页面 preffix=pid_enabled 关掉；或同目录 config.js enabled=false
+//  改 Kp/Ki/Kd/控制周期  指令页面对应指令项（优先）；没配才用 config.js kp/ki/kd/windowMs
+//  改目标温度           指令页面目标温度指令项；兜底 config/appSettings.js DEFAULT_TARGET_TEMP
+//  判断"PID 有没有轮到"  isPidEnabled()            约 L166
+//  核心算法(PID 公式/占空比/PWM)  evaluatePidHeating()  约 L292
+//  实际去开关加热的地方   setHeater()               约 L238
+// ===================================================
 const promisePool = require('../../config/dbPool')
 // PID 自己的兜底参数（kp/ki/kd/周期/死区等）在这里；是否启用以指令中心 pid_enabled 为准。
 const CONFIG = require('./config')

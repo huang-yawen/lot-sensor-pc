@@ -45,6 +45,13 @@ const OPERATORS = {
  * TIME_WINDOW_METRICS 认字段槽位的方式一致，字段映射表改了物理名会自动跟着变，不用
  * 同步改这里；仍兼容旧规则里直接写死的 field 别名数组。
  */
+
+// ========== 赛场速改索引（要改什么 → 去哪） ==========
+//  关掉阈值告警      config.js enabled=false
+//  开/关自动联锁动作 config.js autoInterlockEnabled（默认关，开前必须实机测试）
+//  加/改一条规则     config.js rules[]（id/source_field/operator/threshold/action/enabled）
+//  规则评估逻辑      evaluateRules() 约 L88
+// ===================================================
 async function resolveFieldNames(spec) {
   if (!spec) return []
   if (spec.source_table && spec.source_field) {

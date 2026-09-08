@@ -41,6 +41,17 @@
  * 【配置】PUMP_VELOCITY_CONTROL 见对应 config.js，改后需重启后端；
  * COMPUTED_METRICS.pipeAreaCm2 用于流速换算，同样实时读取。
  */
+
+// ========== 赛场速改索引（要改什么 → 去哪） ==========
+//  关掉恒流速控制        指令页面两个算法开关都关；或 config.js enabled=false
+//  选"滞环"还是"占空比"   指令页面；兜底 config.js mode='hysteresis' | 'pid'
+//  改目标流速           指令页面；兜底 config.js defaultTargetVelocity
+//  改回差/最小开关时长/PID 指令页面对应项优先；没配看 config.js（hysteresis/minOnMs/minOffMs/kp/ki/kd/windowMs）
+//  滞环算法逻辑          decideByHysteresis() 约 L164
+//  占空比算法逻辑        decideByDuty() 约 L179
+//  每条消息的入口        evaluatePumpVelocityControl() 约 L303
+//  流速算不出来         需 config/metrics.js pipeAreaCm2，缺了本模块整轮不动作
+// ===================================================
 // 恒流速自己的兜底参数（两套算法的开关、目标流速、防短循环时长、PID 参数）在这里。
 const CONFIG = require('./config')
 const { SINGLE_DEVICE_MODE } = require('../../config/appSettings')
