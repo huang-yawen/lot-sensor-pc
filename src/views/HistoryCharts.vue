@@ -270,6 +270,57 @@ function formatTimes(rows) {
   return out
 }
 
+// —— 历史图表通用渲染优化（十几张图同页，进页面/切时间范围时集中重画，下面几项是
+//    渲染开销和首帧卡顿的大头）——
+//  1) 实例复用：不再每次 dispose()+init() 重建 canvas，拿旧实例直接 setOption 覆盖
+//     （setOption 第二参 true = 不合并，等价于整张重画）；
+//  2) applyChartDefaults：关掉进场动画（十几张图一起播动画是"出图卡一下"的主因）、
+//     隐藏每个数据点的圆点符号、非阶梯折线加 LTTB 采样（按像素宽度再降采样；阶梯线
+//     画的是开关 0/1 状态，采样会抽掉跳变点，跳过）。
+//     贝塞尔平滑已从各 series 移除，用 echarts 默认的直线；要某张图平滑，在它的
+//     series 里加 smooth:true，applyChartDefaults 不会覆盖。
+function getChart(el, instance) {
+  if (instance && !instance.isDisposed()) {
+    // 容器 DOM 没变才复用；v-if 区块卸载后重新挂载会换一个新 div，这时旧实例还绑在
+    // 已经脱离文档的旧节点上，必须销毁重建，否则 setOption 画到看不见的画布上。
+    if (instance.getDom() === el) return instance
+    instance.dispose()
+  }
+  return echarts.init(el)
+}
+function applyChartDefaults(option) {
+  option.animation = false
+  for (const s of option.series || []) {
+    if (s.type !== 'line') continue
+    if (s.showSymbol === undefined) s.showSymbol = false
+    if (!s.step && s.sampling === undefined) s.sampling = 'lttb'
+  }
+  return option
+}
+
+// —— 图表容器暂时不可见（offsetWidth 为 0）时重试渲染，但最多重试 20 次（约 1s）就
+//    放弃，避免容器一直隐藏时 setTimeout 每 50ms 无限空转。每次 loadAll() 重置计数。
+const _retry = new Map()
+function scheduleRetry(fn, tag) {
+  const key = tag || fn
+  const n = (_retry.get(key) || 0) + 1
+  if (n > 20) {
+    _retry.delete(key)
+    console.warn('[HistoryCharts] 图表容器持续不可见，已停止重试渲染')
+    return
+  }
+  _retry.set(key, n)
+  setTimeout(fn, 50)
+}
+
+// —— 给按 key 动态创建的图表（滑动统计、自定义公式指标）返回稳定的渲染闭包，
+//    让 queueRender 按函数引用去重时能命中，同一张图不会重复入队。
+const _boundRenderers = new Map()
+function boundRenderer(key, fn) {
+  if (!_boundRenderers.has(key)) _boundRenderers.set(key, fn)
+  return _boundRenderers.get(key)
+}
+
 // ---- 图表渲染错帧队列：进入页面时十几张 echarts 图如果在同一帧里全部 init + setOption，
 // 主线程会一次性卡住几百毫秒。这里把每张图的渲染塞进队列，用 requestAnimationFrame 每帧
 // 只跑到 ~8ms 就把控制权还给浏览器，图表在一两百毫秒内陆续画出来，但页面全程可交互、不卡。
@@ -304,6 +355,7 @@ async function loadAll() {
     return
   }
   loading.value = true
+  _retry.clear()
   try {
     const params = currentRangeParams()
     const [cumRes, twRes, avgRes, stateRes, pidCycleRes, derivedRes, scatterRes, energyRes, heatingRes] = await Promise.allSettled([
@@ -368,11 +420,10 @@ function renderCumulativeChart() {
   const entries = cumulativeEntries.value
   const el = cumulativeChartRef.value
   if (!entries.length || !el || el.offsetWidth === 0) {
-    if (el) setTimeout(renderCumulativeChart, 50)
+    if (el) scheduleRetry(renderCumulativeChart)
     return
   }
-  if (cumulativeChartInstance) cumulativeChartInstance.dispose()
-  const chart = echarts.init(el)
+  const chart = getChart(el, cumulativeChartInstance)
   cumulativeChartInstance = chart
 
   // 不同累计指标可能来自不同数据表，各自独立取数、行数和时间点不一定完全对齐；
@@ -396,11 +447,10 @@ function renderCumulativeChart() {
       data: entry.rows.map((r) => r.cumulative),
       itemStyle: { color: entry.config.color || '#0ea5e9' },
       lineStyle: { color: entry.config.color || '#0ea5e9' },
-      smooth: true,
     }
   })
 
-  chart.setOption({
+  chart.setOption(applyChartDefaults({
     tooltip: { trigger: 'axis' },
     legend: { data: entries.map((e) => e.config.metric_name), top: 0 },
     toolbox: {
@@ -415,7 +465,7 @@ function renderCumulativeChart() {
       { type: 'value', name: units[1] || '', nameTextStyle: { fontSize: 11 } },
     ],
     series,
-  }, true)
+  }), true)
 }
 
 watch([cumulativeEntries, cumulativeChartRef], () => {
@@ -450,7 +500,7 @@ const chartRefs = {}
 function setChartRef(key, el) {
   if (el && !chartRefs[key]) {
     chartRefs[key] = el
-    nextTick(() => queueRender(() => renderEntryChart(key)))
+    nextTick(() => queueRender(boundRenderer('entry:' + key, () => renderEntryChart(key))))
   }
 }
 
@@ -459,11 +509,10 @@ function renderEntryChart(key) {
   if (!entry) return
   const el = chartRefs[key]
   if (!el || el.offsetWidth === 0) {
-    setTimeout(() => renderEntryChart(key), 50)
+    scheduleRetry(() => renderEntryChart(key), 'entry:' + key)
     return
   }
-  if (chartInstances[key]) chartInstances[key].dispose()
-  const chart = echarts.init(el)
+  const chart = getChart(el, chartInstances[key])
   chartInstances[key] = chart
   const rows = entry.rows
   const name = entry.config.metric_name
@@ -473,7 +522,7 @@ function renderEntryChart(key) {
   const data = rows.map((r) => r.value)
   const times = formatTimes(rows)
 
-  chart.setOption({
+  chart.setOption(applyChartDefaults({
     tooltip: { trigger: 'axis' },
     toolbox: {
       feature: { magicType: { type: ['line', 'bar'] }, saveAsImage: { title: '下载图片' } },
@@ -483,14 +532,14 @@ function renderEntryChart(key) {
     grid: { left: 14, right: 60, top: 40, bottom: 50 },
     xAxis: { type: 'category', data: times, axisLabel: { rotate: 15, fontSize: 10 } },
     yAxis: { type: 'value', name: unit, nameTextStyle: { fontSize: 11 } },
-    series: [{ name, type, data, itemStyle: { color }, lineStyle: { color }, smooth: true }],
-  }, true)
+    series: [{ name, type, data, itemStyle: { color }, lineStyle: { color } }],
+  }), true)
 }
 
 watch(timeWindowEntries, () => {
   nextTick(() => {
     timeWindowEntries.value.forEach((e) => {
-      if (chartRefs[e.key]) queueRender(() => renderEntryChart(e.key))
+      if (chartRefs[e.key]) queueRender(boundRenderer('entry:' + e.key, () => renderEntryChart(e.key)))
     })
   })
 })
@@ -509,11 +558,10 @@ function renderAverageChart() {
   const rows = averageChartRows.value
   const el = averageChartRef.value
   if (!rows.length || !el || el.offsetWidth === 0) {
-    if (el) setTimeout(renderAverageChart, 50)
+    if (el) scheduleRetry(renderAverageChart)
     return
   }
-  if (averageChartInstance) averageChartInstance.dispose()
-  const chart = echarts.init(el)
+  const chart = getChart(el, averageChartInstance)
   averageChartInstance = chart
 
   const times = formatTimes(rows)
@@ -521,20 +569,20 @@ function renderAverageChart() {
   const seriesList = []
   if (flags.averageTempChart !== false) {
     seriesList.push({
-      name: '平均温度', type: 'line', yAxisIndex: 0, smooth: true,
+      name: '平均温度', type: 'line', yAxisIndex: 0,
       data: rows.map((r) => r.averageTemp),
       itemStyle: { color: '#3b82f6' }, lineStyle: { color: '#3b82f6' },
     })
   }
   if (flags.averageVelocityChart !== false) {
     seriesList.push({
-      name: '平均流速', type: 'line', yAxisIndex: 1, smooth: true,
+      name: '平均流速', type: 'line', yAxisIndex: 1,
       data: rows.map((r) => r.averageVelocity),
       itemStyle: { color: '#10b981' }, lineStyle: { color: '#10b981' },
     })
   }
 
-  chart.setOption({
+  chart.setOption(applyChartDefaults({
     tooltip: { trigger: 'axis' },
     legend: { data: seriesList.map((s) => s.name), top: 0 },
     toolbox: {
@@ -549,7 +597,7 @@ function renderAverageChart() {
       { type: 'value', name: 'm/s', nameTextStyle: { fontSize: 11 } },
     ],
     series: seriesList,
-  }, true)
+  }), true)
 }
 
 watch([averageChartRows, averageChartRef], () => {
@@ -570,14 +618,13 @@ function renderScatterChart() {
   const rows = scatterRows.value
   const el = scatterChartRef.value
   if (!rows.length || !el || el.offsetWidth === 0) {
-    if (el) setTimeout(renderScatterChart, 50)
+    if (el) scheduleRetry(renderScatterChart)
     return
   }
-  if (scatterChartInstance) scatterChartInstance.dispose()
-  const chart = echarts.init(el)
+  const chart = getChart(el, scatterChartInstance)
   scatterChartInstance = chart
 
-  chart.setOption({
+  chart.setOption(applyChartDefaults({
     tooltip: {
       trigger: 'item',
       formatter: (p) => `流量 ${p.value[0]} L/s<br/>温度 ${p.value[1]} ℃`,
@@ -597,7 +644,7 @@ function renderScatterChart() {
       data: rows.map((r) => [r.flow, r.temp]),
       itemStyle: { color: '#8b5cf6', opacity: 0.6 },
     }],
-  }, true)
+  }), true)
 }
 
 watch([scatterRows, scatterChartRef], () => {
@@ -621,17 +668,16 @@ function renderTempChart() {
   const rows = averageChartRows.value
   const el = tempChartRef.value
   if (!rows.length || !el || el.offsetWidth === 0) {
-    if (el) setTimeout(renderTempChart, 50)
+    if (el) scheduleRetry(renderTempChart)
     return
   }
-  if (tempChartInstance) tempChartInstance.dispose()
-  const chart = echarts.init(el)
+  const chart = getChart(el, tempChartInstance)
   tempChartInstance = chart
 
   const times = formatTimes(rows)
   const series = [
-    { name: '进水温度', type: 'line', smooth: true, data: rows.map((r) => r.temp1), itemStyle: { color: '#f97316' }, lineStyle: { color: '#f97316' } },
-    { name: '出水温度', type: 'line', smooth: true, data: rows.map((r) => r.temp2), itemStyle: { color: '#3b82f6' }, lineStyle: { color: '#3b82f6' } },
+    { name: '进水温度', type: 'line', data: rows.map((r) => r.temp1), itemStyle: { color: '#f97316' }, lineStyle: { color: '#f97316' } },
+    { name: '出水温度', type: 'line', data: rows.map((r) => r.temp2), itemStyle: { color: '#3b82f6' }, lineStyle: { color: '#3b82f6' } },
   ]
   const legendData = ['进水温度', '出水温度']
 
@@ -646,7 +692,6 @@ function renderTempChart() {
     series.push({
       name: '出水温度滑动平均',
       type: 'line',
-      smooth: true,
       connectNulls: true,
       data: rows.map((r) => rollingAvgMap.get(String(r.c_time)) ?? null),
       itemStyle: { color: '#10b981' },
@@ -655,7 +700,7 @@ function renderTempChart() {
     legendData.push('出水温度滑动平均')
   }
 
-  chart.setOption({
+  chart.setOption(applyChartDefaults({
     tooltip: { trigger: 'axis' },
     legend: { data: legendData, top: 0 },
     toolbox: {
@@ -667,7 +712,7 @@ function renderTempChart() {
     xAxis: { type: 'category', data: times, axisLabel: { rotate: 15, fontSize: 10 } },
     yAxis: { type: 'value', name: '℃', nameTextStyle: { fontSize: 11 } },
     series,
-  }, true)
+  }), true)
 }
 
 watch([averageChartRows, timeWindowData, tempChartRef], () => {
@@ -689,15 +734,14 @@ function renderFlowPressureChart() {
   const rows = averageChartRows.value
   const el = flowPressureChartRef.value
   if (!rows.length || !el || el.offsetWidth === 0) {
-    if (el) setTimeout(renderFlowPressureChart, 50)
+    if (el) scheduleRetry(renderFlowPressureChart)
     return
   }
-  if (flowPressureChartInstance) flowPressureChartInstance.dispose()
-  const chart = echarts.init(el)
+  const chart = getChart(el, flowPressureChartInstance)
   flowPressureChartInstance = chart
 
   const times = formatTimes(rows)
-  chart.setOption({
+  chart.setOption(applyChartDefaults({
     tooltip: { trigger: 'axis' },
     legend: { data: ['瞬时流量', '瞬时压力'], top: 0 },
     toolbox: {
@@ -712,10 +756,10 @@ function renderFlowPressureChart() {
       { type: 'value', name: '瞬时压力', nameTextStyle: { fontSize: 11 } },
     ],
     series: [
-      { name: '瞬时流量', type: 'line', yAxisIndex: 0, smooth: true, data: rows.map((r) => r.flow), itemStyle: { color: '#0ea5e9' }, lineStyle: { color: '#0ea5e9' } },
-      { name: '瞬时压力', type: 'line', yAxisIndex: 1, smooth: true, data: rows.map((r) => r.pressure), itemStyle: { color: '#a855f7' }, lineStyle: { color: '#a855f7' } },
+      { name: '瞬时流量', type: 'line', yAxisIndex: 0, data: rows.map((r) => r.flow), itemStyle: { color: '#0ea5e9' }, lineStyle: { color: '#0ea5e9' } },
+      { name: '瞬时压力', type: 'line', yAxisIndex: 1, data: rows.map((r) => r.pressure), itemStyle: { color: '#a855f7' }, lineStyle: { color: '#a855f7' } },
     ],
-  }, true)
+  }), true)
 }
 
 watch([averageChartRows, flowPressureChartRef], () => {
@@ -739,15 +783,14 @@ function renderPidTrackingChart() {
   const rows = averageChartRows.value
   const el = pidTrackingChartRef.value
   if (!rows.length || !el || el.offsetWidth === 0) {
-    if (el) setTimeout(renderPidTrackingChart, 50)
+    if (el) scheduleRetry(renderPidTrackingChart)
     return
   }
-  if (pidTrackingChartInstance) pidTrackingChartInstance.dispose()
-  const chart = echarts.init(el)
+  const chart = getChart(el, pidTrackingChartInstance)
   pidTrackingChartInstance = chart
 
   const times = formatTimes(rows)
-  chart.setOption({
+  chart.setOption(applyChartDefaults({
     tooltip: { trigger: 'axis' },
     legend: { data: ['出水温度'], top: 0 },
     toolbox: {
@@ -762,7 +805,6 @@ function renderPidTrackingChart() {
       {
         name: '出水温度',
         type: 'line',
-        smooth: true,
         data: rows.map((r) => r.temp2),
         itemStyle: { color: '#3b82f6' },
         lineStyle: { color: '#3b82f6' },
@@ -780,7 +822,7 @@ function renderPidTrackingChart() {
         },
       },
     ],
-  }, true)
+  }), true)
 }
 
 watch([averageChartRows, targetTemp, pidTrackingChartRef], () => {
@@ -806,15 +848,14 @@ function renderPumpVelocityTrackingChart() {
   const rows = averageChartRows.value
   const el = pumpVelocityTrackingChartRef.value
   if (!rows.length || !el || el.offsetWidth === 0) {
-    if (el) setTimeout(renderPumpVelocityTrackingChart, 50)
+    if (el) scheduleRetry(renderPumpVelocityTrackingChart)
     return
   }
-  if (pumpVelocityTrackingChartInstance) pumpVelocityTrackingChartInstance.dispose()
-  const chart = echarts.init(el)
+  const chart = getChart(el, pumpVelocityTrackingChartInstance)
   pumpVelocityTrackingChartInstance = chart
 
   const times = formatTimes(rows)
-  chart.setOption({
+  chart.setOption(applyChartDefaults({
     tooltip: { trigger: 'axis' },
     legend: { data: ['平均流速'], top: 0 },
     toolbox: {
@@ -829,7 +870,6 @@ function renderPumpVelocityTrackingChart() {
       {
         name: '平均流速',
         type: 'line',
-        smooth: true,
         data: rows.map((r) => r.averageVelocity),
         itemStyle: { color: '#0ea5e9' },
         lineStyle: { color: '#0ea5e9' },
@@ -847,7 +887,7 @@ function renderPumpVelocityTrackingChart() {
         },
       },
     ],
-  }, true)
+  }), true)
 }
 
 watch([averageChartRows, targetVelocity, pumpVelocityTrackingChartRef], () => {
@@ -876,15 +916,14 @@ function renderActualPowerChart() {
   const rows = heaterEnergyRows.value
   const el = actualPowerChartRef.value
   if (!rows.length || !el || el.offsetWidth === 0) {
-    if (el) setTimeout(renderActualPowerChart, 50)
+    if (el) scheduleRetry(renderActualPowerChart)
     return
   }
-  if (actualPowerChartInstance) actualPowerChartInstance.dispose()
-  const chart = echarts.init(el)
+  const chart = getChart(el, actualPowerChartInstance)
   actualPowerChartInstance = chart
 
   const times = formatTimes(rows)
-  chart.setOption({
+  chart.setOption(applyChartDefaults({
     tooltip: { trigger: 'axis' },
     grid: { left: 14, right: 20, top: 20, bottom: 50 },
     xAxis: { type: 'category', data: times, axisLabel: { rotate: 15, fontSize: 10 } },
@@ -901,7 +940,7 @@ function renderActualPowerChart() {
       lineStyle: { color: '#f59e0b' },
       areaStyle: { color: '#f59e0b', opacity: 0.12 },
     }],
-  }, true)
+  }), true)
 }
 
 watch([heaterEnergyRows, actualPowerChartRef], () => {
@@ -917,15 +956,14 @@ function renderHeatEnergyChart() {
   const rows = heaterEnergyRows.value
   const el = heatEnergyChartRef.value
   if (!rows.length || !el || el.offsetWidth === 0) {
-    if (el) setTimeout(renderHeatEnergyChart, 50)
+    if (el) scheduleRetry(renderHeatEnergyChart)
     return
   }
-  if (heatEnergyChartInstance) heatEnergyChartInstance.dispose()
-  const chart = echarts.init(el)
+  const chart = getChart(el, heatEnergyChartInstance)
   heatEnergyChartInstance = chart
 
   const times = formatTimes(rows)
-  chart.setOption({
+  chart.setOption(applyChartDefaults({
     tooltip: { trigger: 'axis' },
     legend: { data: ['累计耗电量', '累计换热量'], top: 0 },
     grid: { left: 14, right: 20, top: 40, bottom: 50 },
@@ -935,7 +973,6 @@ function renderHeatEnergyChart() {
       {
         name: '累计耗电量',
         type: 'line',
-        smooth: true,
         data: rows.map((r) => r.cumulativeElectric),
         itemStyle: { color: '#ef4444' },
         lineStyle: { color: '#ef4444' },
@@ -943,13 +980,12 @@ function renderHeatEnergyChart() {
       {
         name: '累计换热量',
         type: 'line',
-        smooth: true,
         data: rows.map((r) => r.cumulativeHeatEnergy),
         itemStyle: { color: '#10b981' },
         lineStyle: { color: '#10b981' },
       },
     ],
-  }, true)
+  }), true)
 }
 
 watch([heaterEnergyRows, heatEnergyChartRef], () => {
@@ -965,15 +1001,14 @@ function renderSecChart() {
   const rows = heaterEnergyRows.value
   const el = secChartRef.value
   if (!rows.length || !el || el.offsetWidth === 0) {
-    if (el) setTimeout(renderSecChart, 50)
+    if (el) scheduleRetry(renderSecChart)
     return
   }
-  if (secChartInstance) secChartInstance.dispose()
-  const chart = echarts.init(el)
+  const chart = getChart(el, secChartInstance)
   secChartInstance = chart
 
   const times = formatTimes(rows)
-  chart.setOption({
+  chart.setOption(applyChartDefaults({
     tooltip: { trigger: 'axis' },
     grid: { left: 14, right: 20, top: 20, bottom: 50 },
     xAxis: { type: 'category', data: times, axisLabel: { rotate: 15, fontSize: 10 } },
@@ -981,12 +1016,11 @@ function renderSecChart() {
     series: [{
       name: '单位流量能耗',
       type: 'line',
-      smooth: true,
       data: rows.map((r) => r.sec),
       itemStyle: { color: '#8b5cf6' },
       lineStyle: { color: '#8b5cf6' },
     }],
-  }, true)
+  }), true)
 }
 
 watch([heaterEnergyRows, secChartRef], () => {
@@ -1009,14 +1043,13 @@ function renderHeatingEfficiencyChart() {
   const rows = heatingEfficiencyRows.value
   const el = heatingEfficiencyChartRef.value
   if (!rows.length || !el || el.offsetWidth === 0) {
-    if (el) setTimeout(renderHeatingEfficiencyChart, 50)
+    if (el) scheduleRetry(renderHeatingEfficiencyChart)
     return
   }
-  if (heatingEfficiencyChartInstance) heatingEfficiencyChartInstance.dispose()
-  const chart = echarts.init(el)
+  const chart = getChart(el, heatingEfficiencyChartInstance)
   heatingEfficiencyChartInstance = chart
   const times = formatTimes(rows)
-  chart.setOption({
+  chart.setOption(applyChartDefaults({
     tooltip: { trigger: 'axis' },
     legend: { data: ['实际升温', '理论升温', '加热效率'], top: 0 },
     grid: { left: 20, right: 40, top: 40, bottom: 50 },
@@ -1026,11 +1059,11 @@ function renderHeatingEfficiencyChart() {
       { type: 'value', name: '%', nameTextStyle: { fontSize: 11 }, splitLine: { show: false } },
     ],
     series: [
-      { name: '实际升温', type: 'line', smooth: true, data: rows.map((r) => r.actualRiseC), itemStyle: { color: '#10b981' }, lineStyle: { color: '#10b981' } },
-      { name: '理论升温', type: 'line', smooth: true, data: rows.map((r) => r.theoreticalRiseC), itemStyle: { color: '#94a3b8' }, lineStyle: { color: '#94a3b8', type: 'dashed' } },
-      { name: '加热效率', type: 'line', smooth: true, yAxisIndex: 1, data: rows.map((r) => r.efficiencyPct), itemStyle: { color: '#f59e0b' }, lineStyle: { color: '#f59e0b' } },
+      { name: '实际升温', type: 'line', data: rows.map((r) => r.actualRiseC), itemStyle: { color: '#10b981' }, lineStyle: { color: '#10b981' } },
+      { name: '理论升温', type: 'line', data: rows.map((r) => r.theoreticalRiseC), itemStyle: { color: '#94a3b8' }, lineStyle: { color: '#94a3b8', type: 'dashed' } },
+      { name: '加热效率', type: 'line', yAxisIndex: 1, data: rows.map((r) => r.efficiencyPct), itemStyle: { color: '#f59e0b' }, lineStyle: { color: '#f59e0b' } },
     ],
-  }, true)
+  }), true)
 }
 
 watch([heatingEfficiencyRows, heatingEfficiencyChartRef], () => {
@@ -1044,25 +1077,24 @@ function renderHeatingRateChart() {
   const rows = heatingRateRows.value
   const el = heatingRateChartRef.value
   if (!rows.length || !el || el.offsetWidth === 0) {
-    if (el) setTimeout(renderHeatingRateChart, 50)
+    if (el) scheduleRetry(renderHeatingRateChart)
     return
   }
-  if (heatingRateChartInstance) heatingRateChartInstance.dispose()
-  const chart = echarts.init(el)
+  const chart = getChart(el, heatingRateChartInstance)
   heatingRateChartInstance = chart
   const times = formatTimes(rows)
-  chart.setOption({
+  chart.setOption(applyChartDefaults({
     tooltip: { trigger: 'axis' },
     grid: { left: 20, right: 20, top: 20, bottom: 50 },
     xAxis: { type: 'category', data: times, axisLabel: { rotate: 15, fontSize: 10 } },
     yAxis: { type: 'value', name: '℃/min', nameTextStyle: { fontSize: 11 } },
     series: [{
-      name: '加热速度', type: 'line', smooth: true,
+      name: '加热速度', type: 'line',
       data: rows.map((r) => r.heatingRate),
       itemStyle: { color: '#ef4444' }, lineStyle: { color: '#ef4444' },
       areaStyle: { color: '#ef4444', opacity: 0.1 },
     }],
-  }, true)
+  }), true)
 }
 
 watch([heatingRateRows, heatingRateChartRef], () => {
@@ -1082,15 +1114,14 @@ function renderDeviceStateChart() {
   const rows = deviceStateRows.value
   const el = deviceStateChartRef.value
   if (!rows.length || !el || el.offsetWidth === 0) {
-    if (el) setTimeout(renderDeviceStateChart, 50)
+    if (el) scheduleRetry(renderDeviceStateChart)
     return
   }
-  if (deviceStateChartInstance) deviceStateChartInstance.dispose()
-  const chart = echarts.init(el)
+  const chart = getChart(el, deviceStateChartInstance)
   deviceStateChartInstance = chart
 
   const times = formatTimes(rows)
-  chart.setOption({
+  chart.setOption(applyChartDefaults({
     tooltip: { trigger: 'axis' },
     legend: { data: ['水泵', '加热'], top: 0 },
     toolbox: {
@@ -1111,7 +1142,7 @@ function renderDeviceStateChart() {
       { name: '水泵', type: 'line', step: 'end', data: rows.map((r) => r.pumpOn), itemStyle: { color: '#0ea5e9' }, lineStyle: { color: '#0ea5e9', width: 2 } },
       { name: '加热', type: 'line', step: 'end', data: rows.map((r) => r.heaterOn), itemStyle: { color: '#f97316' }, lineStyle: { color: '#f97316', width: 2, type: 'dashed' } },
     ],
-  }, true)
+  }), true)
 }
 
 watch([deviceStateRows, deviceStateChartRef], () => {
@@ -1154,15 +1185,14 @@ function renderPidCycleChart() {
   const points = pidCyclePoints.value
   const el = pidCycleChartRef.value
   if (!points.length || !el || el.offsetWidth === 0) {
-    if (el) setTimeout(renderPidCycleChart, 50)
+    if (el) scheduleRetry(renderPidCycleChart)
     return
   }
-  if (pidCycleChartInstance) pidCycleChartInstance.dispose()
-  const chart = echarts.init(el)
+  const chart = getChart(el, pidCycleChartInstance)
   pidCycleChartInstance = chart
 
   const pad2 = (n) => String(n).padStart(2, '0')
-  chart.setOption({
+  chart.setOption(applyChartDefaults({
     tooltip: {
       trigger: 'axis',
       formatter: (params) => {
@@ -1201,7 +1231,7 @@ function renderPidCycleChart() {
     series: [
       { name: '加热', type: 'line', step: 'end', data: points.map((p) => [p.time, p.value]), itemStyle: { color: '#f97316' }, lineStyle: { color: '#f97316', width: 2 } },
     ],
-  }, true)
+  }), true)
 }
 
 watch([pidCyclePoints, pidCycleChartRef], () => {
@@ -1228,15 +1258,14 @@ function renderCumulativeFlowChart() {
   const entry = cumulativeFlowEntry.value
   const el = cumulativeFlowChartRef.value
   if (!entry || !el || el.offsetWidth === 0) {
-    if (el) setTimeout(renderCumulativeFlowChart, 50)
+    if (el) scheduleRetry(renderCumulativeFlowChart)
     return
   }
-  if (cumulativeFlowChartInstance) cumulativeFlowChartInstance.dispose()
-  const chart = echarts.init(el)
+  const chart = getChart(el, cumulativeFlowChartInstance)
   cumulativeFlowChartInstance = chart
 
   const times = formatTimes(entry.rows)
-  chart.setOption({
+  chart.setOption(applyChartDefaults({
     tooltip: { trigger: 'axis' },
     legend: { data: [entry.config.metric_name], top: 0 },
     toolbox: {
@@ -1253,9 +1282,8 @@ function renderCumulativeFlowChart() {
       data: entry.rows.map((r) => r.cumulative),
       itemStyle: { color: entry.config.color || '#0ea5e9' },
       lineStyle: { color: entry.config.color || '#0ea5e9' },
-      smooth: true,
     }],
-  }, true)
+  }), true)
 }
 
 watch([cumulativeFlowEntry, cumulativeFlowChartRef], () => {
@@ -1285,11 +1313,10 @@ function renderSwitchDurationChart() {
   const entries = switchDurationEntries.value
   const el = switchDurationChartRef.value
   if (!entries.length || !el || el.offsetWidth === 0) {
-    if (el) setTimeout(renderSwitchDurationChart, 50)
+    if (el) scheduleRetry(renderSwitchDurationChart)
     return
   }
-  if (switchDurationChartInstance) switchDurationChartInstance.dispose()
-  const chart = echarts.init(el)
+  const chart = getChart(el, switchDurationChartInstance)
   switchDurationChartInstance = chart
 
   const base = entries.reduce((a, b) => (b.rows.length > a.rows.length ? b : a))
@@ -1300,10 +1327,9 @@ function renderSwitchDurationChart() {
     data: entry.rows.map((r) => r.cumulative),
     itemStyle: { color: entry.config.color || '#0ea5e9' },
     lineStyle: { color: entry.config.color || '#0ea5e9' },
-    smooth: true,
   }))
 
-  chart.setOption({
+  chart.setOption(applyChartDefaults({
     tooltip: { trigger: 'axis' },
     legend: { data: entries.map((e) => e.config.metric_name), top: 0 },
     toolbox: {
@@ -1315,7 +1341,7 @@ function renderSwitchDurationChart() {
     xAxis: { type: 'category', data: times, axisLabel: { rotate: 15, fontSize: 10 } },
     yAxis: { type: 'value', name: entries[0]?.config.unit || '', nameTextStyle: { fontSize: 11 } },
     series,
-  }, true)
+  }), true)
 }
 
 watch([switchDurationEntries, switchDurationChartRef], () => {
@@ -1340,7 +1366,7 @@ const derivedChartRefs = {}
 function setDerivedChartRef(key, el) {
   if (el && !derivedChartRefs[key]) {
     derivedChartRefs[key] = el
-    nextTick(() => queueRender(() => renderDerivedEntryChart(key)))
+    nextTick(() => queueRender(boundRenderer('derived:' + key, () => renderDerivedEntryChart(key))))
   }
 }
 
@@ -1349,11 +1375,10 @@ function renderDerivedEntryChart(key) {
   if (!entry) return
   const el = derivedChartRefs[key]
   if (!el || el.offsetWidth === 0) {
-    setTimeout(() => renderDerivedEntryChart(key), 50)
+    scheduleRetry(() => renderDerivedEntryChart(key), 'derived:' + key)
     return
   }
-  if (derivedChartInstances[key]) derivedChartInstances[key].dispose()
-  const chart = echarts.init(el)
+  const chart = getChart(el, derivedChartInstances[key])
   derivedChartInstances[key] = chart
   const rows = entry.rows
   const name = entry.config.metric_name
@@ -1363,7 +1388,7 @@ function renderDerivedEntryChart(key) {
   const data = rows.map((r) => r.value)
   const times = formatTimes(rows)
 
-  chart.setOption({
+  chart.setOption(applyChartDefaults({
     tooltip: { trigger: 'axis' },
     toolbox: {
       feature: { magicType: { type: ['line', 'bar'] }, saveAsImage: { title: '下载图片' } },
@@ -1373,14 +1398,14 @@ function renderDerivedEntryChart(key) {
     grid: { left: 14, right: 60, top: 40, bottom: 50 },
     xAxis: { type: 'category', data: times, axisLabel: { rotate: 15, fontSize: 10 } },
     yAxis: { type: 'value', name: unit, nameTextStyle: { fontSize: 11 } },
-    series: [{ name, type, data, itemStyle: { color }, lineStyle: { color }, smooth: true }],
-  }, true)
+    series: [{ name, type, data, itemStyle: { color }, lineStyle: { color } }],
+  }), true)
 }
 
 watch(derivedMetricEntries, () => {
   nextTick(() => {
     derivedMetricEntries.value.forEach((e) => {
-      if (derivedChartRefs[e.key]) queueRender(() => renderDerivedEntryChart(e.key))
+      if (derivedChartRefs[e.key]) queueRender(boundRenderer('derived:' + e.key, () => renderDerivedEntryChart(e.key)))
     })
   })
 })
