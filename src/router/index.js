@@ -58,14 +58,6 @@ const routes=[
                 path:'/judgment-history',
                 component:()=>import('@/views/JudgmentHistory.vue'),
                 meta: { title: '智能判定记录' }
-            },{
-                path:'/scene-config',
-                component:()=>import('@/views/config/SceneConfig.vue'),
-                meta: { title: '配置中心' }
-            },{
-                path:'/derived-metrics',
-                redirect: { path: '/scene-config', query: { tab: 'formula' } },
-                meta: { title: '配置中心/公式与图表' }
             }
         ]
     }

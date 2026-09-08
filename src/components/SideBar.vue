@@ -87,10 +87,6 @@
                         <el-icon><Document /></el-icon>
                         <span>{{ terms.judgment }}记录</span>
                     </el-menu-item>
-                    <el-menu-item index="/scene-config" to="/scene-config">
-                        <el-icon><Setting /></el-icon>
-                        <span>配置中心</span>
-                    </el-menu-item>
                 </el-menu>
             </el-col>
         </el-row>
