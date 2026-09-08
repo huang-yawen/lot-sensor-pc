@@ -14,7 +14,7 @@
 <script setup>
 
 import { ref, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
-import * as echarts from 'echarts'
+import * as echarts from '@/utils/echarts'
 import { useDisplayStore } from '@/stores/useDisplayStore'
 
 /**

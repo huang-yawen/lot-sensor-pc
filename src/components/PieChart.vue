@@ -12,7 +12,7 @@
 
 <script setup>
 import { ref, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
-import * as echarts from 'echarts'
+import * as echarts from '@/utils/echarts'
 
 const piechart = ref(null)
 let mychart = null

@@ -201,7 +201,7 @@
 <script setup>
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import api from '@/api'
-import * as echarts from 'echarts'
+import * as echarts from '@/utils/echarts'
 import { useSystemConfigStore } from '@/stores/useSystemConfigStore'
 
 const RANGE_OPTIONS = [
