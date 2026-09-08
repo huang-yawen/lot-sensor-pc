@@ -218,13 +218,13 @@
 import { computed, onMounted, onUnmounted, ref } from "vue";
 import { Search } from "@element-plus/icons-vue";
 import PieChart from "../components/PieChart.vue";
-import { ErrorStore } from "../stores/ErrorStore";
-import { DisplayStore } from "@/stores/DisplayStore";
+import { useErrorStore } from "../stores/ErrorStore";
+import { useDisplayStore } from "@/stores/DisplayStore";
 import { useSystemConfigStore } from "@/stores/SystemConfigStore";
 import { connect, on as wsOn } from "@/utils/websocket";
 
-const store = ErrorStore();
-const displayStore = DisplayStore();
+const store = useErrorStore();
+const displayStore = useDisplayStore();
 const systemStore = useSystemConfigStore();
 
 const currentPage = ref(1);

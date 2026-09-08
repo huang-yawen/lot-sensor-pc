@@ -36,11 +36,11 @@ import TopNav from '@/components/TopNav.vue'
 import FaultAlertDialog from '@/components/FaultAlertDialog.vue'
 import SafetyAlertNotifier from '@/components/SafetyAlertNotifier.vue'
 import AlarmNotifier from '@/components/AlarmNotifier.vue'
-import { DisplayStore } from '@/stores/DisplayStore'
+import { useDisplayStore } from '@/stores/DisplayStore'
 
 import { ref, onMounted } from 'vue'
 const activeIndex = ref('2')
-const displayStore = DisplayStore()
+const displayStore = useDisplayStore()
 onMounted(() => {
   displayStore.loadDisplayConfig().catch(error => console.error('[DisplayConfig] 加载失败:', error))
 })

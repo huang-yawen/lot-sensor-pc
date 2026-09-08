@@ -2,7 +2,7 @@
  * 【干什么】"设备设置"页（指令中心）的统一入口：加载指令项树、加载某设备的当前值、
  * 下发一条控制指令。所有控件都走这里，避免多个控件各自重复下发、重复弹提示。
  *
- * 【导出】DirectStore()
+ * 【导出】useDirectStore()
  * 【状态】data（指令项树）、renderData（当前设备各指令项的值）、loading
  * 【方法】
  *   fetchDirectData()          → GET /api/directData     加载指令项树
@@ -19,7 +19,7 @@ import { defineStore } from "pinia";
 import { ref } from "vue";
 import api from "@/api";
 
-export const DirectStore = defineStore("DirectStore", () => {
+export const useDirectStore = defineStore('directStore', () => {
   const data = ref([]);
   const renderData = ref([]);
   const loading = ref(false);

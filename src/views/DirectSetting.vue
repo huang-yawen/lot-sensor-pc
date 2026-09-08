@@ -56,15 +56,15 @@
 
 <script setup>
 import DeviceSetting from '@/components/direct/DeviceSetting.vue'
-import { DirectStore } from '@/stores/DirectStore'
-import { DeviceStore } from '@/stores/DeviceStore' 
+import { useDirectStore } from '@/stores/DirectStore'
+import { useDeviceStore } from '@/stores/DeviceStore' 
 import { useSystemConfigStore } from '@/stores/SystemConfigStore'
 import { computed, ref, onMounted, onUnmounted } from 'vue'
 import { ArrowDown } from '@element-plus/icons-vue'
 import { connect as connectQtyWs, on as qtyWsOn } from '@/utils/websocket'
 
-const store = DirectStore()
-const dStore = DeviceStore() 
+const store = useDirectStore()
+const dStore = useDeviceStore() 
 const systemStore = useSystemConfigStore()
 
 const selectedDeviceId = ref(null)

@@ -89,9 +89,9 @@
 <script setup>
 import { ref, watch, computed } from 'vue'
 import { Search } from '@element-plus/icons-vue'
-import { DisplayStore } from '@/stores/DisplayStore'
+import { useDisplayStore } from '@/stores/DisplayStore'
 
-const displayStore = DisplayStore()
+const displayStore = useDisplayStore()
 
 const props = defineProps({
   data: {

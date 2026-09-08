@@ -22,11 +22,11 @@
 import { computed, onMounted, onUnmounted } from 'vue'
 import CardContainer from '@/components/CardContainer.vue'
 import LineBarCharts from '@/components/LineBarCharts.vue'
-import { PaginationStore } from '@/stores/PaginationStore.js'
+import { usePaginationStore } from '@/stores/PaginationStore.js'
 import { transformBehaviorList } from '@/utils/fieldTransform'
 import { useSystemConfigStore } from '@/stores/SystemConfigStore'
 
-const store = PaginationStore()
+const store = usePaginationStore()
 const systemStore = useSystemConfigStore()
 // 数据范围筛选值：实时页只看最新窗口内（最新 5 条）的记录，跟设备在线状态无关。
 const dataScope = '实时数据'

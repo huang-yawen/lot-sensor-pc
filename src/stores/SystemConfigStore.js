@@ -2,7 +2,7 @@
  * 【干什么】全站配置的前端缓存。整个应用共用这一份 —— 页面标题、术语、单设备模式、
  * 分页大小、各页面显示开关、智能判定按钮显隐 都从这里读。
  *
- * 【导出】useSystemConfigStore()   （注意：只有这个 store 用 useXxx 命名，其余用 XxxStore）
+ * 【导出】useSystemConfigStore()
  * 【状态】config（整份配置对象，字段见后端 config/appSettings.js 等）、loaded
  * 【方法】load(force=false)  首次调后端 GET /api/system-config 填充 config，并把 SYSTEM_TITLE
  *        写进 document.title；已加载后再调直接返回缓存，force=true 强制重新拉。
@@ -15,7 +15,7 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import api from '@/api'
 
-export const useSystemConfigStore = defineStore('systemConfig', () => {
+export const useSystemConfigStore = defineStore('systemConfigStore', () => {
   const config = ref({
     SYSTEM_TITLE: '物联网数据管理中心',
     DEVICE_LABEL: '设备',

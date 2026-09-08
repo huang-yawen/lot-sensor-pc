@@ -24,9 +24,9 @@
 </template>
 <script setup>
 import { ref, computed, watch } from 'vue'
-import { DisplayStore } from '@/stores/DisplayStore'
+import { useDisplayStore } from '@/stores/DisplayStore'
 
-const displayStore = DisplayStore()
+const displayStore = useDisplayStore()
 
 const props = defineProps({
   data: { type: Array, default: () => [] },

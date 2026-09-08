@@ -66,7 +66,7 @@ import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import api from '@/api'
 import { useSystemConfigStore } from '@/stores/SystemConfigStore'
-import { DisplayStore } from '@/stores/DisplayStore'
+import { useDisplayStore } from '@/stores/DisplayStore'
 
 const rows = ref([])
 const total = ref(0)
@@ -80,7 +80,7 @@ const status = ref('')
 const dateRange = ref([])
 const loading = ref(false)
 const systemStore = useSystemConfigStore()
-const displayStore = DisplayStore()
+const displayStore = useDisplayStore()
 const pageSizeOptions = computed(() => [...new Set([pageSize.value, 5, 10, 20, 50])].sort((a, b) => a - b))
 
 async function load() {

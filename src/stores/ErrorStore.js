@@ -4,7 +4,7 @@
  * 4 组各有一套 data/total/loading/typeStats/typeStatsAll 状态和一对 fetch 方法，
  * 都复用后端同一个 /errData + /errTypeStats 接口，靠 category 参数区分，各自分页互不影响。
  *
- * 【导出】ErrorStore()
+ * 【导出】useErrorStore()
  * 【状态】每组 4 个：<组>Data、<组>Total、<组>Loading、<组>TypeStats、<组>TypeStatsAll
  *        （组 = err(即fault) / safety / linkage / alarm）
  * 【方法】
@@ -18,9 +18,9 @@
 import { defineStore } from "pinia";
 import { ref } from "vue";
 import api from '@/api';
-import { DisplayStore } from '@/stores/DisplayStore';
+import { useDisplayStore } from '@/stores/DisplayStore';
 
-export const ErrorStore = defineStore("ErrorStore", () => {
+export const useErrorStore = defineStore('errorStore', () => {
   const errData = ref([]);
   const total = ref(0);
   const loading = ref(false);
@@ -77,7 +77,7 @@ export const ErrorStore = defineStore("ErrorStore", () => {
         const list = res.data?.list || [];
 
         // 时间格式化
-        const displayStore = DisplayStore()
+        const displayStore = useDisplayStore()
         errData.value = list.map((item) => ({
           ...item,
           "报警时间": displayStore.formatTime(item["报警时间"]),
@@ -111,7 +111,7 @@ export const ErrorStore = defineStore("ErrorStore", () => {
       const res = response.data;
       if (res.success) {
         const list = res.data?.list || [];
-        const displayStore = DisplayStore()
+        const displayStore = useDisplayStore()
         safetyData.value = list.map((item) => ({
           ...item,
           "报警时间": displayStore.formatTime(item["报警时间"]),
@@ -144,7 +144,7 @@ export const ErrorStore = defineStore("ErrorStore", () => {
       const res = response.data;
       if (res.success) {
         const list = res.data?.list || [];
-        const displayStore = DisplayStore()
+        const displayStore = useDisplayStore()
         linkageData.value = list.map((item) => ({
           ...item,
           "报警时间": displayStore.formatTime(item["报警时间"]),
@@ -178,7 +178,7 @@ export const ErrorStore = defineStore("ErrorStore", () => {
       const res = response.data;
       if (res.success) {
         const list = res.data?.list || [];
-        const displayStore = DisplayStore()
+        const displayStore = useDisplayStore()
         alarmData.value = list.map((item) => ({
           ...item,
           "报警时间": displayStore.formatTime(item["报警时间"]),

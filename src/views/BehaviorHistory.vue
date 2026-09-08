@@ -46,7 +46,7 @@
 import { computed, ref, onMounted, onUnmounted } from 'vue'
 import { connect, on as wsOn } from '@/utils/websocket'
 import { ElMessage } from 'element-plus'
-import { PaginationStore } from '@/stores/PaginationStore.js'
+import { usePaginationStore } from '@/stores/PaginationStore.js'
 import TableContainer from '@/components/TableContainer.vue'
 import LineBarCharts from '@/components/LineBarCharts.vue'
 import JudgmentResultDialog from '@/components/JudgmentResultDialog.vue'
@@ -54,7 +54,7 @@ import { transformBehaviorList } from '@/utils/fieldTransform'
 import api from '@/api'
 import { useSystemConfigStore } from '@/stores/SystemConfigStore'
 
-const store = PaginationStore()
+const store = usePaginationStore()
 const systemStore = useSystemConfigStore()
 
 // 汇总数据页面不再按实时/保存筛选，dataScope 留空即可查到全部类型的数据（含最新的实时数据）。

@@ -6,7 +6,7 @@
  * 手动或自动模式下显示——级联逻辑全部在数据库配置和 DynamicNode.vue 里，本组件只按
  * “顶层节点有没有子项”分快捷开关/详情卡片两块展示，不掺任何跟控制模式相关的判断。
  * 【配置中心关联】控制字段由 t_direct_config.preffix 映射；SINGLE_DEVICE_MODE 影响设备选择；
- * 离线暂存、上线补发和消息文案均以后端/DirectStore 的结果为准，组件不能直接发布 MQTT。
+ * 离线暂存、上线补发和消息文案均以后端 / useDirectStore 的结果为准，组件不能直接发布 MQTT。
  * -->
 <template>
   <div class="container">

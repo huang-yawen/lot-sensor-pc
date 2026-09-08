@@ -3,7 +3,7 @@
  * 根据 t_direct_config 的 f_type 动态选择开关、输入框、滑块或时间控件，并递归渲染
  * parent_id 子节点；本组件只向上冒泡一次保存事件。用 depth 区分层级做视觉样式（顶层是
  * 卡片，子层是嵌套面板），compact 用于顶部“快捷开关”一行式紧凑布局。
- * 【配置中心关联】f_type、parent_id、preffix 来自控制配置元数据；DisplayStore 控制字段可见性。
+ * 【配置中心关联】f_type、parent_id、preffix 来自控制配置元数据；useDisplayStore 控制字段可见性。
  * 真实协议字段转换在后端完成，前端不可根据显示名称自行拼装 MQTT 载荷。
  * -->
 <template>
@@ -36,9 +36,9 @@
 
 <script setup>
 import { computed, markRaw, defineAsyncComponent } from 'vue'
-import { DisplayStore } from '@/stores/DisplayStore'
+import { useDisplayStore } from '@/stores/DisplayStore'
 
-const visibility = DisplayStore()
+const visibility = useDisplayStore()
 
 const props = defineProps({
   node: Object,

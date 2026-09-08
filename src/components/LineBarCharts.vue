@@ -15,7 +15,7 @@
 
 import { ref, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
 import * as echarts from 'echarts'
-import { DisplayStore } from '@/stores/DisplayStore'
+import { useDisplayStore } from '@/stores/DisplayStore'
 
 /**
  * @description ECharts 实例引用
@@ -129,7 +129,7 @@ const updateChart = (source) => {
     const fields = elemKeys.filter(k => !exclude.includes(k) && props.settings[k]?.visible !== false)
 
     // 处理时间数据，格式化为可读字符串
-    const displayStore = DisplayStore()
+    const displayStore = useDisplayStore()
     const times = json.map(item => {
       if (item['创立时间']) {
         return displayStore.formatTime(item['创立时间'])

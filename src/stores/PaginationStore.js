@@ -2,7 +2,7 @@
  * 【干什么】传感器/行为 4 个页面（实时、汇总各一份传感器和行为）共用的分页表格数据源。
  * 一个 store 实例被这 4 个页面共用，靠 type 参数切数据表。
  *
- * 【导出】PaginationStore()
+ * 【导出】usePaginationStore()
  * 【状态】paginationData（当前页行）、total、currentPage、pageSize、fieldUnits、chartSettings、
  *        loading、type
  * 【方法】
@@ -16,9 +16,9 @@
 import { defineStore } from "pinia";
 import { ref } from 'vue'
 import api from '@/api'
-import { DisplayStore } from '@/stores/DisplayStore'
+import { useDisplayStore } from '@/stores/DisplayStore'
 
-export const PaginationStore = defineStore("paginationStore", () => {
+export const usePaginationStore = defineStore("paginationStore", () => {
     const paginationData = ref([])
     const total = ref(0)
     const currentPage = ref(1) 
@@ -65,7 +65,7 @@ export const PaginationStore = defineStore("paginationStore", () => {
                 }
 
                 // 后端返回数据库时间，Store 统一格式化后再交给表格展示。
-                const displayStore = DisplayStore()
+                const displayStore = useDisplayStore()
                 paginationData.value = paginationData.value.map(item => ({
                     ...item,
                     '创立时间': displayStore.formatTime(item['创立时间'])

@@ -132,7 +132,7 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import api from '@/api'
 import { connect, on as wsOn } from '@/utils/websocket'
 import { useSystemConfigStore } from '@/stores/SystemConfigStore'
-import { DisplayStore } from '@/stores/DisplayStore'
+import { useDisplayStore } from '@/stores/DisplayStore'
 import GaugeChart from '@/components/GaugeChart.vue'
 
 const loading = ref(false)
@@ -144,7 +144,7 @@ const mqttConnected = ref(false)
 const deviceStatuses = ref([])
 const switchDuration = ref({ pump: null, heater: null })
 const systemStore = useSystemConfigStore()
-const displayStore = DisplayStore()
+const displayStore = useDisplayStore()
 const config = computed(() => systemStore.config)
 const deviceLabel = computed(() => config.value.DEVICE_LABEL || config.value.TERMINOLOGY?.device || '设备')
 const switchDurationEnabled = computed(() => config.value.SWITCH_DURATION_DISPLAY?.enabled !== false)

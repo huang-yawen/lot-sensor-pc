@@ -1,6 +1,6 @@
 <!--
  * 【文件职责】传感器实时数据页面。
- * 跟传感器汇总数据（SensorHistory）、行为实时/汇总数据页面统一使用 PaginationStore
+ * 跟传感器汇总数据（SensorHistory）、行为实时/汇总数据页面统一使用 usePaginationStore
  * 和 /api/dataByType 接口，通过 metricScope='realtime' 区分实时模式：
  *   - 用 show_realtime 过滤派生指标（跟原 getDashboardData 的实时返回一致）
  *   - 返回纯数值不拼接单位（卡片和图表组件需要纯数值 + 单独的 fieldUnits）
@@ -25,16 +25,16 @@
 </template>
 <script setup>
 import LineBarCharts from '@/components/LineBarCharts.vue'
-import { PaginationStore } from '@/stores/PaginationStore.js'
+import { usePaginationStore } from '@/stores/PaginationStore.js'
 import { computed, onMounted, onUnmounted } from 'vue'
 import CardContainer from '@/components/CardContainer.vue'
 import { useSystemConfigStore } from '@/stores/SystemConfigStore'
 
-// 跟传感器汇总数据页面（SensorHistory）使用同一个 store（PaginationStore）。
+// 跟传感器汇总数据页面（SensorHistory）使用同一个 store（usePaginationStore）。
 // 区别在于：实时页传 dataScope='实时数据'（只取最新窗口 5 条）+ metricScope='realtime'
 // （用 show_realtime 过滤指标 + 不拼单位），汇总页 dataScope 留空（全部数据）+ 不传
 // metricScope（默认 history 模式 + 拼单位给表格用）。
-const store = PaginationStore()
+const store = usePaginationStore()
 const systemStore = useSystemConfigStore()
 let refreshTimer = null
 

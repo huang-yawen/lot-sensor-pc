@@ -89,10 +89,10 @@
 <script setup>
 import { computed, ref, onMounted } from 'vue'
 import api from '@/api'
-import { DisplayStore } from '@/stores/DisplayStore'
+import { useDisplayStore } from '@/stores/DisplayStore'
 import { useSystemConfigStore } from '@/stores/SystemConfigStore'
 
-const displayStore = DisplayStore()
+const displayStore = useDisplayStore()
 const systemStore = useSystemConfigStore()
 
 const data = ref([])

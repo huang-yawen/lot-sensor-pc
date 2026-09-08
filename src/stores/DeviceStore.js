@@ -2,7 +2,7 @@
  * 【干什么】设备管理页的数据和增删改操作。列表加载时顺手把设备编号去重存进 ids，
  * 供"设备设置"页选择设备时复用。
  *
- * 【导出】DeviceStore()
+ * 【导出】useDeviceStore()
  * 【状态】deviceData（列表）、total、loading、ids（去重后的设备编号数组）
  * 【方法】
  *   fetchDeviceData({ currentPage, pageSize, input, searchMode })  → GET /api/deviceData
@@ -16,9 +16,9 @@
 import { defineStore } from "pinia";
 import { ref } from 'vue';
 import api from '@/api';
-import { DisplayStore } from '@/stores/DisplayStore';
+import { useDisplayStore } from '@/stores/DisplayStore';
 
-export const DeviceStore = defineStore('deviceStore', () => {
+export const useDeviceStore = defineStore('deviceStore', () => {
     const deviceData = ref([]);
     const loading = ref(false);
     const total = ref(0);
@@ -54,7 +54,7 @@ export const DeviceStore = defineStore('deviceStore', () => {
                     if (deviceNumber) rawIds.push(deviceNumber)
                     if (item['创建时间']) {
                         try {
-                            const displayStore = DisplayStore()
+                            const displayStore = useDisplayStore()
                             item['创建时间'] = displayStore.formatTime(item['创建时间'])
                         } catch (e) {
                             console.error("日期格式化错误:", e);

@@ -2,7 +2,7 @@
  * 【干什么】两件事：① 全站统一的时间格式化（是否显示秒）；② 表格/卡片渲染时判断某一列
  * 要不要显示（隐藏 id 列 / 编号列）。这些开关值来自后端配置，本 store 缓存一份。
  *
- * 【导出】DisplayStore()
+ * 【导出】useDisplayStore()
  * 【状态】hideIdFields、hideNumberFields、showSeconds（都来自 GET /api/system-config）
  * 【方法】
  *   loadDisplayConfig()          调 GET /api/system-config，填上面 3 个开关
@@ -12,14 +12,14 @@
  * 【调的接口】GET /api/system-config
  * 【谁在用】组件 TableContainer / CardContainer / LineBarCharts / MainLayout / direct/DynamicNode；
  *        页面 Dashboard / DeviceManagement / OperationHistory / JudgmentHistory / ErrorInfo；
- *        以及 store DeviceStore / ErrorStore / PaginationStore（它们拿 formatTime 格式化列表时间）
+ *        以及 store useDeviceStore / useErrorStore / usePaginationStore（它们拿 formatTime 格式化列表时间）
  */
 
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import api from '@/api'
 
-export const DisplayStore = defineStore('displayStore', () => {
+export const useDisplayStore = defineStore('displayStore', () => {
   // 字段可见性现在由后端 systemConfig.js 统一控制，
   // 前端不再提供切换按钮，默认全部显示。
   const hideIdFields = ref(false)
