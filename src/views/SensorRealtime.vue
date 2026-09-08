@@ -4,8 +4,8 @@
  * 和 /api/dataByType 接口，通过 metricScope='realtime' 区分实时模式：
  *   - 用 show_realtime 过滤派生指标（跟原 getDashboardData 的实时返回一致）
  *   - 返回纯数值不拼接单位（卡片和图表组件需要纯数值 + 单独的 fieldUnits）
- * 【配置中心关联】
- * 页面通过 SystemConfigStore 读取配置中心；REALTIME_REFRESH_INTERVAL 控制自动刷新间隔。
+ * 【配置】
+ * 页面通过 useSystemConfigStore 读取配置；REALTIME_REFRESH_INTERVAL 控制自动刷新间隔。
  * -->
 <template>
   <div>
