@@ -37,7 +37,9 @@ CREATE TABLE `t_sensor_data`  (
   `field10` varchar(255) CHARACTER SET utf8 COLLATE utf8_general_ci NULL DEFAULT NULL,
   `c_time` datetime NULL DEFAULT NULL COMMENT '数据更新时间。从底层获取，如果没有，则取服务端时间。跟底层约定好名称，不做字段的映射\n',
   `online` varchar(4) CHARACTER SET utf8 COLLATE utf8_general_ci NULL DEFAULT NULL COMMENT '是否在线数据',
-  PRIMARY KEY (`id`) USING BTREE
+  PRIMARY KEY (`id`) USING BTREE,
+  KEY `idx_c_time` (`c_time`) USING BTREE,
+  KEY `idx_d_no` (`d_no`) USING BTREE
 ) ENGINE = InnoDB CHARACTER SET = utf8 COLLATE = utf8_general_ci ROW_FORMAT = Compact;
 
 -- ----------------------------
@@ -90,7 +92,9 @@ CREATE TABLE `t_behavior_data`  (
   `field10` varchar(255) CHARACTER SET utf8 COLLATE utf8_general_ci NULL DEFAULT NULL,
   `c_time` datetime NULL DEFAULT NULL COMMENT '数据更新时间。从底层获取，如果没有，则取服务端时间。跟底层约定好名称，不做字段的映射\n',
   `online` varchar(4) CHARACTER SET utf8 COLLATE utf8_general_ci NULL DEFAULT NULL COMMENT '是否在线数据',
-  PRIMARY KEY (`id`) USING BTREE
+  PRIMARY KEY (`id`) USING BTREE,
+  KEY `idx_c_time` (`c_time`) USING BTREE,
+  KEY `idx_d_no` (`d_no`) USING BTREE
 ) ENGINE = InnoDB CHARACTER SET = utf8 COLLATE = utf8_general_ci ROW_FORMAT = Compact;
 
 -- ----------------------------
