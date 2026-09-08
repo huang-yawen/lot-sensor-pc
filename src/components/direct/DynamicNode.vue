@@ -36,7 +36,7 @@
 
 <script setup>
 import { computed, markRaw, defineAsyncComponent } from 'vue'
-import { useDisplayStore } from '@/stores/DisplayStore'
+import { useDisplayStore } from '@/stores/useDisplayStore'
 
 const visibility = useDisplayStore()
 

@@ -24,7 +24,7 @@
 </template>
 <script setup>
 import { ref, computed, watch } from 'vue'
-import { useDisplayStore } from '@/stores/DisplayStore'
+import { useDisplayStore } from '@/stores/useDisplayStore'
 
 const displayStore = useDisplayStore()
 

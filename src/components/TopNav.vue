@@ -29,7 +29,7 @@
 <script setup>
 import { computed, ref, onMounted, onUnmounted } from 'vue'
 import { connect, on, close } from '@/utils/websocket'
-import { useSystemConfigStore } from '@/stores/SystemConfigStore'
+import { useSystemConfigStore } from '@/stores/useSystemConfigStore'
 import api from '@/api'
 
 // 设备在线状态列表

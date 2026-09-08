@@ -18,7 +18,7 @@
 import { defineStore } from "pinia";
 import { ref } from "vue";
 import api from '@/api';
-import { useDisplayStore } from '@/stores/DisplayStore';
+import { useDisplayStore } from '@/stores/useDisplayStore';
 
 export const useErrorStore = defineStore('errorStore', () => {
   const errData = ref([]);

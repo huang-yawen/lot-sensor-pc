@@ -96,7 +96,7 @@
 <script setup>
 import { computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
-import { useSystemConfigStore } from '@/stores/SystemConfigStore'
+import { useSystemConfigStore } from '@/stores/useSystemConfigStore'
 
 const route = useRoute()
 const systemStore = useSystemConfigStore()

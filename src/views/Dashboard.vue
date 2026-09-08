@@ -131,8 +131,8 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import api from '@/api'
 import { connect, on as wsOn } from '@/utils/websocket'
-import { useSystemConfigStore } from '@/stores/SystemConfigStore'
-import { useDisplayStore } from '@/stores/DisplayStore'
+import { useSystemConfigStore } from '@/stores/useSystemConfigStore'
+import { useDisplayStore } from '@/stores/useDisplayStore'
 import GaugeChart from '@/components/GaugeChart.vue'
 
 const loading = ref(false)

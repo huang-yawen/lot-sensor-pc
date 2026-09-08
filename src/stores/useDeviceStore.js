@@ -16,7 +16,7 @@
 import { defineStore } from "pinia";
 import { ref } from 'vue';
 import api from '@/api';
-import { useDisplayStore } from '@/stores/DisplayStore';
+import { useDisplayStore } from '@/stores/useDisplayStore';
 
 export const useDeviceStore = defineStore('deviceStore', () => {
     const deviceData = ref([]);

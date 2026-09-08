@@ -56,9 +56,9 @@
 
 <script setup>
 import DeviceSetting from '@/components/direct/DeviceSetting.vue'
-import { useDirectStore } from '@/stores/DirectStore'
-import { useDeviceStore } from '@/stores/DeviceStore' 
-import { useSystemConfigStore } from '@/stores/SystemConfigStore'
+import { useDirectStore } from '@/stores/useDirectStore'
+import { useDeviceStore } from '@/stores/useDeviceStore' 
+import { useSystemConfigStore } from '@/stores/useSystemConfigStore'
 import { computed, ref, onMounted, onUnmounted } from 'vue'
 import { ArrowDown } from '@element-plus/icons-vue'
 import { connect as connectQtyWs, on as qtyWsOn } from '@/utils/websocket'

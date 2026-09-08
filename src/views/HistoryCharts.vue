@@ -202,7 +202,7 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import api from '@/api'
 import * as echarts from 'echarts'
-import { useSystemConfigStore } from '@/stores/SystemConfigStore'
+import { useSystemConfigStore } from '@/stores/useSystemConfigStore'
 
 const RANGE_OPTIONS = [
   { value: '5m', label: '5分钟' },

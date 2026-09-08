@@ -89,7 +89,7 @@
 <script setup>
 import { ref, watch, computed } from 'vue'
 import { Search } from '@element-plus/icons-vue'
-import { useDisplayStore } from '@/stores/DisplayStore'
+import { useDisplayStore } from '@/stores/useDisplayStore'
 
 const displayStore = useDisplayStore()
 

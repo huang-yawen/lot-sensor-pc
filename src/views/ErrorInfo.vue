@@ -218,9 +218,9 @@
 import { computed, onMounted, onUnmounted, ref } from "vue";
 import { Search } from "@element-plus/icons-vue";
 import PieChart from "../components/PieChart.vue";
-import { useErrorStore } from "../stores/ErrorStore";
-import { useDisplayStore } from "@/stores/DisplayStore";
-import { useSystemConfigStore } from "@/stores/SystemConfigStore";
+import { useErrorStore } from "../stores/useErrorStore";
+import { useDisplayStore } from "@/stores/useDisplayStore";
+import { useSystemConfigStore } from "@/stores/useSystemConfigStore";
 import { connect, on as wsOn } from "@/utils/websocket";
 
 const store = useErrorStore();

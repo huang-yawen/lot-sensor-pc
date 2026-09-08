@@ -65,8 +65,8 @@
 import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import api from '@/api'
-import { useSystemConfigStore } from '@/stores/SystemConfigStore'
-import { useDisplayStore } from '@/stores/DisplayStore'
+import { useSystemConfigStore } from '@/stores/useSystemConfigStore'
+import { useDisplayStore } from '@/stores/useDisplayStore'
 
 const rows = ref([])
 const total = ref(0)

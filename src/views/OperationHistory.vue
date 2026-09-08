@@ -89,8 +89,8 @@
 <script setup>
 import { computed, ref, onMounted } from 'vue'
 import api from '@/api'
-import { useDisplayStore } from '@/stores/DisplayStore'
-import { useSystemConfigStore } from '@/stores/SystemConfigStore'
+import { useDisplayStore } from '@/stores/useDisplayStore'
+import { useSystemConfigStore } from '@/stores/useSystemConfigStore'
 
 const displayStore = useDisplayStore()
 const systemStore = useSystemConfigStore()

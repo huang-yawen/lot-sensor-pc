@@ -46,12 +46,12 @@
 import { computed, ref, onMounted, onUnmounted } from 'vue'
 import { connect, on as wsOn } from '@/utils/websocket'
 import { ElMessage } from 'element-plus'
-import { usePaginationStore } from '@/stores/PaginationStore.js'
+import { usePaginationStore } from '@/stores/usePaginationStore.js'
 import TableContainer from '@/components/TableContainer.vue'
 import LineBarCharts from '@/components/LineBarCharts.vue'
 import JudgmentResultDialog from '@/components/JudgmentResultDialog.vue'
 import api from '@/api'
-import { useSystemConfigStore } from '@/stores/SystemConfigStore'
+import { useSystemConfigStore } from '@/stores/useSystemConfigStore'
 
 const store = usePaginationStore()
 const systemStore = useSystemConfigStore()

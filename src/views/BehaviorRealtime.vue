@@ -22,9 +22,9 @@
 import { computed, onMounted, onUnmounted } from 'vue'
 import CardContainer from '@/components/CardContainer.vue'
 import LineBarCharts from '@/components/LineBarCharts.vue'
-import { usePaginationStore } from '@/stores/PaginationStore.js'
+import { usePaginationStore } from '@/stores/usePaginationStore.js'
 import { transformBehaviorList } from '@/utils/fieldTransform'
-import { useSystemConfigStore } from '@/stores/SystemConfigStore'
+import { useSystemConfigStore } from '@/stores/useSystemConfigStore'
 
 const store = usePaginationStore()
 const systemStore = useSystemConfigStore()

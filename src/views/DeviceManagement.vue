@@ -110,10 +110,10 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { Search } from '@element-plus/icons-vue'
-import { useDeviceStore } from '@/stores/DeviceStore.js'
-import { useDisplayStore } from '@/stores/DisplayStore'
+import { useDeviceStore } from '@/stores/useDeviceStore.js'
+import { useDisplayStore } from '@/stores/useDisplayStore'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { useSystemConfigStore } from '@/stores/SystemConfigStore'
+import { useSystemConfigStore } from '@/stores/useSystemConfigStore'
 
 const store = useDeviceStore()
 const displayStore = useDisplayStore()

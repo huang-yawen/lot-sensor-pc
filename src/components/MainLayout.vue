@@ -36,7 +36,7 @@ import TopNav from '@/components/TopNav.vue'
 import FaultAlertDialog from '@/components/FaultAlertDialog.vue'
 import SafetyAlertNotifier from '@/components/SafetyAlertNotifier.vue'
 import AlarmNotifier from '@/components/AlarmNotifier.vue'
-import { useDisplayStore } from '@/stores/DisplayStore'
+import { useDisplayStore } from '@/stores/useDisplayStore'
 
 import { ref, onMounted } from 'vue'
 const activeIndex = ref('2')

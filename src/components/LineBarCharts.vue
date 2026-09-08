@@ -15,7 +15,7 @@
 
 import { ref, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
 import * as echarts from 'echarts'
-import { useDisplayStore } from '@/stores/DisplayStore'
+import { useDisplayStore } from '@/stores/useDisplayStore'
 
 /**
  * @description ECharts 实例引用

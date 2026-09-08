@@ -25,10 +25,10 @@
 </template>
 <script setup>
 import LineBarCharts from '@/components/LineBarCharts.vue'
-import { usePaginationStore } from '@/stores/PaginationStore.js'
+import { usePaginationStore } from '@/stores/usePaginationStore.js'
 import { computed, onMounted, onUnmounted } from 'vue'
 import CardContainer from '@/components/CardContainer.vue'
-import { useSystemConfigStore } from '@/stores/SystemConfigStore'
+import { useSystemConfigStore } from '@/stores/useSystemConfigStore'
 
 // 跟传感器汇总数据页面（SensorHistory）使用同一个 store（usePaginationStore）。
 // 区别在于：实时页传 dataScope='实时数据'（只取最新窗口 5 条）+ metricScope='realtime'
