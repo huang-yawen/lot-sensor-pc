@@ -1,5 +1,5 @@
 /** 【文件职责】统一处理单条同时包含传感器字段和行为字段的 MQTT 消息。
- * 【配置中心关联】当 MQTT_TOPICS.sensor 与 MQTT_TOPICS.behavior 配置为同一个主题时，
+ * 【配置】当 MQTT_TOPICS.sensor 与 MQTT_TOPICS.behavior 配置为同一个主题时，
  * mqtt/index.js 会用本处理器替代分开的 sensorRealtimeHandler/behaviorRealtimeHandler，
  * 两张表各自按自己的字段映射表（t_sensor_field_mapper/t_behavior_field_mapper）从同一条
  * 消息中挑出需要的字段落库，不需要设备分两条消息上报。 */

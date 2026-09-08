@@ -13,7 +13,7 @@
  *   deviceManager.addPendingCommand('device001', config_id, value)  // 暂存指令
  *   deviceManager.getAllDeviceStatus()      // 获取所有设备在线状态
  * 
- * 【配置中心关联】HEARTBEAT_TIMEOUT 决定离线阈值；MQTT_TOPICS.control、
+ * 【配置】HEARTBEAT_TIMEOUT 决定离线阈值；MQTT_TOPICS.control、
  * CONTROL_VALUE_MAP 与 t_direct_config.preffix 决定补发消息内容；每次检查或发送
  * 都重新读取，因此保存配置中心后会立即影响后续行为。
  *

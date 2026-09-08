@@ -1,5 +1,5 @@
 /** 【文件职责】控制项渲染 API：合并全局和设备专属 t_direct_config 值。
- * 【配置中心关联】SINGLE_DEVICE_MODE 每次请求读取，决定设备选择方式。 */
+ * 【配置】SINGLE_DEVICE_MODE 见对应 config.js，决定设备选择方式。 */
 const promisePool = require('../../config/dbPool')
 const { SINGLE_DEVICE_MODE } = require('../../config/appSettings')
 const { getDefaultDeviceId } = require('../../utils/mappedData')
@@ -8,7 +8,6 @@ const { getDefaultDeviceId } = require('../../utils/mappedData')
 module.exports = async (req, res) => {
     try {
         const d_no = req.query.d_no
-        // 每次请求从系统配置中心读取，支持热更新
         const singleDeviceMode = SINGLE_DEVICE_MODE
         console.log(`[Backend Render] 接收到请求 d_no: ${d_no}, mode: ${singleDeviceMode ? '单设备' : '多设备'}`)
 

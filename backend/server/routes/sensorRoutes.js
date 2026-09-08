@@ -1,7 +1,7 @@
 /**
  * 【文件职责】后端业务 API 路由总表。
  * 集中管理所有 URL → Controller/Service 的映射，app.js 只做 HTTP/WebSocket/MQTT 集成，
- * 路由本身不缓存配置；被调用的控制器/服务按请求动态读取配置中心。
+ * 配置为代码常量，被调用的控制器/服务各自 require 对应的 config.js。
  * 【挂载点】app.js 里 app.use('/', sensorRoutes)，所以本文件里的路径必须以 /api 开头。
  */
 const express = require('express')
@@ -75,7 +75,7 @@ const { getLatest: getLatestComputed, refreshFromDB: refreshComputedFromDB } = r
 // ==================== MQTT 客户端（诊断 + 设备状态接口需要） ====================
 const mqttClient = require('../mqtt/index')
 
-// ==================== 配置中心 ====================
+// ==================== 配置常量（只读接口 + 少数路由内联逻辑要用） ====================
 const { SINGLE_DEVICE_MODE } = require('../config/appSettings')
 const { CUMULATIVE_METRICS, COMPUTED_METRICS } = require('../config/metrics')
 const FAULT_CONFIG = require('../service/faultStatus/config')

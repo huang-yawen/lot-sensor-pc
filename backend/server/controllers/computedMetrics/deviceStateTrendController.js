@@ -1,5 +1,5 @@
 /** 【文件职责】设备状态时间线（水泵/加热开关）历史图表 API 控制器。
- * 【配置中心关联】无直接读取。 */
+ * 【配置】无直接读取。 */
 const { queryDeviceStateTrend } = require('../../service/computedMetrics/deviceStateQuery')
 const { resolveTimeRange } = require('../../utils/timeRange')
 

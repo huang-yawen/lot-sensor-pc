@@ -1,5 +1,5 @@
 /** 【文件职责】行为实时数据仓储层。
- * 【配置中心关联】无直接读取。 */
+ * 【配置】无直接读取。 */
 const promisePool = require('../../config/dbPool')
 const { saveMappedData, resolveDeviceNo } = require('../../utils/mappedData')
 const { saveOperationHistory } = require('../../service/operationHistory/saveOperationHistory')

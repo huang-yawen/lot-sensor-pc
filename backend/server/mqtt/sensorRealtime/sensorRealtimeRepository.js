@@ -1,5 +1,5 @@
 /** 【文件职责】传感器实时/保存数据仓储层（项目里没有独立的"历史数据"概念）。
- * 【配置中心关联】无直接读取。 */
+ * 【配置】无直接读取。 */
 const promisePool = require('../../config/dbPool')
 const { saveMappedData } = require('../../utils/mappedData')
 

@@ -5,7 +5,7 @@
  * 这跟 faultStatus.js 的 onFault/fault_triggered 是完全对称的两套机制：那边是
  * 5 种系统级硬故障（严重、低频、需要手动复位，用模态弹窗），这边是本页面自由配置
  * 的普通阈值规则（可能频繁触发、只是提示，不需要用户处理，所以用非阻塞通知）。
- * 【配置中心关联】ALARM_RULES（enabled/autoInterlockEnabled/rules）每次评估读取。 */
+ * 【配置】ALARM_RULES（enabled/autoInterlockEnabled/rules）见对应 config.js。 */
 const promisePool = require('../../config/dbPool')
 // 阈值告警自己的开关和规则数组在这里（enabled / autoInterlockEnabled / rules）。
 const CONFIG = require('./config')

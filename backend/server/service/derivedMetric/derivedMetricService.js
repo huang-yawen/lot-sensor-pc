@@ -1,5 +1,5 @@
 /** 【文件职责】派生指标计算服务。
- * 【配置中心关联】DERIVED_METRICS 定义表达式和依赖字段，按请求动态读取。 */
+ * 【配置】DERIVED_METRICS 定义表达式和依赖字段，按请求动态读取。 */
 const promisePool = require('../../config/dbPool')
 const { parseExpression, compileSql, evaluate } = require('./expressionEngine')
 

@@ -31,7 +31,7 @@
  *   - 手动模式：人工下发指令单独开关，但安全联锁不因手动强制开启而失效（如手动开加热
  *     但检测到无水流，仍会强制关加热）；额外地，"进入手动模式"这一刻会安全关闭一次。
  *
- * 【配置中心关联】SAFETY_INTERLOCK 每次评估动态读取，保存配置后立即生效
+ * 【配置】SAFETY_INTERLOCK 见对应 config.js，改后需重启后端
  * （monitorIntervalMs 除外——它在启动时读一次，改后需重启后端）。
  */
 const EventEmitter = require('events')

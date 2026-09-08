@@ -24,7 +24,7 @@
  * @param {string|number} p.code     - 事件代码（e_no）
  * @param {string}        p.type     - 事件类型（'安全联锁' | '安全告警' | '故障保护' | '联动控制' 等）
  * @param {string}        [p.time]   - c_time，缺省用服务器本地时间
- * 【配置中心关联】无。 */
+ * 【配置】无。 */
 const promisePool = require('../../config/dbPool')
 const { nowLocalDateTime } = require('../../utils/helper')
 

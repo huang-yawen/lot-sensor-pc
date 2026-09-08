@@ -1,5 +1,5 @@
 /** 【文件职责】读取并构建控制配置树的服务。
- * 【配置中心关联】preffix/f_type 属于可由场景导入维护的数据库元数据。 */
+ * 【配置】preffix/f_type 属于可由场景导入维护的数据库元数据。 */
 const promisePool = require('../../config/dbPool')
 
 // 把扁平的指令配置表转成页面要用的树形结构。

@@ -47,7 +47,7 @@
  *                   比能耗 = 该桶结束时的累计电耗 ÷ 累计流量（用 NULLIF 防止除以
  *                   0——查询范围内还没有过流量读数时不出现除零错误，返回 NULL）。
  *
- * 【配置中心关联】COMPUTED_METRICS.heaterRatedPower（额定功率）、waterDensity/
+ * 【配置】COMPUTED_METRICS.heaterRatedPower（额定功率）、waterDensity/
  * waterSpecificHeat（介质物性参数）、SAFETY_INTERLOCK.abnormalMax（异常哨兵值）
  * 每次查询实时读取。
  */

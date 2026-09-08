@@ -1,5 +1,5 @@
 /** 【文件职责】传感器 MQTT 消息处理器。
- * 【配置中心关联】DEVICE_ID_FIELDS、TIME_FIELDS 等协议项在每条消息处理时读取。 */
+ * 【配置】DEVICE_ID_FIELDS、TIME_FIELDS 等协议项在每条消息处理时读取。 */
 const { saveSensorData } = require('./sensorRealtimeRepository')
 const { getReportedTime, getTopic } = require('../../utils/protocol')
 const { evaluateRules } = require('../../service/alarm/evaluateRules')

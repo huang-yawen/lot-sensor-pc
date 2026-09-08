@@ -1,6 +1,6 @@
 /** 【文件职责】平均温度/平均流速历史图表 API 控制器，同时带上当前目标温度
  * （PID 跟踪对比图用作参考线）和当前目标流速（恒流速跟踪对比图用作参考线）。
- * 【配置中心关联】COMPUTED_METRICS.pipeAreaCm2 由服务层实时读取。 */
+ * 【配置】COMPUTED_METRICS.pipeAreaCm2 由服务层实时读取。 */
 const { queryAverageChart, getCurrentTargetTemp, getCurrentTargetVelocity } = require('../../service/computedMetrics/averageChartQuery')
 const { resolveTimeRange } = require('../../utils/timeRange')
 

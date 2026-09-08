@@ -1,5 +1,5 @@
 /** 【文件职责】操作历史记录策略。
- * 【配置中心关联】OPERATION_HISTORY_MODE 每次策略判断时动态读取。 */
+ * 【配置】OPERATION_HISTORY_MODE 见对应 config.js。 */
 const { OPERATION_HISTORY_MODE } = require('./config')
 
 const DEVICE_SOURCES = new Set(['auto', 'device'])

@@ -2,7 +2,7 @@
  * 读开关状态、按 preffix 查阈值、下发指令，各条规则都要用到这些动作，抽出来只维护
  * 一份实现。9 条规则函数本身（rulePumpAlwaysOn/ruleHeaterHysteresis 等）不在这里——
  * 那是规则之间真正不同、需要保持独立的部分。
- * 【配置中心关联】SENSOR_FIELD_MAP、SINGLE_DEVICE_MODE、MQTT_QOS 每次调用实时读取。 */
+ * 【配置】SENSOR_FIELD_MAP、SINGLE_DEVICE_MODE、MQTT_QOS 见对应 config.js。 */
 const promisePool = require('../../config/dbPool')
 const { SENSOR_FIELD_MAP, SINGLE_DEVICE_MODE } = require('../../config/appSettings')
 const { COMPUTED_METRICS } = require('../../config/metrics')

@@ -1,5 +1,5 @@
 /** 【文件职责】PID PWM 周期历史（加热开关阶梯图）API 控制器。
- * 【配置中心关联】无直接读取。 */
+ * 【配置】无直接读取。 */
 const { queryCycles } = require('../../service/pidHeating/pidHeatingCycleHistory')
 const { resolveTimeRange } = require('../../utils/timeRange')
 

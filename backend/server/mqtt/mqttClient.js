@@ -1,6 +1,6 @@
 /**
  * 【文件职责】MQTT.js 的连接、订阅、发布和重连封装。
- * 【配置中心关联】不直接读取配置；mqtt/index.js 将 MQTT_URL、认证、QoS、主题转为
+ * 【配置】不直接读取配置；mqtt/index.js 将 MQTT_URL、认证、QoS、主题转为
  * 构造参数，在配置变更后调用 reconfigure，避免业务模块各自重连。
  *
  * MQTT 客户端核心模块

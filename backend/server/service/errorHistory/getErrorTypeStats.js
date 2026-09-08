@@ -1,5 +1,5 @@
 /** 【文件职责】异常类型统计服务。
- * 【配置中心关联】无直接读取。 */
+ * 【配置】无直接读取。 */
 const promisePool = require('../../config/dbPool')
 const { resolveCategory, friendlyName } = require('./errorTypeNames')
 const { buildWhere } = require('./errorQueryFilter')

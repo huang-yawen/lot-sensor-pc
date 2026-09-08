@@ -8,7 +8,7 @@
  * 每次打开“定量停机”开关会开启新的计量周期；关闭开关则重置计量周期
  * （项目里已经没有独立的设备“自动/手动模式”概念，改为直接跟着本模块自己的
  * enabled 开关走）。
- * 【配置中心关联】QUANTITY_SHUTDOWN 每次评估动态读取。
+ * 【配置】QUANTITY_SHUTDOWN 见对应 config.js。
  */
 // 定量停机自己的开关和目标值在这里（指令中心同名指令项优先）。
 const CONFIG = require('./config')

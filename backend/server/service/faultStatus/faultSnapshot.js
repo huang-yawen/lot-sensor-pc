@@ -14,7 +14,7 @@
  *   - 抓取时刻的时间戳（用于诊断）
  *   - 触发该次快照的故障 id（用于诊断）
  *
- * 【配置中心关联】无直接读取，所有指令项从 t_direct 实时查询。
+ * 【配置】无直接读取，所有指令项从 t_direct 实时查询。
  */
 const promisePool = require('../../config/dbPool')
 const { saveDirectData } = require('../directData/saveDirectConfig')

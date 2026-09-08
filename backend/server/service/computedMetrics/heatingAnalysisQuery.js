@@ -20,7 +20,7 @@
  * 配置中心的额定功率/介质物性参数——通用公式引擎（只认单行 t_sensor_data 字段）算不出。
  * 跟历史图表页其它接口一样不按设备号过滤（页面本身没有设备选择器）。
  *
- * 【配置中心关联】COMPUTED_METRICS.heaterRatedPower / waterDensity / waterSpecificHeat、
+ * 【配置】COMPUTED_METRICS.heaterRatedPower / waterDensity / waterSpecificHeat、
  * SAFETY_INTERLOCK.abnormalMax，每次查询实时读取。
  */
 const promisePool = require('../../config/dbPool')

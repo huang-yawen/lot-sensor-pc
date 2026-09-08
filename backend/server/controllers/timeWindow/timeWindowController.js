@@ -1,5 +1,5 @@
 /** 【文件职责】时间窗口指标 API 控制器。
- * 【配置中心关联】TIME_WINDOW_METRICS 在服务层实时读取。 */
+ * 【配置】TIME_WINDOW_METRICS 在服务层实时读取。 */
 const timeWindowService = require('../../service/timeWindow/timeWindowService')
 const { resolveTimeRange } = require('../../utils/timeRange')
 

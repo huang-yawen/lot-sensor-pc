@@ -1,5 +1,5 @@
 /** 【文件职责】累计指标 API 控制器。具体的计算规则由下方服务说明。
- * 【配置中心关联】CUMULATIVE_METRICS 在服务层动态读取。 */
+ * 【配置】CUMULATIVE_METRICS 在服务层动态读取。 */
 const cumulativeService = require('../../service/cumulative/cumulativeService')
 const { resolveTimeRange } = require('../../utils/timeRange')
 

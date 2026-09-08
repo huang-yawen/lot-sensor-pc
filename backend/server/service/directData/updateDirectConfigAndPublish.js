@@ -1,7 +1,7 @@
 /**
  * 【文件职责】处理单条控制指令：保存当前值、记录操作历史，并向在线设备发布；离线时
  * 交由 DeviceManager 暂存，等心跳恢复后补发。
- * 【配置中心关联】SINGLE_DEVICE_MODE 决定设备选择；MQTT_TOPICS.control 决定主题；
+ * 【配置】SINGLE_DEVICE_MODE 决定设备选择；MQTT_TOPICS.control 决定主题；
  * CONTROL_VALUE_MAP 决定布尔/枚举线上值。字段名来自 t_direct_config.preffix，
  * 不能在业务代码写死。
  *

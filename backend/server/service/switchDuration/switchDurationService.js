@@ -1,6 +1,6 @@
 /**
  * 【文件职责】首页开关运行时长服务：查询水泵/加热的"累计运行时长"和"本次已运行时长"。
- * 【配置中心关联】数据来源固定为 CUMULATIVE_METRICS 中 metric_key 为
+ * 【配置】数据来源固定为 CUMULATIVE_METRICS 中 metric_key 为
  * cumulative_pump_time / cumulative_heat_time 的两条记录（source_table/source_field
  * 动态读取，字段映射改了不用同步改这里）；SWITCH_DURATION_DISPLAY.enabled 控制是否展示，
  * 由控制器层负责判断，本文件只管查询。

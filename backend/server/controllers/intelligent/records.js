@@ -1,5 +1,5 @@
 /** 【文件职责】智能判定记录 API 控制器。
- * 【配置中心关联】无直接读取。 */
+ * 【配置】无直接读取。 */
 const promisePool = require('../../config/dbPool')
 const { ensureTable } = require('./recognize')
 const { DEFAULT_PAGE_SIZE } = require('../../config/appSettings')

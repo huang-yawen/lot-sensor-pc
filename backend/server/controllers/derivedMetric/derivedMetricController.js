@@ -1,5 +1,5 @@
 /** 【文件职责】派生指标 API 控制器，负责请求校验和响应格式。
- * 【配置中心关联】DERIVED_METRICS 由服务层实时读取。 */
+ * 【配置】DERIVED_METRICS 由服务层实时读取。 */
 const service = require('../../service/derivedMetric/derivedMetricService')
 const { queryDerivedMetricHistory } = require('../../service/derivedMetric/derivedMetricHistoryQuery')
 const { resolveTimeRange } = require('../../utils/timeRange')

@@ -38,7 +38,7 @@
  * （指令中心 → 配置中心 PUMP_VELOCITY_CONTROL → 硬常量），删掉任意一个指令项只是
  * 让它退回下一层，不会把 NaN 带进流速比较里让规则悄悄失效。
  *
- * 【配置中心关联】PUMP_VELOCITY_CONTROL 每次评估动态读取，保存后立即生效；
+ * 【配置】PUMP_VELOCITY_CONTROL 见对应 config.js，改后需重启后端；
  * COMPUTED_METRICS.pipeAreaCm2 用于流速换算，同样实时读取。
  */
 // 恒流速自己的兜底参数（两套算法的开关、目标流速、防短循环时长、PID 参数）在这里。

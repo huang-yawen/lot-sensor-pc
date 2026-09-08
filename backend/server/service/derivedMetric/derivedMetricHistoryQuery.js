@@ -3,7 +3,7 @@
  * "历史图表"的公式指标，供历史图表页面画图。
  * 只支持传感器数据表——历史图表页面现在所有图表统一查 t_sensor_data，公式如果引用了
  * 行为数据字段，这里查不出正确结果（前端勾选框旁边会提示这个限制）。
- * 【配置中心关联】无直接读取；公式定义来自 t_derived_metric，每次请求动态读取。
+ * 【配置】无直接读取；公式定义来自 t_derived_metric，每次请求动态读取。
  */
 const promisePool = require('../../config/dbPool')
 const { getEnabledMetrics, compileMetricSql } = require('./derivedMetricService')

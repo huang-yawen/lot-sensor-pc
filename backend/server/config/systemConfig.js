@@ -65,15 +65,9 @@ const fullConfig = {
   ALARM_RULES,
 }
 
-/** 返回完整配置的深拷贝，防止调用方改到源对象。 */
+/** 返回完整配置的深拷贝，防止调用方改到源对象。只给 GET /api/system-config 用。 */
 function getConfig() {
   return JSON.parse(JSON.stringify(fullConfig))
 }
 
-/**
- * 兼容旧接口：配置已是静态常量，没有"变更"事件可订阅。保留这个空实现，
- * 让历史调用方（mqtt/index.js）不用改也能正常启动；传入的回调永远不会被调用。
- */
-function onChange() {}
-
-module.exports = { getConfig, onChange }
+module.exports = { getConfig }

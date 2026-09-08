@@ -29,7 +29,7 @@
  *   立即重新触发故障，再次保存快照、全关执行器、复位自动变 on。
  *
  * === 配置中心关联 ===
- *   FAULT_STATUS 每次评估动态读取（enabled / alarmCooldownMs / 五种故障独立开关 /
+ *   FAULT_STATUS 见对应 config.js（enabled / alarmCooldownMs / 五种故障独立开关 /
  *   dryBurnDurationMs / dryBurnMinRiseC）。flowLow/pressureLow/pressureHigh 只从指令中心
  *   t_direct 实时读取；温差阈值（tempDiff）指令中心配置了就优先用指令中心的，没配置时
  *   退回 FAULT_STATUS.tempDiffThreshold 兜底（跟 PID 的 Kp/Ki/Kd 同一套"指令中心优先、
@@ -208,7 +208,7 @@ async function detectFault(info, deviceNo, faultConfig) {
   // 这样那些函数不用改签名、也不用各自再去读一次指令中心。
   const effectiveConfig = { ...faultConfig, pumpWarmupMs: warmupMs, dryBurnDurationMs, dryBurnMinRiseC }
   // 温差阈值：指令中心配置了"温差阈值"指令项就优先用指令中心的（跟其余阈值一样，
-  // 保存后立即生效）；指令中心没配置时才退回配置中心 FAULT_STATUS.tempDiffThreshold
+  // 改后需重启后端）；指令中心没配置时才退回配置中心 FAULT_STATUS.tempDiffThreshold
   // 兜底，不影响 flowLow/pressureLow/pressureHigh 这几个仍然只认指令中心的阈值。
   const tempDiffThreshold = tempDiffFromDirect != null
     ? tempDiffFromDirect

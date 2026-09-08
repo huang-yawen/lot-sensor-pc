@@ -1,5 +1,5 @@
 /** 【文件职责】更新设备 API 控制器。
- * 【配置中心关联】无直接读取；更新编号后需刷新 MQTT 设备追踪。 */
+ * 【配置】无直接读取；更新编号后需刷新 MQTT 设备追踪。 */
 const updateDeviceManageData = require('../../service/deviceData/updateDeviceManageData')
 const mqttClient = require('../../mqtt')
 

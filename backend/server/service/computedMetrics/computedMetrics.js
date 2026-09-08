@@ -17,7 +17,7 @@
  *   11. 加热速度 = 加热开启时出水温度的升温速率 ΔT_出水/Δt（℃/min）
  *
  * 内存中维护滚动状态；每条 MQTT 消息调用 compute() 更新并返回最新结果。
- * 【配置中心关联】COMPUTED_METRICS 每次计算读取，保存后立即生效。
+ * 【配置】COMPUTED_METRICS 见对应 config.js，改后需重启后端。
  */
 const { SENSOR_FIELD_MAP } = require('../../config/appSettings')
 const { COMPUTED_METRICS } = require('../../config/metrics')

@@ -3,7 +3,7 @@
  * 开关状态，供历史图表页面画"设备状态时间线"（阶梯图），直观展示自动控制/安全联锁
  * 的实际动作历史。字段槽位（field1=水泵、field2=加热）跟 safetyInterlock.js/
  * faultStatus.js/pidHeating.js 保持一致。
- * 【配置中心关联】无直接读取。
+ * 【配置】无直接读取。
  */
 const promisePool = require('../../config/dbPool')
 const { calcBucketSeconds } = require('../../utils/timeRange')

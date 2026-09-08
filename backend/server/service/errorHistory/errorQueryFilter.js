@@ -1,7 +1,7 @@
 /** 【文件职责】故障/安全联锁记录的查询过滤条件构造，供列表查询（getErrorHistory）和
  * 类型统计（getErrorTypeStats）共用——两边必须用同一套筛选口径，图表统计的才是表格
  * 里看到的那批数据；之前统计服务漏了时间范围过滤，导致选了时间段饼图却还是全量。
- * 【配置中心关联】无直接读取。 */
+ * 【配置】无直接读取。 */
 const { CATEGORY_TYPES, resolveCategory } = require('./errorTypeNames')
 
 const isValidDateTime = (dateStr) => {

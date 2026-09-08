@@ -3,7 +3,7 @@
  * 值为 on/auto/open/1/true 时是自动，off/manual/close/0/false 时是手动。
  * safetyInterlock.js、linkageRules.js、pidHeating.js 都用这个
  * 函数判断当前是不是手动模式，统一走同一套查询逻辑，不再各自复制一份。
- * 【配置中心关联】无直接读取；开关的值存在 t_direct 表，由指令中心页面下发。 */
+ * 【配置】无直接读取；开关的值存在 t_direct 表，由指令中心页面下发。 */
 const promisePool = require('../../config/dbPool')
 const { getDirectValue } = require('./saveDirectConfig')
 

@@ -15,7 +15,7 @@
  * （不报错、不因此误触发/误跳过关键保护），但这意味着分开上报模式下这类交叉
  * 判断能力天然有限；多数场景下 MQTT_TOPICS.sensor 和 behavior 配置成同一个
  * 主题、走 combinedRealtimeHandler.js 一次性拿到两类字段，就没有这个限制。
- * 【配置中心关联】DEVICE_ID_FIELDS、TIME_FIELDS 由协议工具动态读取。
+ * 【配置】DEVICE_ID_FIELDS、TIME_FIELDS 由协议工具动态读取。
  */
 const { saveBehaviorData } = require('./behaviorRealtimeRepository')
 const { getReportedTime, getTopic } = require('../../utils/protocol')

@@ -1,5 +1,5 @@
 /** 【文件职责】批量更新控制配置服务。
- * 【配置中心关联】单条下发时读取 MQTT_TOPICS、CONTROL_VALUE_MAP 等最新配置。 */
+ * 【配置】单条下发时读取 MQTT_TOPICS、CONTROL_VALUE_MAP 等最新配置。 */
 const { saveDirectData } = require('./saveDirectConfig')
 
 // 批量更新复用单条保存逻辑，确保权限校验、离线暂存和发布规则完全一致。

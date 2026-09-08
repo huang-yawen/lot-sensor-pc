@@ -3,7 +3,7 @@
  * 兼容多种现场接口形态：JSON/表单请求体、GET/POST 方法、JSON/纯文本响应、
  * 同步直接返回结果/异步先提交任务再轮询结果——这几个维度都能在配置中心
  * 单独切换，不需要现场改代码去适配不同赛题提供的判定服务。
- * 【配置中心关联】INTELLIGENT_JUDGMENT 及相关开关由处理链路读取。 */
+ * 【配置】INTELLIGENT_JUDGMENT 及相关开关由处理链路读取。 */
 const promisePool = require('../../config/dbPool')
 const CONFIG = require('./config')  // 智能判定适配器参数
 const { getDeviceNo } = require('../../utils/protocol')

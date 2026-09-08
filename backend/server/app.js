@@ -1,6 +1,6 @@
 /**
  * 【文件职责】后端 HTTP/WebSocket 服务入口。
- * 负责创建 Express 服务、配置跨域和静态前端、挂载业务路由，并把配置中心、MQTT
+ * 负责创建 Express 服务、配置跨域和静态前端、挂载业务路由，并把 MQTT
  * 和 WebSocket 推送链路在同一进程中启动。
  *
  * 所有业务 API 路由统一放在 routes/sensorRoutes.js 里集中管理，本文件只做：
@@ -9,8 +9,8 @@
  *   3. WebSocket + MQTT 集成（广播、节流、事件监听）
  *   4. 初始化逻辑（启动安全联锁、恢复故障态、MQTT 诊断）
  *
- * 【配置中心关联】MQTT_URL 用于启动诊断日志；REALTIME_REFRESH_INTERVAL 控制
- * 实时推送定时器，保存配置后会动态生效。MQTT 的实际连接热更新由 mqtt/index.js 处理。
+ * 【配置】MQTT_URL 用于启动诊断日志（见 config/mqtt.js）；REALTIME_REFRESH_INTERVAL
+ * 控制实时推送定时器（见 config/appSettings.js）。改配置需重启后端。
  * 【环境变量】PORT、HOST、CORS_ORIGINS、FRONTEND_DIST_PATH 只控制部署环境，修改后需重启。
  */
 const express = require('express');

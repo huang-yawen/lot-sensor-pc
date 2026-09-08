@@ -7,7 +7,7 @@
  * 平均温度/平均流速的公式跟 service/computedMetrics/computedMetrics.js 里实时计算用的
  * 完全一致，区别是那边是内存里的实时滚动缓冲区（最多 60 点，不认时间范围）；这里改成
  * 按时间范围直接查数据库，供历史图表页面的时间选择器使用。
- * 【配置中心关联】COMPUTED_METRICS.pipeAreaCm2 用于计算平均流速，
+ * 【配置】COMPUTED_METRICS.pipeAreaCm2 用于计算平均流速，
  * PUMP_VELOCITY_CONTROL.defaultTargetVelocity 用作目标流速兜底，每次查询实时读取。
  */
 const promisePool = require('../../config/dbPool')

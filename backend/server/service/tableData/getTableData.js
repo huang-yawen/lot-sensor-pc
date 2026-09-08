@@ -10,7 +10,7 @@
  *     适合卡片和图表展示（CardContainer / LineBarCharts 需要纯数值 + 单独的 fieldUnits）。
  *   两种模式的数据格式跟原来 getDashboardData 的实时返回完全兼容，切换 store 不会
  *   破坏前端组件。
- * 【配置中心关联】无直接读取。 */
+ * 【配置】无直接读取。 */
 const promisePool = require('../../config/dbPool')
 const { formatDataWithUnit, buildDisplayFieldUnits, applyValueLabels, parseValueMap } = require('../../utils/helper')
 const { getEnabledMetrics, compileMetricSql, chartSettings } = require('../derivedMetric/derivedMetricService')

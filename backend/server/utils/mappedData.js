@@ -1,5 +1,5 @@
 /** 【文件职责】数据库字段映射查询工具。
- * 【配置中心关联】无直接读取；返回的元数据可被场景页面展示使用。 */
+ * 【配置】无直接读取；返回的元数据可被场景页面展示使用。 */
 const promisePool = require('../config/dbPool')
 const { getDeviceNo, aliases } = require('./protocol')
 

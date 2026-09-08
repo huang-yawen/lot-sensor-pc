@@ -1,5 +1,5 @@
 /** 【文件职责】删除设备 API 控制器。
- * 【配置中心关联】无直接读取；删除后会同步运行时设备状态。 */
+ * 【配置】无直接读取；删除后会同步运行时设备状态。 */
 const deleteDeviceManageData = require('../../service/deviceData/deleteDeviceManageData')
 const mqttClient = require('../../mqtt')
 

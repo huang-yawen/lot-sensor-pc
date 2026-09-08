@@ -1,5 +1,5 @@
 /** 【文件职责】异常历史查询服务。
- * 【配置中心关联】无直接读取。 */
+ * 【配置】无直接读取。 */
 const promisePool = require('../../config/dbPool')
 const { DEFAULT_PAGE_SIZE } = require('../../config/appSettings')
 const { resolveCategory, friendlyName } = require('./errorTypeNames')

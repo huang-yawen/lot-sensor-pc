@@ -17,7 +17,7 @@
  * key 统一约定为 `${deviceNo || 'global'}:${triggerId}`（deviceNo 为空的全局配置用
  * 'global' 占位）。冷却时长 cooldownMs 由调用方按各自的配置项传入（安全联锁读
  * SAFETY_INTERLOCK.alarmCooldownMs，故障机读 FAULT_STATUS.alarmCooldownMs，默认都是 30000）。
- * 【配置中心关联】无（本模块不读配置，时长由调用方传入）。 */
+ * 【配置】无（本模块不读配置，时长由调用方传入）。 */
 
 /**
  * 创建一份独立的冷却计时器。返回的三个函数共享同一个内部 Map（闭包），互不影响其它

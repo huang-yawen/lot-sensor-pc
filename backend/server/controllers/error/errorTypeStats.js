@@ -1,5 +1,5 @@
 /** 【文件职责】异常类型统计 API 控制器。
- * 【配置中心关联】无直接读取。 */
+ * 【配置】无直接读取。 */
 const getErrorTypeStats = require('../../service/errorHistory/getErrorTypeStats')
 
 // 控制器只负责接收请求、调用 service，然后返回 JSON。

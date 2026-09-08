@@ -38,7 +38,7 @@
  *   T2 (field2) = 出水温度（temp_out），PID 的控制目标
  *   固定功率加热器加热后从出水口流出，PID 通过 PWM 调节出水温度稳定到目标值
  *
- * 【配置中心关联】PID_HEATING 仅作兜底默认值，保存配置后立即生效。
+ * 【配置】PID_HEATING 仅作兜底默认值，改后需重启后端。
  */
 const promisePool = require('../../config/dbPool')
 // PID 自己的兜底参数（kp/ki/kd/周期/死区等）在这里；是否启用以指令中心 pid_enabled 为准。

@@ -1,6 +1,6 @@
 /** 【文件职责】故障 / 安全联锁 / 联动控制记录的 e_no -> 中文名称对照表，供告警历史查询和
  * 类型统计共用，避免 getErrorHistory.js / getErrorTypeStats.js 两处各维护一份、改名时漏改。
- * 【配置中心关联】无直接读取。 */
+ * 【配置】无直接读取。 */
 const { FAULT_TYPES } = require('../faultStatus/faultStatus')
 const { LINKAGE_RULE_NAMES } = require('../linkageRules/linkageRules')
 

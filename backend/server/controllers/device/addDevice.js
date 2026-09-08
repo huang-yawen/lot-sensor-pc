@@ -1,5 +1,5 @@
 /** 【文件职责】新增设备 API 控制器。
- * 【配置中心关联】无直接读取；设备编号影响 MQTT 在线状态匹配。 */
+ * 【配置】无直接读取；设备编号影响 MQTT 在线状态匹配。 */
 const addDeviceManageData = require('../../service/deviceData/addDeviceManageData')
 const mqttClient = require('../../mqtt')
 

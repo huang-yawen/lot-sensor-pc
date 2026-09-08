@@ -2,7 +2,7 @@
  *  组装传感器实时数据 + 故障数据 + 行为数据，方便首页一次渲染。
  *  传感器和行为数据复用 getTableData（消除字段映射/派生指标/recencyFilter 重复逻辑），
  *  故障数据查 t_error_msg（表结构不同，单独查）。
- * 【配置中心关联】字段映射、派生指标等由 getTableData 内部按最新配置读取。 */
+ * 【配置】字段映射、派生指标等由 getTableData 内部按最新配置读取。 */
 const promisePool = require('../../config/dbPool')
 const getTableData = require('../../service/tableData/getTableData')
 
