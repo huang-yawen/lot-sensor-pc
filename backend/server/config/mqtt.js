@@ -2,13 +2,20 @@
  * 【文件职责】MQTT 连接参数、主题名、心跳判定方式。
  * 【值的来源】从原"配置中心"持久化文件固化下来的当前实际生效值。改完重启后端生效。
  * 注意：这几项以前是"持久化配置 > .env > 源码默认"，现在就以本文件为准，.env 里的
- * MQTT_URL/MQTT_USERNAME/MQTT_PASSWORD 不再生效（MQTT_CLIENT_ID 仍从 .env 读，见 mqtt/index.js）。
+ * MQTT_URL/MQTT_CLIENT_ID/MQTT_USERNAME/MQTT_PASSWORD 全部不再生效，已从 .env 删除。
  * 【谁在读】mqtt/index.js（建连接、订阅、心跳）、mqtt/deviceManager.js（离线阈值）、
  * app.js 和若干服务（拿 MQTT_TOPICS 判断主题）。
  */
 module.exports = {
   // Broker 地址，必须以 mqtt:// 或 mqtts:// 开头。
+  // 现场备选（换网络环境时直接替换下面这行，原先记在 server/.env 里）：
+  //   路由器   mqtt://192.168.1.100:1883
+  //   lsr热点  mqtt://10.97.241.240:1883
+  //   本机     mqtt://localhost:1883
   MQTT_URL: 'mqtt://192.168.1.110:1883',
+  // 客户端标识。同一个 Broker 上 client id 必须唯一——两个后端实例用同一个 id 会被
+  // Broker 交替踢下线，表现为 MQTT 反复断连重连、指令下发时报「MQTT 未连接」。
+  MQTT_CLIENT_ID: 'lot-sensor-pc-test1',
   MQTT_USERNAME: '', // Broker 用户名；无认证时留空
   MQTT_PASSWORD: '', // Broker 密码；无认证时留空
   MQTT_QOS: 1, // 0=最多一次，1=至少一次，2=仅一次。现场通常用 1

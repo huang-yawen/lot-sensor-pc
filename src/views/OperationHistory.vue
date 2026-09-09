@@ -30,6 +30,7 @@
             start-placeholder="开始时间"
             end-placeholder="结束时间"
             format="YYYY-MM-DD HH:mm:ss"
+            value-format="YYYY-MM-DD HH:mm:ss"
             style="margin-left: 20px;"
             :clearable="true"
           />

@@ -14,7 +14,7 @@ const MqttClient = require('./mqttClient')
 const MessageRouter = require('./messageRouter')
 const DeviceManager = require('./deviceManager')
 const {
-  MQTT_URL, MQTT_USERNAME, MQTT_PASSWORD, MQTT_QOS, MQTT_TOPICS, HEARTBEAT_MODE,
+  MQTT_URL, MQTT_CLIENT_ID, MQTT_USERNAME, MQTT_PASSWORD, MQTT_QOS, MQTT_TOPICS, HEARTBEAT_MODE,
 } = require('../config/mqtt')
 const { HEARTBEAT_DEVICE_FIELDS } = require('../config/protocol')
 const { firstValue } = require('../utils/protocol')
@@ -27,7 +27,7 @@ function buildMqttConfig() {
   return {
     url: MQTT_URL,
     options: {
-      clientId: process.env.MQTT_CLIENT_ID || undefined,
+      clientId: MQTT_CLIENT_ID || undefined,
       username: MQTT_USERNAME || undefined,
       password: MQTT_PASSWORD || undefined,
       connectTimeout: 10000,

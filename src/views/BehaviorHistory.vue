@@ -43,10 +43,9 @@
 </template>
 
 <script setup>
-import { computed, ref, onMounted, onUnmounted } from 'vue'
-import { connect, on as wsOn } from '@/utils/websocket'
+import { computed, ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
-import { usePaginationStore } from '@/stores/usePaginationStore.js'
+import { usePaginationStore } from '@/stores/usePaginationStore'
 import TableContainer from '@/components/TableContainer.vue'
 import LineBarCharts from '@/components/LineBarCharts.vue'
 import JudgmentResultDialog from '@/components/JudgmentResultDialog.vue'
@@ -147,21 +146,6 @@ const handleSizeChange = (size) => {
   })
 }
 
-// WebSocket 推送新数据时，用当前生效的筛选条件和页码静默刷新（不触发表格“加载中”），
-// 让表格和图表能看到最新数据，同时不打断用户正在看的页码/筛选结果。
-let unsubscribeWs = null
-const refreshFromPush = () => {
-  store.fetchPaginationData({
-    type: 'behavior',
-    currentPage: store.currentPage,
-    pageSize: store.pageSize,
-    keyword: currentFilters.value.keyword,
-    startTime: currentFilters.value.startTime,
-    endTime: currentFilters.value.endTime,
-    dataScope
-  }, { silent: true })
-}
-
 onMounted(async () => {
   try {
     const config = await systemStore.load()
@@ -181,13 +165,6 @@ onMounted(async () => {
     endTime: null,
     dataScope
   })
-
-  connect()
-  unsubscribeWs = wsOn('behavior_data', refreshFromPush)
-})
-
-onUnmounted(() => {
-  unsubscribeWs?.()
 })
 </script>
 

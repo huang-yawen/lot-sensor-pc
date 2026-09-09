@@ -1,6 +1,6 @@
 /**
  * 【文件职责】后端 HTTP/WebSocket 服务入口。
- * 负责创建 Express 服务、配置跨域和静态前端、挂载业务路由，并把 MQTT
+ * 负责创建 Express 服务、配置跨域和静态前端、挂载业务路由，并把配置中心、MQTT
  * 和 WebSocket 推送链路在同一进程中启动。
  *
  * 所有业务 API 路由统一放在 routes/sensorRoutes.js 里集中管理，本文件只做：
@@ -9,8 +9,8 @@
  *   3. WebSocket + MQTT 集成（广播、节流、事件监听）
  *   4. 初始化逻辑（启动安全联锁、恢复故障态、MQTT 诊断）
  *
- * 【配置】MQTT_URL 用于启动诊断日志（见 config/mqtt.js）；REALTIME_REFRESH_INTERVAL
- * 控制实时推送定时器（见 config/appSettings.js）。改配置需重启后端。
+ * 【配置中心关联】MQTT_URL 用于启动诊断日志；REALTIME_REFRESH_INTERVAL 控制
+ * 实时推送定时器，保存配置后会动态生效。MQTT 的实际连接热更新由 mqtt/index.js 处理。
  * 【环境变量】PORT、HOST、CORS_ORIGINS、FRONTEND_DIST_PATH 只控制部署环境，修改后需重启。
  */
 const express = require('express');
@@ -20,12 +20,12 @@ const http = require('http');
 const { WebSocketServer } = require('ws');
 require('./config/env');
 const sensorRoutes = require('./routes/sensorRoutes');
-const { MQTT_URL, MQTT_TOPICS } = require('./config/mqtt');
-const { REALTIME_REFRESH_INTERVAL } = require('./config/appSettings');
+const systemConfig = require('./config/systemConfig');
 const { startMonitor: startSafetyMonitor, onSafetyInterlock } = require('./service/safety/safetyInterlock');
 const { initFaultStateFromDb, onFault } = require('./service/faultStatus/faultStatus');
 const { onAlarm } = require('./service/alarm/evaluateRules');
 const { onHeaterBlocked } = require('./service/pidHeating/pidHeating');
+const { start: startSchedule } = require('./service/schedule/scheduleService');
 const mqttClient = require('./mqtt/index')
 
 const app = express();
@@ -94,11 +94,39 @@ console.log('Dist Path:', distPath);
 
 // ==================== MQTT 初始化 ====================
 console.log('正在初始化 MQTT 连接...');
-console.log('MQTT Broker URL:', MQTT_URL);
+console.log('MQTT Broker URL:', systemConfig.getConfig().MQTT_URL);
 
 // ==================== WebSocket 服务器 ====================
 // 和 HTTP 共用同一个 http.Server，避免多进程端口冲突。
 const server = http.createServer(app);
+
+// 端口被占用，说明这台机器上已经有一个后端实例在跑（常见于 VS Code 终端里跑着一个、
+// 又用 start-backend.bat 起了第二个）。这时必须让新实例立刻退出，不能让它活着：
+// 它抢不到端口、不提供任何 HTTP 服务，却已经用 config/mqtt.js 里那个固定的
+// MQTT_CLIENT_ID 连上了 Broker——MQTT 协议规定同一个 client id 只允许一个活动连接，
+// 于是两个实例被 Broker 交替踢下线，指令页面下发时就会一直弹「MQTT 发送失败」。
+// 这种僵尸实例极难发现：进程列表里看着正常，start-backend.bat 又只杀占用本端口的
+// 进程，根本清不掉它。
+// 不能把这件事交给文件末尾的 uncaughtException 兜底：那里只记日志、不退出（对运行期
+// 的偶发异常是对的，控制系统可用性优先），但启动期的端口冲突性质完全不同——服务压根
+// 没起来，继续留着进程只会捣乱。
+//
+// 【注册位置不能挪】必须在下面 new WebSocketServer 之前注册。ws 库在
+// new WebSocketServer({ server }) 时会给 server 挂一个自己的 'error' 监听器，把错误
+// 转成 wss.emit('error')；而 wss 上没有 error 监听器，EventEmitter 对无人监听的
+// 'error' 会直接抛出。监听器按注册顺序执行，一旦这段挪到 WebSocketServer 之后，
+// ws 那个监听器会先抛异常、中断 emit 循环，这里就永远不会被调用（实测验证过）。
+server.on('error', (err) => {
+  if (err.code === 'EADDRINUSE') {
+    console.error(`端口 ${port} 已被占用，说明已经有一个后端实例在运行。`);
+    console.error('本次启动立即退出，避免两个实例争抢同一个 MQTT client id。');
+    console.error('要重启请先停掉正在运行的那个实例，或直接用 start-backend.bat（它会先杀掉占用该端口的进程）。');
+  } else {
+    console.error('[FATAL] HTTP 服务器启动失败:', err.message);
+  }
+  process.exit(1);
+});
+
 const wss = new WebSocketServer({ server, path: '/ws' });
 
 // 存储所有已连接的 WebSocket 客户端
@@ -202,7 +230,7 @@ function broadcastThrottled(type, data) {
     }
 
     // 0 表示不限制服务端推送；前端实时页同时会关闭自动刷新。
-    const interval = Number(REALTIME_REFRESH_INTERVAL)
+    const interval = Number(systemConfig.getConfig().REALTIME_REFRESH_INTERVAL)
     if (!Number.isFinite(interval) || interval <= 0) {
         broadcast(type, data)
         return
@@ -226,7 +254,7 @@ function broadcastThrottled(type, data) {
 
 // 监听 MQTT 处理后的消息，先缓存最新数据，按节流间隔广播
 mqttClient.on('processedMessage', (topic, data) => {
-    const topics = MQTT_TOPICS
+    const topics = systemConfig.getConfig().MQTT_TOPICS
 
     // 传感器和行为主题被配置成同一个主题时，说明设备把两类字段放在一条消息里上报，
     // 两种前端实时页都要能收到推送，所以同一条数据要广播成两种类型。
@@ -298,6 +326,10 @@ setTimeout(() => {
 // ==================== 服务启动初始化 ====================
 // 启动安全联锁掉线监测（条件 6：传感器长时间无数据上报）。
 startSafetyMonitor();
+
+// 启动定时开关自检（到点按指令页设定的时刻自动开关水泵/加热）。
+// 是否真正执行由 service/schedule/config.js 的 enabled 和「控制模式=自动」共同决定。
+startSchedule();
 
 // 从数据库同步复位按钮的持久化状态到内存故障态，避免服务重启后内存被重置成
 // NORMAL，但数据库里 reset_button 仍停留在重启前的 on，导致状态显示不一致、

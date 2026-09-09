@@ -7,6 +7,7 @@
  *   manual_queued 设备上线后成功补发的离线暂存指令
  *   interlock     本地告警触发的自动联锁
  *   calibration   设备上线后的自动校时
+ *   schedule      指令页设定的定时时刻到点后自动下发
  *   auto / device 通过状态上报识别出的底层设备操作
  *
  * 【配置】记录模式常量 CONFIG.OPERATION_HISTORY_MODE 就在下面。改完重启后端生效。
@@ -156,6 +157,7 @@ async function getOperationHistory({ currentPage = 1, pageSize = 5, startTime = 
                WHEN 'calibration' THEN '自动校时'
                WHEN 'auto_control' THEN '自动控制'
                WHEN 'quantity_shutdown' THEN '定量停机'
+               WHEN 'schedule' THEN '定时任务'
                WHEN 'auto' THEN '底层设备'
                WHEN 'device' THEN '底层设备'
                ELSE h.source
