@@ -28,7 +28,19 @@ module.exports = {
     behavior: 'receive', // 执行器/运行状态上报
     heartbeat: 'heart_beat', // 设备心跳上报，用于在线/离线判断
     control: 'control', // PC 端向设备下发控制指令
+    // PC 心跳下发（PC→设备），方向跟上面的 heartbeat 相反、必须是不同的主题名。
+    // 设备靠"能不能持续收到这个主题的消息"判断上位机在不在线，收不到就自己缓存数据。
+    pcHeartbeat: 'heart',
+    // 设备断线期间缓存的数据，恢复联系后从这个主题补传上来（设备→PC）。
+    // 报文结构跟 sensor/behavior 完全一样，只是落库时标记成"补传数据"。
+    offlineData: 'offline',
   },
+
+  // PC 心跳：判定设备在线时，每隔 PC_HEARTBEAT_INTERVAL 毫秒往 MQTT_TOPICS.pcHeartbeat
+  // 发一条内容随意的消息；设备离线（超过 HEARTBEAT_TIMEOUT 没上报）或 MQTT 没连上就不发。
+  // 关掉后设备会一直认为上位机离线、持续缓存数据，只在调试时才关。见 mqtt/pcHeartbeat.js。
+  PC_HEARTBEAT_ENABLED: true,
+  PC_HEARTBEAT_INTERVAL: 1000,
 
   // 超过该时间没收到某设备心跳就判离线（毫秒）。最小 1000。
   HEARTBEAT_TIMEOUT: 50000,

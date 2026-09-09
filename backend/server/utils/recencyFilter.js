@@ -1,12 +1,17 @@
 /** 【文件职责】把前端"实时数据/保存数据"筛选值换算成基于最新记录的 SQL 条件。
  * 不再依赖设备上报时自带的 online 字段（新设备的上报数据里可能根本没有这个字段），
- * 实时数据固定等于该表当前最新的 N 条记录（按自增 id 排序），保存数据就是除了这
- * N 条记录之外的其余记录。项目里没有独立的"历史数据"这个标签，只有"实时数据/
- * 保存数据"这一对。
+ * 实时数据固定等于该表当前最新的 N 条记录（按自增 id 排序，且不含补传数据，见下面
+ * BACKFILL_LABEL），保存数据就是除了这 N 条记录之外的其余记录。项目里没有独立的
+ * "历史数据"这个标签，只有"实时数据/保存数据"这一对。
  * 【配置】无直接读取。 */
 
 const REALTIME_LABEL = '实时数据'
 const HISTORY_LABEL = '保存数据'
+// 设备断线期间缓存、恢复联系后从 offline 主题补传上来的数据，落库时 online 列写这个值
+// （见 mqtt/offlineData/offlineDataHandler.js）。它的自增 id 一定比断线前的数据大，不排除
+// 的话会把"最新 N 条"窗口整个占满，实时页面和首页卡片显示的就成了断线那段时间的旧值。
+// 排除之后，补传数据落在"最新 N 条"之外，数据类型自然算成"保存数据"，只在汇总数据页出现。
+const BACKFILL_LABEL = '补传数据'
 // 实时页面（传感器/行为的实时数据页、下拉框、图表）统一展示最新这么多条。
 const REALTIME_WINDOW = 5
 
@@ -20,7 +25,7 @@ const REALTIME_WINDOW = 5
  *   isLatest     - 判断某一行是否落在最新 N 条窗口内的裸条件，供需要自定义拼接的调用方使用
  */
 function buildRecencyFilter(table, dataScope) {
-    const latestIdsExpr = `(SELECT id FROM (SELECT id FROM ${table} ORDER BY id DESC LIMIT ${REALTIME_WINDOW}) AS recent_${table})`
+    const latestIdsExpr = `(SELECT id FROM (SELECT id FROM ${table} WHERE COALESCE(online, '') <> '${BACKFILL_LABEL}' ORDER BY id DESC LIMIT ${REALTIME_WINDOW}) AS recent_${table})`
     const isLatest = `id IN ${latestIdsExpr}`
     const dataTypeExpr = `IF(${isLatest}, '${REALTIME_LABEL}', '${HISTORY_LABEL}')`
 
@@ -34,4 +39,4 @@ function buildRecencyFilter(table, dataScope) {
     return { whereClause, dataTypeExpr, isLatest }
 }
 
-module.exports = { buildRecencyFilter, REALTIME_LABEL, HISTORY_LABEL, REALTIME_WINDOW }
+module.exports = { buildRecencyFilter, REALTIME_LABEL, HISTORY_LABEL, BACKFILL_LABEL, REALTIME_WINDOW }

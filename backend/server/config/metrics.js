@@ -168,7 +168,7 @@ const TIME_WINDOW_METRICS = [
 //   averageVelocity        - 平均流速 v = Q / A
 //   waterLevel             - 液位（基于两水箱初始水量与累计流量）
 // 计算参数（现场介质不是纯水时改 waterDensity / waterSpecificHeat）：
-//   heaterRatedPower(W) —— 当前为 0，"加热能耗分析"图会因此返回空，赛场用到时填额定功率
+//   heaterRatedPower(W) —— 固定 200W 加热器，换热效率/热平衡/加热效率依赖此值
 //   pipeAreaCm2(水管横截面积)、initialWaterTank1/2(两水箱初始水量 L)、
 //   tankAreaCm2(水箱横截面积)、waterDensity(kg/m³)、waterSpecificHeat(J/(kg·℃))
 // ============================================================================
@@ -188,7 +188,7 @@ const COMPUTED_METRICS = {
   waterLevel: true,
   averageTempChart: true,
   averageVelocityChart: true,
-  heaterRatedPower: 0,
+  heaterRatedPower: 200,
   pipeAreaCm2: 1.131,
   initialWaterTank1: 1.1,
   initialWaterTank2: 1.4,

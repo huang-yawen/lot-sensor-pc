@@ -126,8 +126,11 @@ async function resolveFieldAliases(sourceTable, sourceField) {
  *      对应的 db_name 列（这里是 field1）；
  *   4. 全部没配置 visible=1、或者报文里根本没有任何候选名匹配上的字段，直接跳过不存。
  * 匹配时不区分大小写：incoming 的 key 和候选名都先转成小写再比较。
+ *
+ * @param {string} [dataLabel] - 直接指定写进 online 列的标签值。不传时按上报数据里的
+ *   online 字段走 getOnlineLabel 判断（现有实时链路都不传）。补传数据传"补传数据"。
  */
-async function saveMappedData({ table, mapperTable, info, dateTime }) {
+async function saveMappedData({ table, mapperTable, info, dateTime, dataLabel }) {
   const deviceNo = await resolveDeviceNo(info)
   if (!deviceNo) {
     console.warn(`[MappedData] 上报数据的设备编号未匹配已注册设备，跳过保存（${table}）`)
@@ -160,7 +163,9 @@ async function saveMappedData({ table, mapperTable, info, dateTime }) {
   }
 
   columns.push('c_time', 'online')
-  values.push(dateTime, getOnlineLabel(info?.online))
+  // dataLabel 由调用方显式指定 online 列的值，目前只有补传数据用（写"补传数据"，
+  // 见 mqtt/offlineData/offlineDataHandler.js）；不传就按上报数据里的 online 字段判断。
+  values.push(dateTime, dataLabel ?? getOnlineLabel(info?.online))
 
   const placeholders = columns.map(() => '?').join(', ')
   await promisePool.execute(

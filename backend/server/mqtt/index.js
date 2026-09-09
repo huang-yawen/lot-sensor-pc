@@ -8,6 +8,9 @@
  *   'receive' - 设备发一条传感器/行为数据就代表在线，不用单独发心跳包（默认）
  *   'topic'   - 只认专门的心跳主题（MQTT_TOPICS.heartbeat）
  * 多久没收到判离线由 HEARTBEAT_TIMEOUT 控制（在 DeviceManager 里）。
+ * 另有两个跟"断线补传"配套的主题（方向和上面的设备心跳相反，别搞混）：
+ *   MQTT_TOPICS.pcHeartbeat  - PC→设备，让设备判断上位机在不在线，见 mqtt/pcHeartbeat.js
+ *   MQTT_TOPICS.offlineData  - 设备→PC，断线期间缓存数据的补传，见 mqtt/offlineData/
  * 【配置】连接/主题/心跳参数见 config/mqtt.js，改完重启后端生效（不再热更新）。
  */
 const MqttClient = require('./mqttClient')
@@ -22,6 +25,8 @@ const { resolveDeviceNo, resolveDNoByNumber } = require('../utils/mappedData')
 const { handleMessage: handleSensorData } = require('./sensorRealtime/sensorRealtimeHandler')
 const { handleMessage: handleBehaviorData } = require('./behaviorRealtime/behaviorRealtimeHandler')
 const { handleMessage: handleCombinedData } = require('./combinedRealtime/combinedRealtimeHandler')
+const { handleMessage: handleOfflineData } = require('./offlineData/offlineDataHandler')
+const { startPcHeartbeat } = require('./pcHeartbeat')
 
 function buildMqttConfig() {
   return {
@@ -37,6 +42,7 @@ function buildMqttConfig() {
       { topic: MQTT_TOPICS.sensor, qos: MQTT_QOS },
       { topic: MQTT_TOPICS.behavior, qos: MQTT_QOS },
       { topic: MQTT_TOPICS.heartbeat, qos: MQTT_QOS },
+      { topic: MQTT_TOPICS.offlineData, qos: MQTT_QOS },
     ],
     maxReconnectAttempts: 5,
   }
@@ -81,6 +87,14 @@ mqttClient.on('message', async (topic, payload) => {
     return
   }
 
+  if (topic === MQTT_TOPICS.offlineData) {
+    // 设备断线期间缓存、恢复后补传的数据：只落库（标记成补传数据，不进实时窗口），
+    // 不走 messageRouter，也就不会触发下面的 processedMessage 广播和在线判定——
+    // 补传的是过去时刻的值，既不能拿去驱动现在的控制，也不该推给实时页面。
+    await handleOfflineData(topic, payload)
+    return
+  }
+
   const result = await router.route(topic, payload)
   if (result) {
     mqttClient.emit('processedMessage', result.topic, result.data)
@@ -103,5 +117,9 @@ mqttClient.removeDevice = (deviceId) => deviceManager.removeDevice(deviceId)
 mqttClient.renameDevice = (oldDeviceId, newDeviceId, metadata) => deviceManager.renameDevice(oldDeviceId, newDeviceId, metadata)
 mqttClient.refreshDevices = () => deviceManager.refreshDevicesFromDB()
 mqttClient.waitForDeviceSync = (timeoutMs) => deviceManager.waitForDeviceSync(timeoutMs)
+
+// PC 心跳下发：设备在线时按周期往 MQTT_TOPICS.pcHeartbeat 发消息，让设备知道上位机
+// 还活着；设备收不到就自己缓存数据，恢复后从 MQTT_TOPICS.offlineData 补传。
+startPcHeartbeat(mqttClient, deviceManager)
 
 module.exports = mqttClient
