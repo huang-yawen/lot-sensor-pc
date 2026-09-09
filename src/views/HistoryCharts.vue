@@ -202,6 +202,7 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import api from '@/api'
 import * as echarts from '@/utils/echarts'
+import { pickRightAxisNames, canScale } from '@/utils/chartAxis'
 import { useSystemConfigStore } from '@/stores/useSystemConfigStore'
 
 const RANGE_OPTIONS = [
@@ -364,6 +365,21 @@ const cumulativeEntries = computed(() => {
 const cumulativeChartRef = ref(null)
 let cumulativeChartInstance = null
 
+/**
+ * @description 给带折柱切换的图挂上"切换后重算 y 轴"的监听。
+ * 折线图要脱离 0 刻度（scale）才看得清小幅波动——温度常年在 28.9~29.2 之间走，
+ * 轴从 0 起的话这点起伏在 320px 的图上不到 4 个像素；但柱状图反过来必须从 0 起，
+ * 柱子长度要正比于数值，不然 29.0 和 29.2 会画成差一大截。
+ * 用合并模式只改 yAxis 这一项、不整张重建，用户刚切出来的图表类型才不会被重置回默认值。
+ * @param {Object} chart - ECharts 实例
+ * @param {Function} axisFor - (isBar) => yAxis 配置，单轴给对象、双轴给数组
+ */
+function bindMagicTypeAxis(chart, axisFor) {
+  chart.on('magictypechanged', (params) => {
+    chart.setOption({ yAxis: axisFor(params.currentType === 'bar') })
+  })
+}
+
 function renderCumulativeChart() {
   const entries = cumulativeEntries.value
   const el = cumulativeChartRef.value
@@ -400,6 +416,11 @@ function renderCumulativeChart() {
     }
   })
 
+  const axisFor = (isBar) => [
+    { type: 'value', scale: !isBar && canScale(series.filter((s) => s.yAxisIndex === 0)), name: units[0] || '', nameTextStyle: { fontSize: 11 } },
+    { type: 'value', scale: !isBar && canScale(series.filter((s) => s.yAxisIndex === 1)), name: units[1] || '', nameTextStyle: { fontSize: 11 } },
+  ]
+
   chart.setOption({
     tooltip: { trigger: 'axis' },
     legend: { data: entries.map((e) => e.config.metric_name), top: 0 },
@@ -410,12 +431,10 @@ function renderCumulativeChart() {
     },
     grid: { left: 14, right: 60, top: 50, bottom: 50 },
     xAxis: { type: 'category', data: times, axisLabel: { rotate: 15, fontSize: 10 } },
-    yAxis: [
-      { type: 'value', name: units[0] || '', nameTextStyle: { fontSize: 11 } },
-      { type: 'value', name: units[1] || '', nameTextStyle: { fontSize: 11 } },
-    ],
+    yAxis: axisFor(false),
     series,
   }, true)
+  bindMagicTypeAxis(chart, axisFor)
 }
 
 watch([cumulativeEntries, cumulativeChartRef], () => {
@@ -473,6 +492,8 @@ function renderEntryChart(key) {
   const data = rows.map((r) => r.value)
   const times = formatTimes(rows)
 
+  const axisFor = (isBar) => ({ type: 'value', scale: !isBar, name: unit, nameTextStyle: { fontSize: 11 } })
+
   chart.setOption({
     tooltip: { trigger: 'axis' },
     toolbox: {
@@ -482,9 +503,10 @@ function renderEntryChart(key) {
     },
     grid: { left: 14, right: 60, top: 40, bottom: 50 },
     xAxis: { type: 'category', data: times, axisLabel: { rotate: 15, fontSize: 10 } },
-    yAxis: { type: 'value', name: unit, nameTextStyle: { fontSize: 11 } },
+    yAxis: axisFor(type === 'bar'),
     series: [{ name, type, data, itemStyle: { color }, lineStyle: { color }, smooth: true }],
   }, true)
+  bindMagicTypeAxis(chart, axisFor)
 }
 
 watch(timeWindowEntries, () => {
@@ -534,6 +556,11 @@ function renderAverageChart() {
     })
   }
 
+  const axisFor = (isBar) => [
+    { type: 'value', scale: !isBar, name: '℃', nameTextStyle: { fontSize: 11 } },
+    { type: 'value', scale: !isBar, name: 'm/s', nameTextStyle: { fontSize: 11 } },
+  ]
+
   chart.setOption({
     tooltip: { trigger: 'axis' },
     legend: { data: seriesList.map((s) => s.name), top: 0 },
@@ -544,12 +571,10 @@ function renderAverageChart() {
     },
     grid: { left: 14, right: 60, top: 50, bottom: 50 },
     xAxis: { type: 'category', data: times, axisLabel: { rotate: 15, fontSize: 10 } },
-    yAxis: [
-      { type: 'value', name: '℃', nameTextStyle: { fontSize: 11 } },
-      { type: 'value', name: 'm/s', nameTextStyle: { fontSize: 11 } },
-    ],
+    yAxis: axisFor(false),
     series: seriesList,
   }, true)
+  bindMagicTypeAxis(chart, axisFor)
 }
 
 watch([averageChartRows, averageChartRef], () => {
@@ -588,8 +613,8 @@ function renderScatterChart() {
       top: 0,
     },
     grid: { left: 50, right: 30, top: 40, bottom: 40 },
-    xAxis: { type: 'value', name: '流量 (L/s)', nameTextStyle: { fontSize: 11 } },
-    yAxis: { type: 'value', name: '温度 (℃)', nameTextStyle: { fontSize: 11 } },
+    xAxis: { type: 'value', scale: true, name: '流量 (L/s)', nameTextStyle: { fontSize: 11 } },
+    yAxis: { type: 'value', scale: true, name: '温度 (℃)', nameTextStyle: { fontSize: 11 } },
     series: [{
       name: '温度-流量',
       type: 'scatter',
@@ -655,6 +680,8 @@ function renderTempChart() {
     legendData.push('出水温度滑动平均')
   }
 
+  const axisFor = (isBar) => ({ type: 'value', scale: !isBar, name: '℃', nameTextStyle: { fontSize: 11 } })
+
   chart.setOption({
     tooltip: { trigger: 'axis' },
     legend: { data: legendData, top: 0 },
@@ -665,9 +692,10 @@ function renderTempChart() {
     },
     grid: { left: 14, right: 60, top: 50, bottom: 50 },
     xAxis: { type: 'category', data: times, axisLabel: { rotate: 15, fontSize: 10 } },
-    yAxis: { type: 'value', name: '℃', nameTextStyle: { fontSize: 11 } },
+    yAxis: axisFor(false),
     series,
   }, true)
+  bindMagicTypeAxis(chart, axisFor)
 }
 
 watch([averageChartRows, timeWindowData, tempChartRef], () => {
@@ -697,6 +725,11 @@ function renderFlowPressureChart() {
   flowPressureChartInstance = chart
 
   const times = formatTimes(rows)
+  const axisFor = (isBar) => [
+    { type: 'value', scale: !isBar, name: '瞬时流量', nameTextStyle: { fontSize: 11 } },
+    { type: 'value', scale: !isBar, name: '瞬时压力', nameTextStyle: { fontSize: 11 } },
+  ]
+
   chart.setOption({
     tooltip: { trigger: 'axis' },
     legend: { data: ['瞬时流量', '瞬时压力'], top: 0 },
@@ -707,15 +740,13 @@ function renderFlowPressureChart() {
     },
     grid: { left: 14, right: 60, top: 50, bottom: 50 },
     xAxis: { type: 'category', data: times, axisLabel: { rotate: 15, fontSize: 10 } },
-    yAxis: [
-      { type: 'value', name: '瞬时流量', nameTextStyle: { fontSize: 11 } },
-      { type: 'value', name: '瞬时压力', nameTextStyle: { fontSize: 11 } },
-    ],
+    yAxis: axisFor(false),
     series: [
       { name: '瞬时流量', type: 'line', yAxisIndex: 0, smooth: true, data: rows.map((r) => r.flow), itemStyle: { color: '#0ea5e9' }, lineStyle: { color: '#0ea5e9' } },
       { name: '瞬时压力', type: 'line', yAxisIndex: 1, smooth: true, data: rows.map((r) => r.pressure), itemStyle: { color: '#a855f7' }, lineStyle: { color: '#a855f7' } },
     ],
   }, true)
+  bindMagicTypeAxis(chart, axisFor)
 }
 
 watch([averageChartRows, flowPressureChartRef], () => {
@@ -747,6 +778,16 @@ function renderPidTrackingChart() {
   pidTrackingChartInstance = chart
 
   const times = formatTimes(rows)
+  // 折线时轴紧贴数据才看得清温度波动，柱状时必须落回 0 让柱长正比于温度；
+  // 两种情况都要把 markLine 画的目标温度圈进轴范围，否则红色虚线会跑出画布看不见。
+  const axisFor = (isBar) => ({
+    type: 'value',
+    name: '℃',
+    nameTextStyle: { fontSize: 11 },
+    min: (v) => Math.min(isBar ? 0 : v.min, targetTemp.value ?? v.min),
+    max: (v) => Math.max(v.max, targetTemp.value ?? v.max),
+  })
+
   chart.setOption({
     tooltip: { trigger: 'axis' },
     legend: { data: ['出水温度'], top: 0 },
@@ -757,7 +798,7 @@ function renderPidTrackingChart() {
     },
     grid: { left: 14, right: 60, top: 50, bottom: 50 },
     xAxis: { type: 'category', data: times, axisLabel: { rotate: 15, fontSize: 10 } },
-    yAxis: { type: 'value', name: '℃', nameTextStyle: { fontSize: 11 } },
+    yAxis: axisFor(false),
     series: [
       {
         name: '出水温度',
@@ -781,6 +822,7 @@ function renderPidTrackingChart() {
       },
     ],
   }, true)
+  bindMagicTypeAxis(chart, axisFor)
 }
 
 watch([averageChartRows, targetTemp, pidTrackingChartRef], () => {
@@ -814,6 +856,15 @@ function renderPumpVelocityTrackingChart() {
   pumpVelocityTrackingChartInstance = chart
 
   const times = formatTimes(rows)
+  // 同 PID 跟踪图：折线贴数据、柱状回 0，两种情况都把目标流速参考线圈进轴范围。
+  const axisFor = (isBar) => ({
+    type: 'value',
+    name: 'm/s',
+    nameTextStyle: { fontSize: 11 },
+    min: (v) => Math.min(isBar ? 0 : v.min, targetVelocity.value ?? v.min),
+    max: (v) => Math.max(v.max, targetVelocity.value ?? v.max),
+  })
+
   chart.setOption({
     tooltip: { trigger: 'axis' },
     legend: { data: ['平均流速'], top: 0 },
@@ -824,7 +875,7 @@ function renderPumpVelocityTrackingChart() {
     },
     grid: { left: 14, right: 60, top: 50, bottom: 50 },
     xAxis: { type: 'category', data: times, axisLabel: { rotate: 15, fontSize: 10 } },
-    yAxis: { type: 'value', name: 'm/s', nameTextStyle: { fontSize: 11 } },
+    yAxis: axisFor(false),
     series: [
       {
         name: '平均流速',
@@ -848,6 +899,7 @@ function renderPumpVelocityTrackingChart() {
       },
     ],
   }, true)
+  bindMagicTypeAxis(chart, axisFor)
 }
 
 watch([averageChartRows, targetVelocity, pumpVelocityTrackingChartRef], () => {
@@ -888,7 +940,7 @@ function renderActualPowerChart() {
     tooltip: { trigger: 'axis' },
     grid: { left: 14, right: 20, top: 20, bottom: 50 },
     xAxis: { type: 'category', data: times, axisLabel: { rotate: 15, fontSize: 10 } },
-    yAxis: { type: 'value', name: 'W', nameTextStyle: { fontSize: 11 } },
+    yAxis: { type: 'value', scale: true, name: 'W', nameTextStyle: { fontSize: 11 } },
     series: [{
       name: '瞬时功率',
       type: 'line',
@@ -925,30 +977,39 @@ function renderHeatEnergyChart() {
   heatEnergyChartInstance = chart
 
   const times = formatTimes(rows)
+  const series = [
+    {
+      name: '累计耗电量',
+      type: 'line',
+      smooth: true,
+      data: rows.map((r) => r.cumulativeElectric),
+      itemStyle: { color: '#ef4444' },
+      lineStyle: { color: '#ef4444' },
+    },
+    {
+      name: '累计换热量',
+      type: 'line',
+      smooth: true,
+      data: rows.map((r) => r.cumulativeHeatEnergy),
+      itemStyle: { color: '#10b981' },
+      lineStyle: { color: '#10b981' },
+    },
+  ]
+  // 两条都是 Wh，但换热量往往比耗电量大好几倍，共用一根轴会把小的那条压平；
+  // 量级差得多时挪到右轴各自缩放，量级接近时仍旧共用左轴，方便直接比大小。
+  const rightNames = pickRightAxisNames(series)
+  series.forEach((item) => { item.yAxisIndex = rightNames.has(item.name) ? 1 : 0 })
+
   chart.setOption({
     tooltip: { trigger: 'axis' },
     legend: { data: ['累计耗电量', '累计换热量'], top: 0 },
-    grid: { left: 14, right: 20, top: 40, bottom: 50 },
+    grid: { left: 14, right: 60, top: 40, bottom: 50 },
     xAxis: { type: 'category', data: times, axisLabel: { rotate: 15, fontSize: 10 } },
-    yAxis: { type: 'value', name: 'Wh', nameTextStyle: { fontSize: 11 } },
-    series: [
-      {
-        name: '累计耗电量',
-        type: 'line',
-        smooth: true,
-        data: rows.map((r) => r.cumulativeElectric),
-        itemStyle: { color: '#ef4444' },
-        lineStyle: { color: '#ef4444' },
-      },
-      {
-        name: '累计换热量',
-        type: 'line',
-        smooth: true,
-        data: rows.map((r) => r.cumulativeHeatEnergy),
-        itemStyle: { color: '#10b981' },
-        lineStyle: { color: '#10b981' },
-      },
+    yAxis: [
+      { type: 'value', scale: true, name: 'Wh', nameTextStyle: { fontSize: 11 } },
+      { type: 'value', scale: true, name: 'Wh', nameTextStyle: { fontSize: 11 } },
     ],
+    series,
   }, true)
 }
 
@@ -977,7 +1038,7 @@ function renderSecChart() {
     tooltip: { trigger: 'axis' },
     grid: { left: 14, right: 20, top: 20, bottom: 50 },
     xAxis: { type: 'category', data: times, axisLabel: { rotate: 15, fontSize: 10 } },
-    yAxis: { type: 'value', name: 'Wh/L', nameTextStyle: { fontSize: 11 } },
+    yAxis: { type: 'value', scale: true, name: 'Wh/L', nameTextStyle: { fontSize: 11 } },
     series: [{
       name: '单位流量能耗',
       type: 'line',
@@ -1022,8 +1083,8 @@ function renderHeatingEfficiencyChart() {
     grid: { left: 20, right: 40, top: 40, bottom: 50 },
     xAxis: { type: 'category', data: times, axisLabel: { rotate: 15, fontSize: 10 } },
     yAxis: [
-      { type: 'value', name: '℃', nameTextStyle: { fontSize: 11 } },
-      { type: 'value', name: '%', nameTextStyle: { fontSize: 11 }, splitLine: { show: false } },
+      { type: 'value', scale: true, name: '℃', nameTextStyle: { fontSize: 11 } },
+      { type: 'value', scale: true, name: '%', nameTextStyle: { fontSize: 11 }, splitLine: { show: false } },
     ],
     series: [
       { name: '实际升温', type: 'line', smooth: true, data: rows.map((r) => r.actualRiseC), itemStyle: { color: '#10b981' }, lineStyle: { color: '#10b981' } },
@@ -1055,7 +1116,7 @@ function renderHeatingRateChart() {
     tooltip: { trigger: 'axis' },
     grid: { left: 20, right: 20, top: 20, bottom: 50 },
     xAxis: { type: 'category', data: times, axisLabel: { rotate: 15, fontSize: 10 } },
-    yAxis: { type: 'value', name: '℃/min', nameTextStyle: { fontSize: 11 } },
+    yAxis: { type: 'value', scale: true, name: '℃/min', nameTextStyle: { fontSize: 11 } },
     series: [{
       name: '加热速度', type: 'line', smooth: true,
       data: rows.map((r) => r.heatingRate),
@@ -1236,6 +1297,8 @@ function renderCumulativeFlowChart() {
   cumulativeFlowChartInstance = chart
 
   const times = formatTimes(entry.rows)
+  const axisFor = (isBar) => ({ type: 'value', scale: !isBar, name: entry.config.unit || '', nameTextStyle: { fontSize: 11 } })
+
   chart.setOption({
     tooltip: { trigger: 'axis' },
     legend: { data: [entry.config.metric_name], top: 0 },
@@ -1246,7 +1309,7 @@ function renderCumulativeFlowChart() {
     },
     grid: { left: 14, right: 20, top: 50, bottom: 50 },
     xAxis: { type: 'category', data: times, axisLabel: { rotate: 15, fontSize: 10 } },
-    yAxis: { type: 'value', name: entry.config.unit || '', nameTextStyle: { fontSize: 11 } },
+    yAxis: axisFor((entry.config.chart_type || 'line') === 'bar'),
     series: [{
       name: entry.config.metric_name,
       type: entry.config.chart_type || 'line',
@@ -1256,6 +1319,7 @@ function renderCumulativeFlowChart() {
       smooth: true,
     }],
   }, true)
+  bindMagicTypeAxis(chart, axisFor)
 }
 
 watch([cumulativeFlowEntry, cumulativeFlowChartRef], () => {
@@ -1303,6 +1367,20 @@ function renderSwitchDurationChart() {
     smooth: true,
   }))
 
+  // 各条开关时长来自不同指标配置，量级可能差很多；量级差大时把小的挪到右轴。
+  const rightNames = pickRightAxisNames(series)
+  series.forEach((item) => { item.yAxisIndex = rightNames.has(item.name) ? 1 : 0 })
+  // 轴名按各自这一侧实际挂了哪些指标取单位，避免右轴顶着左轴的单位。
+  const axisUnit = (isRight) => [...new Set(entries
+    .filter((e) => rightNames.has(e.config.metric_name) === isRight)
+    .map((e) => e.config.unit)
+    .filter(Boolean))].join('/')
+
+  const axisFor = (isBar) => [
+    { type: 'value', scale: !isBar && canScale(series.filter((s) => s.yAxisIndex === 0)), name: axisUnit(false), nameTextStyle: { fontSize: 11 } },
+    { type: 'value', scale: !isBar && canScale(series.filter((s) => s.yAxisIndex === 1)), name: axisUnit(true), nameTextStyle: { fontSize: 11 } },
+  ]
+
   chart.setOption({
     tooltip: { trigger: 'axis' },
     legend: { data: entries.map((e) => e.config.metric_name), top: 0 },
@@ -1311,11 +1389,12 @@ function renderSwitchDurationChart() {
       right: 10,
       top: 0,
     },
-    grid: { left: 14, right: 20, top: 50, bottom: 50 },
+    grid: { left: 14, right: 60, top: 50, bottom: 50 },
     xAxis: { type: 'category', data: times, axisLabel: { rotate: 15, fontSize: 10 } },
-    yAxis: { type: 'value', name: entries[0]?.config.unit || '', nameTextStyle: { fontSize: 11 } },
+    yAxis: axisFor(false),
     series,
   }, true)
+  bindMagicTypeAxis(chart, axisFor)
 }
 
 watch([switchDurationEntries, switchDurationChartRef], () => {
@@ -1363,6 +1442,8 @@ function renderDerivedEntryChart(key) {
   const data = rows.map((r) => r.value)
   const times = formatTimes(rows)
 
+  const axisFor = (isBar) => ({ type: 'value', scale: !isBar, name: unit, nameTextStyle: { fontSize: 11 } })
+
   chart.setOption({
     tooltip: { trigger: 'axis' },
     toolbox: {
@@ -1372,9 +1453,10 @@ function renderDerivedEntryChart(key) {
     },
     grid: { left: 14, right: 60, top: 40, bottom: 50 },
     xAxis: { type: 'category', data: times, axisLabel: { rotate: 15, fontSize: 10 } },
-    yAxis: { type: 'value', name: unit, nameTextStyle: { fontSize: 11 } },
+    yAxis: axisFor(type === 'bar'),
     series: [{ name, type, data, itemStyle: { color }, lineStyle: { color }, smooth: true }],
   }, true)
+  bindMagicTypeAxis(chart, axisFor)
 }
 
 watch(derivedMetricEntries, () => {

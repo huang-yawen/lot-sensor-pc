@@ -16,6 +16,7 @@
 import { ref, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
 import * as echarts from '@/utils/echarts'
 import { useDisplayStore } from '@/stores/useDisplayStore'
+import { pickRightAxisNames, canScale } from '@/utils/chartAxis'
 
 /**
  * @description ECharts 实例引用
@@ -76,6 +77,9 @@ const initChart = async () => {
     // 记录用户手动切换的图表类型，供刷新重建时沿用，避免被重置回默认折线图。
     mychart.on('magictypechanged', (params) => {
       currentChartType.value = params.currentType
+      // 切成柱状图后 y 轴必须收回 0 刻度（柱长要正比于数值），立刻重画一次让轴跟着变，
+      // 否则要等到下一次数据刷新才生效，中间这段时间柱子是从非 0 起画的、比例失真。
+      updateChart(props.data)
     })
   }
 
@@ -143,7 +147,6 @@ const updateChart = (source) => {
       return {
       name: field,
       type: currentChartType.value || setting.type || 'line',
-      yAxisIndex: setting.yAxis === 'right' ? 1 : 0,
       itemStyle: setting.color ? { color: setting.color } : undefined,
       lineStyle: setting.color ? { color: setting.color } : undefined,
       data: json.map(item => {
@@ -160,8 +163,21 @@ const updateChart = (source) => {
       })
     }})
 
+    // 决定每个字段走左轴还是右轴：配置中心手动指定过 right 的一律以手动配置为准；
+    // 一个都没配时按数量级自动分，免得温度（几十）和累计流量（几万）挤在同一根轴上，
+    // 小的那条被压成贴着 0 的直线。行为数据全是 0/1，量级一致，不参与自动分轴。
+    const manualRight = fields.some(field => props.settings[field]?.yAxis === 'right')
+    const rightFields = (props.binary || manualRight)
+      ? new Set(fields.filter(field => props.settings[field]?.yAxis === 'right'))
+      : pickRightAxisNames(series)
+    series.forEach(item => { item.yAxisIndex = rightFields.has(item.name) ? 1 : 0 })
+
     const axisConfig = (side) => {
-      const configured = fields.map(field => props.settings[field]).filter(setting => setting?.yAxis === side)
+      const isRight = side === 'right'
+      const configured = fields
+        .filter(field => rightFields.has(field) === isRight)
+        .map(field => props.settings[field])
+        .filter(Boolean)
       const units = [...new Set(configured.map(setting => setting.unit).filter(Boolean))]
       const min = configured.find(setting => setting.min != null)?.min
       const max = configured.find(setting => setting.max != null)?.max
@@ -169,6 +185,10 @@ const updateChart = (source) => {
         type: 'value',
         name: units.join('/'),
         position: side,
+        // 脱离 0 刻度，让轴范围紧贴这一侧数据的最大最小值。传感器温度常年在 28.9~29.2
+        // 之间走，轴要是从 0 起，这 0.3℃ 只占图高 1%，320px 的图上不到 4 个像素，
+        // 看上去就是一条直线；贴着数据画才能把波动撑开看清。
+        scale: canScale(series.filter(item => item.yAxisIndex === (isRight ? 1 : 0))),
         min: props.binary ? 0 : (min ?? undefined),
         max: props.binary ? 1 : (max ?? undefined),
         interval: props.binary ? 1 : undefined,

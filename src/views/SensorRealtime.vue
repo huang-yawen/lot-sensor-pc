@@ -5,7 +5,9 @@
  *   - 用 show_realtime 过滤派生指标（跟原 getDashboardData 的实时返回一致）
  *   - 返回纯数值不拼接单位（卡片和图表组件需要纯数值 + 单独的 fieldUnits）
  * 【配置中心关联】
- * 页面通过 SystemConfigStore 读取配置中心；REALTIME_REFRESH_INTERVAL 控制自动刷新间隔。
+ * 页面通过 SystemConfigStore 读取配置中心。实时更新靠 WebSocket 推送，页面本身不再
+ * 自带定时器；推送频率由后端的 REALTIME_REFRESH_INTERVAL 节流控制（见 app.js
+ * broadcastThrottled），该值配成 0 表示关闭实时推送。
  * -->
 <template>
   <div>
@@ -27,6 +29,7 @@
 import LineBarCharts from '@/components/LineBarCharts.vue'
 import { usePaginationStore } from '@/stores/usePaginationStore'
 import { computed, onMounted, onUnmounted } from 'vue'
+import { connect, on as wsOn } from '@/utils/websocket'
 import CardContainer from '@/components/CardContainer.vue'
 import { useSystemConfigStore } from '@/stores/useSystemConfigStore'
 
@@ -36,7 +39,7 @@ import { useSystemConfigStore } from '@/stores/useSystemConfigStore'
 // metricScope（默认 history 模式 + 拼单位给表格用）。
 const store = usePaginationStore()
 const systemStore = useSystemConfigStore()
-let refreshTimer = null
+let unsubscribeWs = null
 
 // metricScope='realtime' 让后端按 show_realtime 过滤派生指标，且返回纯数值不拼单位。
 // dataScope='实时数据' 让后端只返回最新窗口内（最新 5 条）的记录。
@@ -55,21 +58,20 @@ const data = computed(() => store.paginationData || [])
 // 时间递增顺序，卡片和图表都直接用原始顺序的 data 即可。
 const chartsEnabled = computed(() => systemStore.config.ENABLE_CHARTS !== false)
 
-const startAutoRefresh = () => {
-  if (refreshTimer) clearInterval(refreshTimer)
-  const interval = Number(systemStore.config.REALTIME_REFRESH_INTERVAL)
-  if (interval > 0) refreshTimer = setInterval(() => reloadData(true), interval)
-}
-
 onMounted(async () => {
   await systemStore.load()
   await reloadData()
-  startAutoRefresh()
+
+  // 实时更新统一走 WebSocket，不再另起前端定时器：后端已经按
+  // REALTIME_REFRESH_INTERVAL 把 sensor_data 节流合并后再推（见 app.js 的
+  // broadcastThrottled），这里收到推送就静默重拉一次当前窗口的数据。
+  // 用 silent 是为了不切 loading，避免表格跟着推送闪"加载中"。
+  connect()
+  unsubscribeWs = wsOn('sensor_data', () => reloadData(true))
 })
 
 onUnmounted(() => {
-  if (refreshTimer) clearInterval(refreshTimer)
-  refreshTimer = null
+  unsubscribeWs?.()
 })
 </script>
 

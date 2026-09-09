@@ -20,6 +20,7 @@
 
 <script setup>
 import { computed, onMounted, onUnmounted } from 'vue'
+import { connect, on as wsOn } from '@/utils/websocket'
 import CardContainer from '@/components/CardContainer.vue'
 import LineBarCharts from '@/components/LineBarCharts.vue'
 import { usePaginationStore } from '@/stores/usePaginationStore.js'
@@ -30,7 +31,7 @@ const store = usePaginationStore()
 const systemStore = useSystemConfigStore()
 // 数据范围筛选值：实时页只看最新窗口内（最新 5 条）的记录，跟设备在线状态无关。
 const dataScope = '实时数据'
-let refreshTimer = null
+let unsubscribeWs = null
 
 // 接口按 id DESC（最新在前）返回，卡片默认取第 0 项展示最新数据是对的；
 // LineBarCharts 组件内部会自动反转成时间递增顺序，这里直接传原始顺序即可。
@@ -46,14 +47,17 @@ const reloadData = () => store.fetchPaginationData({
 onMounted(async () => {
   await systemStore.load()
   await reloadData()
-  const interval = Number(systemStore.config.REALTIME_REFRESH_INTERVAL)
-  if (interval > 0) refreshTimer = setInterval(reloadData, interval)
+
+  // 实时更新统一走 WebSocket，不再另起前端定时器：后端已经按
+  // REALTIME_REFRESH_INTERVAL 把 behavior_data 节流合并后再推（见 app.js 的
+  // broadcastThrottled），这里收到推送就重拉一次当前窗口的数据。
+  connect()
+  unsubscribeWs = wsOn('behavior_data', reloadData)
   console.log("BehaviorRealtime data:", store.paginationData)
 })
 
 onUnmounted(() => {
-  if (refreshTimer) clearInterval(refreshTimer)
-  refreshTimer = null
+  unsubscribeWs?.()
 })
 </script>
 
