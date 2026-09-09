@@ -174,47 +174,55 @@ const computedMetricList = computed(() => {
   const fmt = (v, digits = 2) => (v == null || !Number.isFinite(Number(v)) ? null : Number(v).toFixed(digits))
   const list = []
 
-  if (flags.resistanceK && entry.resistanceK) {
-    const trend = entry.resistanceK.trendRecent
+  // 只要 flags.X 是 true 就一定产出卡片：后端这一条没算出来时 value 给 null，
+  // 模板会渲染成 "--"。否则"配置中心开着、页面上整块消失"，分不清是没开还是没数据。
+  // 换热效率/热平衡/加热效率/加热速度这四项后端只在加热开启时算，缺值时注明原因。
+  const HEAT_OFF_NOTE = '加热关闭时不计算'
+
+  if (flags.resistanceK) {
+    const rk = entry.resistanceK
+    const trend = rk?.trendRecent
     list.push({
       key: 'resistanceK',
       label: '系统阻力系数 K',
-      unit: entry.resistanceK.unit || '',
-      value: fmt(entry.resistanceK.value, 4),
+      unit: rk?.unit || '',
+      value: fmt(rk?.value, 4),
       note: trend != null ? `近期趋势 ${(trend * 100).toFixed(1)}%（约30分钟内，未落库）` : '',
     })
   }
-  if (flags.pressureDropRate && entry.pressureDropRate) {
+  if (flags.pressureDropRate) {
+    const pd = entry.pressureDropRate
     list.push({
       key: 'pressureDropRate',
       label: '压力陡降速率',
-      unit: entry.pressureDropRate.unit || '',
-      value: fmt(entry.pressureDropRate.value, 3),
-      note: entry.pressureDropRate.dropInHalfSecond ? '0.5s 内骤降' : '',
+      unit: pd?.unit || '',
+      value: fmt(pd?.value, 3),
+      note: pd?.dropInHalfSecond ? '0.5s 内骤降' : '',
     })
   }
-  if (flags.tempChangeRate && entry.tempChangeRate) {
-    const t1 = fmt(entry.tempChangeRate.temp1, 3)
-    const t2 = fmt(entry.tempChangeRate.temp2, 3)
+  if (flags.tempChangeRate) {
+    const tc = entry.tempChangeRate
+    const t1 = fmt(tc?.temp1, 3)
+    const t2 = fmt(tc?.temp2, 3)
     list.push({
       key: 'tempChangeRate',
       label: '温度变化率 (进水/出水)',
       unit: '℃/s',
-      value: `${t1 ?? '--'} / ${t2 ?? '--'}`,
+      value: tc ? `${t1 ?? '--'} / ${t2 ?? '--'}` : null,
     })
   }
-  if (flags.heatExchangeEfficiency && entry.heatExchangeEfficiency) {
-    const eff = entry.heatExchangeEfficiency.value
+  if (flags.heatExchangeEfficiency) {
+    const hx = entry.heatExchangeEfficiency
     list.push({
       key: 'heatExchangeEfficiency',
       label: '换热效率',
       unit: '%',
       // 后端 value 已是百分数（水带走的热功率 ÷ 加热额定电功率 ×100），这里不再 ×100
-      value: eff != null ? fmt(eff, 1) : null,
-      note: entry.heatExchangeEfficiency.heatTransferredW ? `换热量 ${fmt(entry.heatExchangeEfficiency.heatTransferredW, 0)}W` : '',
+      value: hx?.value != null ? fmt(hx.value, 1) : null,
+      note: hx ? (hx.heatTransferredW ? `换热量 ${fmt(hx.heatTransferredW, 0)}W` : '') : HEAT_OFF_NOTE,
     })
   }
-  if (flags.eerHeatBalance && entry.eerHeatBalance) {
+  if (flags.eerHeatBalance) {
     const bal = entry.eerHeatBalance
     list.push({
       key: 'eerHeatBalance',
@@ -222,51 +230,58 @@ const computedMetricList = computed(() => {
       unit: 'W',
       // 电阻加热器 COP 恒为 1，不再展示"能效比"；只给电功率去向分解：
       // 水带走的热功率 / 没被水带走的部分（散热+蓄热+测量误差）
-      value: bal.heatTransferredW != null
+      value: bal?.heatTransferredW != null
         ? `换热 ${fmt(bal.heatTransferredW, 0)} / 未带走 ${fmt(bal.heatLossW, 0)}`
         : null,
+      note: bal ? '' : HEAT_OFF_NOTE,
     })
   }
-  if (flags.heatingEfficiency && entry.heatingEfficiency) {
+  if (flags.heatingEfficiency) {
     const he = entry.heatingEfficiency
     list.push({
       key: 'heatingEfficiency',
       label: '加热效率',
       unit: '%',
       // 实际升温ΔT ÷ 理论升温ΔT ×100%（理论升温 = 加热额定功率全进水里能升多少度）
-      value: he.value != null ? fmt(he.value, 1) : null,
-      note: he.actualRiseC != null ? `实际升温 ${fmt(he.actualRiseC, 2)}℃ / 理论 ${fmt(he.theoreticalRiseC, 2)}℃` : '',
+      value: he?.value != null ? fmt(he.value, 1) : null,
+      note: he
+        ? (he.actualRiseC != null ? `实际升温 ${fmt(he.actualRiseC, 2)}℃ / 理论 ${fmt(he.theoreticalRiseC, 2)}℃` : '')
+        : HEAT_OFF_NOTE,
     })
   }
-  if (flags.heatingRate && entry.heatingRate) {
+  if (flags.heatingRate) {
+    const hr = entry.heatingRate
     list.push({
       key: 'heatingRate',
       label: '加热速度',
-      unit: entry.heatingRate.unit || '℃/min',
-      value: fmt(entry.heatingRate.value, 3),
+      unit: hr?.unit || '℃/min',
+      value: fmt(hr?.value, 3),
+      // 后端要求"这一条和上一条都在加热"才给值，所以措辞比上面三项更严格一点。
+      note: hr ? '' : '持续加热中才计算',
     })
   }
-  if (flags.flowPressureCurve && entry.flowPressureCurve) {
+  if (flags.flowPressureCurve) {
+    const fc = entry.flowPressureCurve
     list.push({
       key: 'flowPressureCurve',
       label: '流量-压力曲线斜率',
-      unit: entry.flowPressureCurve.unit || '',
-      value: fmt(entry.flowPressureCurve.slope, 3),
+      unit: fc?.unit || '',
+      value: fmt(fc?.slope, 3),
     })
   }
-  if (flags.cumulativeFlow && entry.cumulativeFlow) {
-    list.push({ key: 'cumulativeFlow', label: '累计流量', unit: entry.cumulativeFlow.unit || '', value: fmt(entry.cumulativeFlow.value, 2) })
+  if (flags.cumulativeFlow) {
+    list.push({ key: 'cumulativeFlow', label: '累计流量', unit: entry.cumulativeFlow?.unit || '', value: fmt(entry.cumulativeFlow?.value, 2) })
   }
-  if (flags.averageVelocity && entry.averageVelocity) {
-    list.push({ key: 'averageVelocity', label: '平均流速', unit: entry.averageVelocity.unit || '', value: fmt(entry.averageVelocity.value, 4) })
+  if (flags.averageVelocity) {
+    list.push({ key: 'averageVelocity', label: '平均流速', unit: entry.averageVelocity?.unit || '', value: fmt(entry.averageVelocity?.value, 4) })
   }
-  if (flags.waterLevel && entry.waterLevel) {
-    const t1 = entry.waterLevel.tank1
-    const t2 = entry.waterLevel.tank2
+  if (flags.waterLevel) {
+    const t1 = entry.waterLevel?.tank1
+    const t2 = entry.waterLevel?.tank2
     list.push({
       key: 'waterLevel',
       label: '液位（水箱1/水箱2）',
-      unit: entry.waterLevel.unit || 'cm',
+      unit: entry.waterLevel?.unit || 'cm',
       value: t1 && t2 ? `${fmt(t1.levelCm, 1)} / ${fmt(t2.levelCm, 1)}` : null,
     })
   }

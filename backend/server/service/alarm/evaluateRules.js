@@ -5,11 +5,13 @@
  * 这跟 faultStatus.js 的 onFault/fault_triggered 是完全对称的两套机制：那边是
  * 5 种系统级硬故障（严重、低频、需要手动复位，用模态弹窗），这边是本页面自由配置
  * 的普通阈值规则（可能频繁触发、只是提示，不需要用户处理，所以用非阻塞通知）。
- * 【配置】ALARM_RULES（enabled/autoInterlockEnabled/rules）见对应 config.js。 */
+ * 【配置】ALARM_RULES（enabled/autoInterlockEnabled/rules）见对应 config.js；
+ * 自动联锁下发指令用的 MQTT_QOS 见 config/mqtt.js。 */
 const promisePool = require('../../config/dbPool')
 // 阈值告警自己的开关和规则数组在这里（enabled / autoInterlockEnabled / rules）。
 const CONFIG = require('./config')
 const { SINGLE_DEVICE_MODE } = require('../../config/appSettings')
+const { MQTT_QOS } = require('../../config/mqtt')
 const EventEmitter = require('events')
 const { firstValue, getTopic, toWireValue, buildSwitchPayload } = require('../../utils/protocol')
 const { resolveDeviceNo, resolveFieldAliases } = require('../../utils/mappedData')
@@ -139,7 +141,7 @@ async function evaluateRules(info) {
           const oldValue = directConfig
             ? await getDirectValue({ config_id: directConfig.id, d_no: targetDevice })
             : null
-          await mqttClient.publish(getTopic('control'), payload, { qos: config.MQTT_QOS })
+          await mqttClient.publish(getTopic('control'), payload, { qos: MQTT_QOS })
           if (directConfig) {
             await saveDirectData({ config_id: directConfig.id, value: rule.action.value, d_no: targetDevice })
           }

@@ -24,6 +24,7 @@ const { COMPUTED_METRICS } = require('../../config/metrics')
 const promisePool = require('../../config/dbPool')
 const { firstValue } = require('../../utils/protocol')
 const { resolveDeviceNo, resolveFieldAliases } = require('../../utils/mappedData')
+const { BACKFILL_LABEL } = require('../../utils/recencyFilter')
 
 
 /** 每个设备的滚动状态。 */
@@ -431,14 +432,19 @@ async function refreshFromDB() {
   const pumpAliases = await resolveFieldAliases('t_behavior_data', 'field1')
   const heatAliases = await resolveFieldAliases('t_behavior_data', 'field2')
 
+  // 两条查询都排除补传数据（设备断线期间缓存、恢复后补传上来的旧值）：它的自增 id 最大，
+  // 但 c_time 停留在断线那段时间。不排除的话，下面按 id 顺序回放时时间会突然倒退，
+  // 累计流量按"相邻两条读数的秒差"积分就会拿到负的时间差；开关状态也会取成旧状态。
   const [[behaviorLatest]] = await promisePool.query(
-    'SELECT field1, field2 FROM t_behavior_data ORDER BY id DESC LIMIT 1'
+    "SELECT field1, field2 FROM t_behavior_data WHERE COALESCE(online, '') <> ? ORDER BY id DESC LIMIT 1",
+    [BACKFILL_LABEL]
   )
   const pumpState = behaviorLatest ? behaviorLatest.field1 : null
   const heatState = behaviorLatest ? behaviorLatest.field2 : null
 
   const [sensorRows] = await promisePool.query(
-    'SELECT d_no, field1, field2, field3, field4, c_time FROM t_sensor_data ORDER BY id ASC'
+    "SELECT d_no, field1, field2, field3, field4, c_time FROM t_sensor_data WHERE COALESCE(online, '') <> ? ORDER BY id ASC",
+    [BACKFILL_LABEL]
   )
   const recent = sensorRows.slice(-120)
 

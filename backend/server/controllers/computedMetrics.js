@@ -22,6 +22,7 @@
  */
 const promisePool = require('../config/dbPool')
 const { SENSOR_FIELD_MAP } = require('../config/appSettings')
+const { BACKFILL_LABEL } = require('../utils/recencyFilter')
 const { resolveTimeRange } = require('../utils/timeRange')
 const { queryAverageChart, getCurrentTargetTemp, getCurrentTargetVelocity } = require('../service/computedMetrics/averageChartQuery')
 const { queryTempFlowScatter } = require('../service/computedMetrics/scatterChartQuery')
@@ -68,8 +69,12 @@ async function currentTemp(req, res) {
         if (!field) {
             return res.json({ success: true, data: null })
         }
+        // 排除补传数据：它是设备断线期间缓存、恢复后补传上来的旧值，自增 id 却是最大的，
+        // 不排除的话首页显示的"当前出水温度"会变成断线那段时间的历史温度。
         const [[row]] = await promisePool.query(
-            `SELECT CAST(NULLIF(\`${field}\`, '') AS DECIMAL(20, 2)) AS value FROM t_sensor_data ORDER BY id DESC LIMIT 1`
+            `SELECT CAST(NULLIF(\`${field}\`, '') AS DECIMAL(20, 2)) AS value FROM t_sensor_data
+             WHERE COALESCE(online, '') <> ? ORDER BY id DESC LIMIT 1`,
+            [BACKFILL_LABEL]
         )
         res.json({ success: true, data: row?.value ?? null })
     } catch (err) {
