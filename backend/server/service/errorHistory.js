@@ -7,11 +7,17 @@ const promisePool = require('../config/dbPool')
 const { DEFAULT_PAGE_SIZE } = require('../config/appSettings')
 const { FAULT_TYPES } = require('./faultStatus/faultStatus')
 const { LINKAGE_RULE_NAMES } = require('./linkageRules/linkageRules')
+const { SPIKE_TYPES } = require('./spikeFilter/spikeFilter')
+const { RELAY_TYPES } = require('./spikeFilter/relayStuck')
 
 /* ==================== e_no -> 中文名 对照 ==================== */
 
 /** 故障 e_no -> 中文名，直接复用 faultStatus.js 的定义，不重复写一份。 */
 const FAULT_NAMES = Object.fromEntries(FAULT_TYPES.map(f => [f.id, f.name]))
+
+/** 数据质量板块两条规则的 e_no -> 中文名，跟故障一样直接复用板块自己导出的类型表：
+ * SPIKE_TYPES 是规则一（数值跳变/毛刺），RELAY_TYPES 是规则二（继电器粘连/控制失效）。 */
+const SPIKE_NAMES = Object.fromEntries([...SPIKE_TYPES, ...RELAY_TYPES].map(t => [t.id, t.name]))
 
 /**
  * 安全联锁 e_no -> 中文名。safetyInterlock.js 里的触发条件是内联写在函数里的，没有像
@@ -30,18 +36,21 @@ const SAFETY_TRIGGER_NAMES = {
 }
 
 /** category=fault（默认）只看真正的硬故障；category=safety 看安全联锁记录；
- * category=linkage 看联动控制记录；category=alarm 看场景配置 ALARM_RULES 触发的
+ * category=linkage 看联动控制记录；category=spike 看数据质量（跳变/毛刺）记录；
+ * category=alarm 看场景配置 ALARM_RULES 触发的
  * 规则告警——这类记录不属于前三类里任何一个固定 type，见下面 buildWhere 里
  * 对 alarm 类别的处理（排除掉这里列出的固定 type，不是再列一张新清单）。 */
 const CATEGORY_TYPES = {
   fault: ['故障保护'],
   safety: ['安全联锁', '安全告警'],
   linkage: ['联动控制'],
+  spike: ['数据质量'],
 }
 
 function resolveCategory(query) {
   if (query?.category === 'safety') return 'safety'
   if (query?.category === 'linkage') return 'linkage'
+  if (query?.category === 'spike') return 'spike'
   if (query?.category === 'alarm') return 'alarm'
   return 'fault'
 }
@@ -54,6 +63,7 @@ function friendlyName(category, eNo, fallbackType) {
   if (category === 'alarm') return fallbackType || '未知类型'
   const map = category === 'safety' ? SAFETY_TRIGGER_NAMES
     : category === 'linkage' ? LINKAGE_RULE_NAMES
+    : category === 'spike' ? SPIKE_NAMES
     : FAULT_NAMES
   return (eNo && map[eNo]) || fallbackType || '未知类型'
 }

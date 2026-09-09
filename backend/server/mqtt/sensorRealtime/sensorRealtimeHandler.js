@@ -10,6 +10,8 @@ const { evaluatePidHeating, getPidHeatingStatus } = require('../../service/pidHe
 const { evaluatePumpVelocityControl } = require('../../service/pumpVelocityControl/pumpVelocityControl')
 const { evaluateQuantityShutdown } = require('../../service/quantityShutdown/quantityShutdown')
 const { compute: computeMetrics } = require('../../service/computedMetrics/computedMetrics')
+const { evaluateSpikeFilter } = require('../../service/spikeFilter/spikeFilter')
+const { evaluateRelayStuck } = require('../../service/spikeFilter/relayStuck')
 
 const SENSOR_TOPIC = 'sensor_data'
 
@@ -87,7 +89,8 @@ async function handleMessage(topic, payload) {
     // 携带那两个字段，各处对未知状态都做了保守处理，不会因此报错或误触发，
     // 但这类交叉判断在这种分开上报模式下能力有限，详见
     // behaviorRealtimeHandler.js 文件头的说明）：
-    //   1. 先存库（saveSensorData）：把这条原始数据落库，供历史查询/图表展示。
+    //   1. 数据质量过滤 + 存库（evaluateSpikeFilter -> saveSensorData）：跳变/毛刺值先拦下
+    //      不入库，确认是真实变化后才补写；其余步骤仍然拿原始值评估，不受缓冲影响。
     //   2. 本地告警规则（evaluateRules）：按阈值判断，只记录不动手。
     //   3. 安全联锁（evaluateSafety）→ 故障状态机（evaluateFaultStatus）：异常时强制关闭水泵和加热。
     //   4. 正常状况联动（evaluateLinkageRules）→ PID 恒温（evaluatePidHeating）→
@@ -98,7 +101,15 @@ async function handleMessage(topic, payload) {
     // （比如 evaluateSafety 出错，后面的自动控制、PID 都会被跳过）。排查问题时如果发现
     // "控制逻辑好像没生效"，先看日志里前面有没有某一步先报错了。
     try {
-        await saveSensorData(info)
+        // 数据质量（跳变/毛刺过滤）：跳变值不直接入库，先进缓冲区等连续确认；判定为毛刺的
+        // 整批丢弃，判定为真实变化的按原顺序补写。flush 就是本轮真正该落库的行。
+        const spike = await evaluateSpikeFilter(info)
+        for (const row of spike.flush) await saveSensorData(row)
+        if (spike.triggers.length) info._spikeTriggers = spike.triggers
+        // 数据质量规则二：继电器触点粘连/控制失效——指令已关但传感器显示仍在工作时，
+        // 自动重发关闭指令尝试恢复，重试无效则判定硬件故障、提示人工断电检修。
+        const relayTriggers = await evaluateRelayStuck(info)
+        if (relayTriggers.length) info._relayStuckTriggers = relayTriggers
         // 告警规则：按配置中心 ALARM_RULES 逐条判断，触发时写记录、可选自动联锁。
         const alarms = await evaluateRules(info)
         if (alarms.length) info._alarms = alarms

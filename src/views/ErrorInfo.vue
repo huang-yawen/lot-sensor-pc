@@ -6,7 +6,7 @@
  * -->
 <template>
   <div class="error-info-page">
-    <!-- 顶部搜索框，同时驱动下面故障记录/安全联锁记录/联动控制记录三个表格。 -->
+    <!-- 顶部搜索框，同时驱动下面故障记录/安全联锁记录/联动控制记录/安全告警记录/数据质量记录五个表格。 -->
     <div class="search-form">
       <div class="search-form-inner">
         <el-input v-model="keyword" style="width: 240px; flex-shrink: 0;" placeholder="输入设备编号" :suffix-icon="Search"
@@ -211,6 +211,53 @@
         </div>
       </div>
     </div>
+
+    <div class="error-info-container" v-if="showSpikeLog">
+      <h3 class="section-title">数据质量记录</h3>
+      <div class="table-wrapper">
+        <el-table
+          :data="store.spikeData"
+          style="width: 100%"
+          v-if="store.spikeData.length > 0"
+          border
+          stripe
+          :header-cell-style="{ background: '#f8fafc', color: '#475569', fontWeight: 600 }"
+        >
+          <el-table-column
+            v-for="col in spikeHeaders"
+            :key="col"
+            :prop="col"
+            :label="col"
+            show-overflow-tooltip
+            align="center"
+          />
+        </el-table>
+        <div v-else class="empty-state">
+          {{ store.spikeLoading ? '加载中...' : '暂无数据质量记录' }}
+        </div>
+      </div>
+
+      <div class="pagination-wrapper">
+        <el-pagination v-model:current-page="spikeCurrentPage" v-model:page-size="spikePageSize" :page-sizes="pageSizeOptions"
+          :background="true" layout="sizes, prev, pager, next" :total="store.spikeTotal || 0"
+          @size-change="handleSpikePageSizeChange" @current-change="handleSpikePageChange" />
+      </div>
+
+      <div class="chart-container" v-if="chartsEnabled">
+        <div class="chart-panel">
+          <div class="chart-scope">
+            <span class="chart-scope-label">统计范围</span>
+            <el-radio-group v-model="spikeChartScope" size="small">
+              <el-radio-button value="all">全部</el-radio-button>
+              <el-radio-button value="filtered">当前筛选</el-radio-button>
+              <el-radio-button value="page">当前页</el-radio-button>
+            </el-radio-group>
+            <span class="chart-scope-hint">{{ spikeChartHint }}</span>
+          </div>
+          <PieChart :data="spikeChartData" :title="spikeChartTitle" />
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -246,12 +293,19 @@ const linkagePageSize = ref(5);
 const alarmCurrentPage = ref(1);
 const alarmPageSize = ref(5);
 
+// 数据质量记录表格是否显示，由配置中心 SPIKE_FILTER.showOnErrorPage 控制，
+// 跟安全联锁记录用 SAFETY_INTERLOCK.showOnErrorPage 是同一套约定。
+const showSpikeLog = computed(() => systemStore.config.SPIKE_FILTER?.showOnErrorPage !== false);
+const spikeCurrentPage = ref(1);
+const spikePageSize = ref(5);
+
 // 饼图统计范围：all=数据库里该类型的全部记录；filtered=顶部搜索条件筛出来的那批
 // （跟表格同一批数据）；page=表格当前这一页的记录（纯前端聚合，不发请求）。
 const errChartScope = ref("all");
 const safetyChartScope = ref("all");
 const linkageChartScope = ref("all");
 const alarmChartScope = ref("all");
+const spikeChartScope = ref("all");
 
 /** 把表格行按"类型"列聚合成饼图要的 [{type, count}]，用于"当前页"范围。 */
 const aggregateByType = (rows) => {
@@ -285,16 +339,21 @@ const linkageChartData = computed(() =>
 const alarmChartData = computed(() =>
   pickChartData(alarmChartScope.value, store.alarmTypeStatsAll, store.alarmTypeStats, store.alarmData)
 );
+const spikeChartData = computed(() =>
+  pickChartData(spikeChartScope.value, store.spikeTypeStatsAll, store.spikeTypeStats, store.spikeData)
+);
 
 const SCOPE_LABELS = { all: "全部", filtered: "当前筛选", page: "当前页" };
 const errChartTitle = computed(() => `故障类型分布（${SCOPE_LABELS[errChartScope.value]}）`);
 const safetyChartTitle = computed(() => `安全联锁类型分布（${SCOPE_LABELS[safetyChartScope.value]}）`);
 const linkageChartTitle = computed(() => `联动控制规则分布（${SCOPE_LABELS[linkageChartScope.value]}）`);
 const alarmChartTitle = computed(() => `安全告警类型分布（${SCOPE_LABELS[alarmChartScope.value]}）`);
+const spikeChartTitle = computed(() => `数据质量类型分布（${SCOPE_LABELS[spikeChartScope.value]}）`);
 const errChartHint = computed(() => `共 ${sumCount(errChartData.value)} 条`);
 const safetyChartHint = computed(() => `共 ${sumCount(safetyChartData.value)} 条`);
 const linkageChartHint = computed(() => `共 ${sumCount(linkageChartData.value)} 条`);
 const alarmChartHint = computed(() => `共 ${sumCount(alarmChartData.value)} 条`);
+const spikeChartHint = computed(() => `共 ${sumCount(spikeChartData.value)} 条`);
 
 // 故障记录是手写表格，也统一过滤 id/编号列。
 const headers = computed(() => {
@@ -317,6 +376,11 @@ const alarmHeaders = computed(() => {
   return data.length ? Object.keys(data[0]).filter(displayStore.isFieldVisible) : [];
 });
 
+const spikeHeaders = computed(() => {
+  const data = store.spikeData;
+  return data.length ? Object.keys(data[0]).filter(displayStore.isFieldVisible) : [];
+});
+
 const getSearchParams = () => ({
   keyword: keyword.value,
   startTime: dateRange.value?.[0] || null,
@@ -332,6 +396,7 @@ const handleSearch = async (page = 1, showLoading = true) => {
     safetyCurrentPage.value = 1;
     linkageCurrentPage.value = 1;
     alarmCurrentPage.value = 1;
+    spikeCurrentPage.value = 1;
     // 饼图的"全部"和"当前筛选"两种范围各拉一份，切换范围时纯前端切换、不用等请求；
     // "当前页"范围直接用表格数据聚合，不占请求。
     const tasks = [
@@ -354,6 +419,11 @@ const handleSearch = async (page = 1, showLoading = true) => {
     tasks.push(store.fetchAlarmData({ ...params, currentPage: 1, pageSize: alarmPageSize.value }));
     tasks.push(store.fetchAlarmTypeStats(params));
     tasks.push(store.fetchAlarmTypeStats({}, "all"));
+    if (showSpikeLog.value) {
+      tasks.push(store.fetchSpikeData({ ...params, currentPage: 1, pageSize: spikePageSize.value }));
+      tasks.push(store.fetchSpikeTypeStats(params));
+      tasks.push(store.fetchSpikeTypeStats({}, "all"));
+    }
     await Promise.all(tasks);
   } finally {
     if (showLoading) loading.value = false;
@@ -404,6 +474,17 @@ const handleAlarmPageSizeChange = (size) => {
   store.fetchAlarmData({ ...getSearchParams(), currentPage: 1, pageSize: size });
 };
 
+const handleSpikePageChange = (page) => {
+  spikeCurrentPage.value = page;
+  store.fetchSpikeData({ ...getSearchParams(), currentPage: page, pageSize: spikePageSize.value });
+};
+
+const handleSpikePageSizeChange = (size) => {
+  spikePageSize.value = size;
+  spikeCurrentPage.value = 1;
+  store.fetchSpikeData({ ...getSearchParams(), currentPage: 1, pageSize: size });
+};
+
 // WebSocket 推送新故障/告警数据时，用当前页码和筛选条件静默刷新（不切换 loading），
 // 让故障记录表格和饼图能实时看到最新数据，不用手动刷新页面。
 let unsubscribeError = null;
@@ -438,7 +519,7 @@ onUnmounted(() => {
   flex: 0 0 auto;
 }
 
-/* 故障记录/安全联锁记录/联动控制记录三个板块依次排列，从第二块起加一点间距。 */
+/* 故障记录/安全联锁记录/联动控制记录/安全告警记录/数据质量记录各板块依次排列，从第二块起加一点间距。 */
 .error-info-container + .error-info-container {
   margin-top: 8px;
 }

@@ -18,6 +18,7 @@
  *   service/linkageRules/config.js ... 正常状况联动
  *   service/quantityShutdown/config.js  定量停机
  *   service/alarm/config.js ......... 阈值告警
+ *   service/spikeFilter/config.js .... 数据质量（传感器跳变/毛刺过滤）
  *   service/operationHistory.js       操作历史记录模式
  *   service/switchDuration/config.js .. 首页开关运行时长显示
  *   controllers/intelligent/config.js  智能判定适配器
@@ -38,6 +39,7 @@ const PUMP_VELOCITY_CONTROL = require('../service/pumpVelocityControl/config')
 const LINKAGE_RULES = require('../service/linkageRules/config')
 const QUANTITY_SHUTDOWN = require('../service/quantityShutdown/config')
 const ALARM_RULES = require('../service/alarm/config')
+const SPIKE_FILTER = require('../service/spikeFilter/config')
 const SWITCH_DURATION_DISPLAY = require('../service/switchDuration/config')
 const INTELLIGENT_JUDGMENT = require('../controllers/intelligent/config')
 
@@ -63,6 +65,7 @@ const fullConfig = {
   COMPUTED_METRICS,
   SWITCH_DURATION_DISPLAY,
   ALARM_RULES,
+  SPIKE_FILTER,
 }
 
 /** 返回完整配置的深拷贝，防止调用方改到源对象。只给 GET /api/system-config 用。 */

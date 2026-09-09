@@ -1,12 +1,12 @@
 /**
- * 【干什么】"故障记录"页的数据源。同一个页面有 4 个互相独立的表格 + 饼图：
- * 故障(fault) / 安全联锁(safety) / 联动控制(linkage) / 阈值告警(alarm)。
- * 4 组各有一套 data/total/loading/typeStats/typeStatsAll 状态和一对 fetch 方法，
+ * 【干什么】"故障记录"页的数据源。同一个页面有 5 个互相独立的表格 + 饼图：
+ * 故障(fault) / 安全联锁(safety) / 联动控制(linkage) / 阈值告警(alarm) / 数据质量(spike)。
+ * 5 组各有一套 data/total/loading/typeStats/typeStatsAll 状态和一对 fetch 方法，
  * 都复用后端同一个 /errData + /errTypeStats 接口，靠 category 参数区分，各自分页互不影响。
  *
  * 【导出】useErrorStore()
  * 【状态】每组 4 个：<组>Data、<组>Total、<组>Loading、<组>TypeStats、<组>TypeStatsAll
- *        （组 = err(即fault) / safety / linkage / alarm）
+ *        （组 = err(即fault) / safety / linkage / alarm / spike）
  * 【方法】
  *   fetch<组>Data(params)                 → GET /api/errData?category=...     表格数据（关键字+时间+分页）
  *   fetch<组>TypeStats(params, scope)      → GET /api/errTypeStats?category=... 饼图统计
@@ -43,6 +43,11 @@ export const useErrorStore = defineStore('errorStore', () => {
   const alarmLoading = ref(false);
   const alarmTypeStats = ref([]);
   const alarmTypeStatsAll = ref([]);
+  const spikeData = ref([]);
+  const spikeTotal = ref(0);
+  const spikeLoading = ref(false);
+  const spikeTypeStats = ref([]);
+  const spikeTypeStatsAll = ref([]);
 
   const formatDateTime = (value) => {
     if (!value) return "";
@@ -192,6 +197,39 @@ export const useErrorStore = defineStore('errorStore', () => {
     }
   };
 
+  // 数据质量记录：复用同一个 /errData 接口，传 category=spike 只取传感器跳变/毛刺过滤
+  // 板块（SPIKE_FILTER）拦下的记录，跟上面四个表格各自分开分页、互不影响。
+  const fetchSpikeData = async (params = {}) => {
+    spikeLoading.value = true;
+    try {
+      const response = await api.get("/api/errData", {
+        params: {
+          category: "spike",
+          page: params.currentPage || 1,
+          keyword: params.keyword || "",
+          pageSize: params.pageSize || 5,
+          startTime: formatDateTime(params.startTime),
+          endTime: formatDateTime(params.endTime),
+        },
+      });
+
+      const res = response.data;
+      if (res.success) {
+        const list = res.data?.list || [];
+        const displayStore = useDisplayStore()
+        spikeData.value = list.map((item) => ({
+          ...item,
+          "报警时间": displayStore.formatTime(item["报警时间"]),
+        }));
+        spikeTotal.value = res.data?.total || list.length;
+      }
+    } catch (error) {
+      console.error("spikeData 请求失败:", error);
+    } finally {
+      spikeLoading.value = false;
+    }
+  };
+
   // scope='filtered'（默认）：复用列表筛选条件（关键字+时间范围），图表和表格看到同一批数据；
   // scope='all'：不带任何筛选条件，统计数据库里该类型的全部记录，存到单独一份 ref。
   const fetchErrTypeStats = async (params = {}, scope = "filtered") => {
@@ -279,6 +317,28 @@ export const useErrorStore = defineStore('errorStore', () => {
     }
   };
 
+  // 数据质量类型统计：复用同一个 /errTypeStats 接口，传 category=spike 只统计跳变/毛刺
+  // 记录自己的数据，跟上面四类统计完全分开，互不影响。
+  const fetchSpikeTypeStats = async (params = {}, scope = "filtered") => {
+    try {
+      const query = scope === "all" ? { category: "spike" } : {
+        category: "spike",
+        keyword: params.keyword || "",
+        startTime: formatDateTime(params.startTime),
+        endTime: formatDateTime(params.endTime),
+      };
+      const response = await api.get("/api/errTypeStats", { params: query });
+
+      const res = response.data;
+      if (res.success) {
+        if (scope === "all") spikeTypeStatsAll.value = res.data || [];
+        else spikeTypeStats.value = res.data || [];
+      }
+    } catch (error) {
+      console.error("spikeTypeStats 请求失败:", error);
+    }
+  };
+
   return {
     fetchErrData,
     fetchErrTypeStats,
@@ -288,6 +348,8 @@ export const useErrorStore = defineStore('errorStore', () => {
     fetchLinkageTypeStats,
     fetchAlarmData,
     fetchAlarmTypeStats,
+    fetchSpikeData,
+    fetchSpikeTypeStats,
     errData,
     errTypeStats,
     errTypeStatsAll,
@@ -308,5 +370,10 @@ export const useErrorStore = defineStore('errorStore', () => {
     alarmLoading,
     alarmTypeStats,
     alarmTypeStatsAll,
+    spikeData,
+    spikeTotal,
+    spikeLoading,
+    spikeTypeStats,
+    spikeTypeStatsAll,
   };
 });

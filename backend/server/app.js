@@ -24,6 +24,8 @@ const systemConfig = require('./config/systemConfig');
 const { startMonitor: startSafetyMonitor, onSafetyInterlock } = require('./service/safety/safetyInterlock');
 const { initFaultStateFromDb, onFault } = require('./service/faultStatus/faultStatus');
 const { onAlarm } = require('./service/alarm/evaluateRules');
+const { onSpike } = require('./service/spikeFilter/spikeFilter');
+const { onRelayStuck } = require('./service/spikeFilter/relayStuck');
 const { onHeaterBlocked } = require('./service/pidHeating/pidHeating');
 const mqttClient = require('./mqtt/index')
 
@@ -218,6 +220,20 @@ onSafetyInterlock((trigger) => {
 // 弹窗那样打断操作、要求用户复位。
 onAlarm((alarm) => {
     broadcast('alarm_triggered', alarm);
+});
+
+// 传感器数值跳变/毛刺被拦下时立即广播（不走节流）。性质是"轻微警告、提醒人工检查"，
+// 数据已经被拦住不入库、系统不需要用户做任何处置，所以前端同样用 AlarmNotifier.vue
+// 的非阻塞黄色通知展示，不做成模态弹窗。
+onSpike((trigger) => {
+    broadcast('spike_triggered', trigger);
+});
+
+// 继电器触点粘连/控制失效：指令已关但设备实际还在工作时立即广播（不走节流）。
+// trigger.level 区分两级——'warning' 是"实际状态与控制指令不符、正在自动重发关闭指令"，
+// 'fault' 是"重发全部无效、判定硬件故障"，后者必须人工断电检修，前端要一直显示到用户看到。
+onRelayStuck((trigger) => {
+    broadcast('relay_stuck_triggered', trigger);
 });
 
 // PID 恒温控制想开加热但水泵没开，被拦下来时立即广播（不走节流）——性质跟自定义

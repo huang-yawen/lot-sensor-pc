@@ -14,6 +14,8 @@ const { evaluatePidHeating, getPidHeatingStatus } = require('../../service/pidHe
 const { evaluatePumpVelocityControl } = require('../../service/pumpVelocityControl/pumpVelocityControl')
 const { evaluateQuantityShutdown } = require('../../service/quantityShutdown/quantityShutdown')
 const { compute: computeMetrics } = require('../../service/computedMetrics/computedMetrics')
+const { evaluateSpikeFilter } = require('../../service/spikeFilter/spikeFilter')
+const { evaluateRelayStuck } = require('../../service/spikeFilter/relayStuck')
 
 function parsePayload(payload) {
     // MQTT 载荷以 Buffer 对象到达，必须先解码为文本再解析，避免把二进制直接写库。
@@ -72,7 +74,8 @@ async function handleMessage(topic, payload) {
     console.log('[CombinedRealtime] Received message:', { topic, data: info })
 
     // 下面这一串按固定顺序依次执行：
-    //   1. 先存库（saveSensorData/saveBehaviorData）：把这条原始数据落库，供历史查询/图表展示。
+    //   1. 数据质量过滤 + 存库（evaluateSpikeFilter -> saveSensorData/saveBehaviorData）：
+    //      传感器数值里的跳变/毛刺先拦下不入库，行为数据不过滤、照常落库。
     //   2. 本地告警规则（evaluateRules）：按阈值判断，只记录不动手。
     //   3. 安全联锁（evaluateSafety）→ 故障状态机（evaluateFaultStatus）：异常时强制关闭水泵和加热。
     //   4. 正常状况联动（evaluateLinkageRules，9 条独立规则自由勾选组合）→ PID 恒温
@@ -84,7 +87,14 @@ async function handleMessage(topic, payload) {
     // "控制逻辑好像没生效"，先看日志里前面有没有某一步先报错了。
     try {
         // 同一条消息里既有传感器字段又有行为字段，两张表各自按字段映射表挑选自己需要的字段。
-        await saveSensorData(info)
+        // 数据质量（跳变/毛刺过滤）：只过滤传感器数值，行为数据（开关状态）照常入库。
+        const spike = await evaluateSpikeFilter(info)
+        for (const row of spike.flush) await saveSensorData(row)
+        if (spike.triggers.length) info._spikeTriggers = spike.triggers
+        // 数据质量规则二：继电器触点粘连/控制失效——指令已关但传感器显示仍在工作时，
+        // 自动重发关闭指令尝试恢复，重试无效则判定硬件故障、提示人工断电检修。
+        const relayTriggers = await evaluateRelayStuck(info)
+        if (relayTriggers.length) info._relayStuckTriggers = relayTriggers
         await saveBehaviorData(info)
         // 两类字段都已到齐，一次性评估告警规则即可，不必再分开各评估一次。
         const alarms = await evaluateRules(info)

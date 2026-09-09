@@ -20,6 +20,8 @@ import { ElNotification } from 'element-plus'
 import { connect, on as wsOn } from '@/utils/websocket'
 
 let unsubscribe = null
+let unsubscribeSpike = null
+let unsubscribeRelay = null
 
 function handleAlarmTriggered(alarm) {
   ElNotification({
@@ -31,13 +33,51 @@ function handleAlarmTriggered(alarm) {
   })
 }
 
+/**
+ * 数据质量板块（SPIKE_FILTER）检测到传感器数值跳变/毛刺时的轻微警告。
+ * 性质跟阈值告警一样是"提示、不需要用户处理"——数据已经被拦住不入库，系统会自己
+ * 判断这是毛刺还是真实变化，这里只是提醒人工去检查一下传感器接线/干扰，
+ * 所以同样用非阻塞的黄色 ElNotification，不做成模态弹窗。
+ */
+function handleSpikeTriggered(trigger) {
+  ElNotification({
+    title: '数据异常波动',
+    message: trigger.deviceNo ? `${trigger.message}（设备 ${trigger.deviceNo}）` : trigger.message,
+    type: 'warning',
+    duration: 6000,
+    position: 'top-right',
+  })
+}
+
+/**
+ * 数据质量板块规则二（继电器触点粘连/控制失效）的提示，分两级：
+ *   level='warning' —— 指令已关但设备还在工作，系统正在自动重发关闭指令尝试恢复。
+ *     还有救、不需要用户动手，用 6 秒自动消失的黄色通知。
+ *   level='fault'  —— 重发全部无效，判定为硬件故障。必须人工断电检修，所以用红色、
+ *     duration=0（不自动消失），逼着用户手动关掉，避免这条关键提示一闪而过被漏看。
+ */
+function handleRelayStuckTriggered(trigger) {
+  const isFault = trigger.level === 'fault'
+  ElNotification({
+    title: isFault ? '硬件故障：请立即断电检修' : '实际状态与控制指令不符',
+    message: trigger.deviceNo ? `${trigger.message}（设备 ${trigger.deviceNo}）` : trigger.message,
+    type: isFault ? 'error' : 'warning',
+    duration: isFault ? 0 : 6000,
+    position: 'top-right',
+  })
+}
+
 onMounted(() => {
   connect()
   unsubscribe = wsOn('alarm_triggered', handleAlarmTriggered)
+  unsubscribeSpike = wsOn('spike_triggered', handleSpikeTriggered)
+  unsubscribeRelay = wsOn('relay_stuck_triggered', handleRelayStuckTriggered)
 })
 
 onUnmounted(() => {
   unsubscribe?.()
+  unsubscribeSpike?.()
+  unsubscribeRelay?.()
 })
 </script>
 
