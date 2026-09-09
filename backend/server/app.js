@@ -24,8 +24,9 @@ const systemConfig = require('./config/systemConfig');
 const { startMonitor: startSafetyMonitor, onSafetyInterlock } = require('./service/safety/safetyInterlock');
 const { initFaultStateFromDb, onFault } = require('./service/faultStatus/faultStatus');
 const { onAlarm } = require('./service/alarm/evaluateRules');
-const { onSpike } = require('./service/spikeFilter/spikeFilter');
-const { onRelayStuck } = require('./service/spikeFilter/relayStuck');
+const { onSpike } = require('./service/dataQuality/spikeFilter');
+const { onRelayStuck } = require('./service/dataQuality/relayStuck');
+const { onSensorInverted } = require('./service/dataQuality/sensorInverted');
 const { onHeaterBlocked } = require('./service/pidHeating/pidHeating');
 const mqttClient = require('./mqtt/index')
 
@@ -234,6 +235,13 @@ onSpike((trigger) => {
 // 'fault' 是"重发全部无效、判定硬件故障"，后者必须人工断电检修，前端要一直显示到用户看到。
 onRelayStuck((trigger) => {
     broadcast('relay_stuck_triggered', trigger);
+});
+
+// 逆温差/传感器装反：判定成立时广播 level='warning'（同时已暂停恒温控制），
+// 温差关系恢复正常、恒温控制自动重新启用时广播 level='recovered'——后者必须让用户看到，
+// 否则"恒温什么时候恢复的"只能翻后端日志。
+onSensorInverted((trigger) => {
+    broadcast('sensor_inverted_triggered', trigger);
 });
 
 // PID 恒温控制想开加热但水泵没开，被拦下来时立即广播（不走节流）——性质跟自定义

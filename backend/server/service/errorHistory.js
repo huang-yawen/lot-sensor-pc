@@ -7,17 +7,21 @@ const promisePool = require('../config/dbPool')
 const { DEFAULT_PAGE_SIZE } = require('../config/appSettings')
 const { FAULT_TYPES } = require('./faultStatus/faultStatus')
 const { LINKAGE_RULE_NAMES } = require('./linkageRules/linkageRules')
-const { SPIKE_TYPES } = require('./spikeFilter/spikeFilter')
-const { RELAY_TYPES } = require('./spikeFilter/relayStuck')
+const { SPIKE_TYPES } = require('./dataQuality/spikeFilter')
+const { RELAY_TYPES } = require('./dataQuality/relayStuck')
+const { INVERTED_TYPES } = require('./dataQuality/sensorInverted')
 
 /* ==================== e_no -> 中文名 对照 ==================== */
 
 /** 故障 e_no -> 中文名，直接复用 faultStatus.js 的定义，不重复写一份。 */
 const FAULT_NAMES = Object.fromEntries(FAULT_TYPES.map(f => [f.id, f.name]))
 
-/** 数据质量板块两条规则的 e_no -> 中文名，跟故障一样直接复用板块自己导出的类型表：
- * SPIKE_TYPES 是规则一（数值跳变/毛刺），RELAY_TYPES 是规则二（继电器粘连/控制失效）。 */
-const SPIKE_NAMES = Object.fromEntries([...SPIKE_TYPES, ...RELAY_TYPES].map(t => [t.id, t.name]))
+/** 数据质量板块三条规则的 e_no -> 中文名，跟故障一样直接复用板块自己导出的类型表：
+ * SPIKE_TYPES 是规则一（数值跳变/毛刺），RELAY_TYPES 是规则二（继电器粘连/控制失效），
+ * INVERTED_TYPES 是规则三（逆温差/传感器装反）。 */
+const DATA_QUALITY_NAMES = Object.fromEntries(
+  [...SPIKE_TYPES, ...RELAY_TYPES, ...INVERTED_TYPES].map(t => [t.id, t.name])
+)
 
 /**
  * 安全联锁 e_no -> 中文名。safetyInterlock.js 里的触发条件是内联写在函数里的，没有像
@@ -63,7 +67,7 @@ function friendlyName(category, eNo, fallbackType) {
   if (category === 'alarm') return fallbackType || '未知类型'
   const map = category === 'safety' ? SAFETY_TRIGGER_NAMES
     : category === 'linkage' ? LINKAGE_RULE_NAMES
-    : category === 'spike' ? SPIKE_NAMES
+    : category === 'spike' ? DATA_QUALITY_NAMES
     : FAULT_NAMES
   return (eNo && map[eNo]) || fallbackType || '未知类型'
 }

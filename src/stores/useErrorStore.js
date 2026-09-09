@@ -198,7 +198,7 @@ export const useErrorStore = defineStore('errorStore', () => {
   };
 
   // 数据质量记录：复用同一个 /errData 接口，传 category=spike 只取传感器跳变/毛刺过滤
-  // 板块（SPIKE_FILTER）拦下的记录，跟上面四个表格各自分开分页、互不影响。
+  // 板块（DATA_QUALITY）拦下的记录，跟上面四个表格各自分开分页、互不影响。
   const fetchSpikeData = async (params = {}) => {
     spikeLoading.value = true;
     try {

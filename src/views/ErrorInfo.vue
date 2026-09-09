@@ -293,9 +293,9 @@ const linkagePageSize = ref(5);
 const alarmCurrentPage = ref(1);
 const alarmPageSize = ref(5);
 
-// 数据质量记录表格是否显示，由配置中心 SPIKE_FILTER.showOnErrorPage 控制，
+// 数据质量记录表格是否显示，由配置中心 DATA_QUALITY.showOnErrorPage 控制，
 // 跟安全联锁记录用 SAFETY_INTERLOCK.showOnErrorPage 是同一套约定。
-const showSpikeLog = computed(() => systemStore.config.SPIKE_FILTER?.showOnErrorPage !== false);
+const showSpikeLog = computed(() => systemStore.config.DATA_QUALITY?.showOnErrorPage !== false);
 const spikeCurrentPage = ref(1);
 const spikePageSize = ref(5);
 

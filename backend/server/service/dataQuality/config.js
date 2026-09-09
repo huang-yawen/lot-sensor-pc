@@ -3,10 +3,11 @@
  * 目前包含两条规则，逻辑分别在同目录：
  *   规则一 spikeFilter.js  传感器数值跳变/毛刺  —— 检测 + 防抖过滤 + 轻微告警
  *   规则二 relayStuck.js   继电器触点粘连/控制失效 —— 检测 + 自动重发关闭指令 + 硬件故障判定
+ *   规则三 sensorInverted.js 逆温差/传感器装反 —— 检测 + 提示检查硬件拓扑 + 暂停恒温控制
  * 【值的来源】新增板块，下面是首次设定的默认值。改完重启后端生效。
- * 【谁在读】spikeFilter.js / relayStuck.js 本身；config/systemConfig.js（拼进
+ * 【谁在读】spikeFilter.js / relayStuck.js / sensorInverted.js 本身；config/systemConfig.js（拼进
  * GET /api/system-config 给前端读 showOnErrorPage）。
- * 当前状态：板块总开关开着（enabled=true），两条规则都开着。
+ * 当前状态：板块总开关开着（enabled=true），三条规则都开着。
  */
 module.exports = {
   // 板块总开关。关掉后两条规则都不生效（数据一律原样入库、不做任何检测）。
@@ -76,5 +77,30 @@ module.exports = {
     // 自动重发关闭指令的次数和间隔。发满 retryCount 次仍未恢复才判硬件故障。
     retryCount: 3,
     retryIntervalMs: 3000,
+  },
+
+  // ==================== 规则三：逆温差 / 传感器装反 ====================
+  // 判定口径：出水温度 < 进水温度，且温差 > tempDiffThreshold，
+  //           同时加热模块已开启超过 heatingMinMs。
+  // 处置：①报"传感器逻辑配置异常"，提示检查硬件拓扑 ②暂停自动恒温控制，
+  //       防止 PID 因为被控量方向反了而正反馈超温。详见 sensorInverted.js 文件头。
+  sensorInverted: {
+    enabled: true,
+
+    // 进水 − 出水 超过这么多（℃）才算"逆温差"。要比两路传感器之间的测量误差大，
+    // 否则两个探头本身的偏差就会误报。
+    tempDiffThreshold: 2,
+
+    // 加热模块开启超过这么久（毫秒，默认 3 分钟）才开始判。刚开加热时水还没热起来，
+    // 出水比进水冷是正常的。
+    heatingMinMs: 180000,
+
+    // 加热"连续关闭"超过这么久（毫秒）才认为本轮加热结束、把上面那个计时清零。
+    // 为什么需要：PID 恒温是时间比例控制，加热开关会被高频通断，一关就清零的话
+    // 3 分钟永远攒不满、这条规则等于失效。
+    heatingOffResetMs: 30000,
+
+    // 判定成立后是否暂停自动恒温控制（pidHeating）。设 false 就只报警不停机。
+    suspendThermostat: true,
   },
 }

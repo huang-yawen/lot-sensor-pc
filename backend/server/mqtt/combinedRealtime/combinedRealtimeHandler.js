@@ -13,9 +13,11 @@ const { evaluateFaultStatus } = require('../../service/faultStatus/faultStatus')
 const { evaluatePidHeating, getPidHeatingStatus } = require('../../service/pidHeating/pidHeating')
 const { evaluatePumpVelocityControl } = require('../../service/pumpVelocityControl/pumpVelocityControl')
 const { evaluateQuantityShutdown } = require('../../service/quantityShutdown/quantityShutdown')
+const { evaluateTempShutdown } = require('../../service/tempShutdown/tempShutdown')
 const { compute: computeMetrics } = require('../../service/computedMetrics/computedMetrics')
-const { evaluateSpikeFilter } = require('../../service/spikeFilter/spikeFilter')
-const { evaluateRelayStuck } = require('../../service/spikeFilter/relayStuck')
+const { evaluateSpikeFilter } = require('../../service/dataQuality/spikeFilter')
+const { evaluateRelayStuck } = require('../../service/dataQuality/relayStuck')
+const { evaluateSensorInverted } = require('../../service/dataQuality/sensorInverted')
 
 function parsePayload(payload) {
     // MQTT 载荷以 Buffer 对象到达，必须先解码为文本再解析，避免把二进制直接写库。
@@ -95,6 +97,10 @@ async function handleMessage(topic, payload) {
         // 自动重发关闭指令尝试恢复，重试无效则判定硬件故障、提示人工断电检修。
         const relayTriggers = await evaluateRelayStuck(info)
         if (relayTriggers.length) info._relayStuckTriggers = relayTriggers
+        // 数据质量规则三：逆温差/传感器装反——加热开够久了出水反而比进水冷，判定两路接反，
+        // 提示检查硬件拓扑并暂停自动恒温控制（PID 被控量方向反了会正反馈超温）。
+        const invertedTriggers = await evaluateSensorInverted(info)
+        if (invertedTriggers.length) info._sensorInvertedTriggers = invertedTriggers
         await saveBehaviorData(info)
         // 两类字段都已到齐，一次性评估告警规则即可，不必再分开各评估一次。
         const alarms = await evaluateRules(info)
@@ -125,6 +131,9 @@ async function handleMessage(topic, payload) {
         // 定量停机：累计流量达到目标后关闭水泵和加热。
         const qtyResult = await evaluateQuantityShutdown(info, flowTimestampMs)
         if (qtyResult) info._quantityShutdown = qtyResult
+        // 定温停机：出水温度达到阈值后关闭水泵和加热（与定量停机对称）。
+        const tempResult = await evaluateTempShutdown(info)
+        if (tempResult) info._tempShutdown = tempResult
         // “需要计算的数据”实时派生指标。
         await computeMetrics(info, flowTimestampMs)
         return info

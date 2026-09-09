@@ -22,6 +22,7 @@ import { connect, on as wsOn } from '@/utils/websocket'
 let unsubscribe = null
 let unsubscribeSpike = null
 let unsubscribeRelay = null
+let unsubscribeInverted = null
 
 function handleAlarmTriggered(alarm) {
   ElNotification({
@@ -34,7 +35,7 @@ function handleAlarmTriggered(alarm) {
 }
 
 /**
- * 数据质量板块（SPIKE_FILTER）检测到传感器数值跳变/毛刺时的轻微警告。
+ * 数据质量板块（DATA_QUALITY）检测到传感器数值跳变/毛刺时的轻微警告。
  * 性质跟阈值告警一样是"提示、不需要用户处理"——数据已经被拦住不入库，系统会自己
  * 判断这是毛刺还是真实变化，这里只是提醒人工去检查一下传感器接线/干扰，
  * 所以同样用非阻塞的黄色 ElNotification，不做成模态弹窗。
@@ -67,17 +68,37 @@ function handleRelayStuckTriggered(trigger) {
   })
 }
 
+/**
+ * 数据质量板块规则三（逆温差/传感器装反）的提示，分两级：
+ *   level='warning'   —— 判定两路温度传感器接反，恒温控制已被暂停。这条要用户去改硬件
+ *     接线才能解决，所以用红色 duration=0（不自动消失），避免一闪而过被漏看。
+ *   level='recovered' —— 温差关系恢复正常、恒温控制自动重新启用，用绿色成功提示告知，
+ *     否则用户不知道系统什么时候恢复了自动控制。
+ */
+function handleSensorInvertedTriggered(trigger) {
+  const recovered = trigger.level === 'recovered'
+  ElNotification({
+    title: recovered ? '恒温控制已恢复' : '传感器逻辑配置异常',
+    message: trigger.deviceNo ? `${trigger.message}（设备 ${trigger.deviceNo}）` : trigger.message,
+    type: recovered ? 'success' : 'error',
+    duration: recovered ? 6000 : 0,
+    position: 'top-right',
+  })
+}
+
 onMounted(() => {
   connect()
   unsubscribe = wsOn('alarm_triggered', handleAlarmTriggered)
   unsubscribeSpike = wsOn('spike_triggered', handleSpikeTriggered)
   unsubscribeRelay = wsOn('relay_stuck_triggered', handleRelayStuckTriggered)
+  unsubscribeInverted = wsOn('sensor_inverted_triggered', handleSensorInvertedTriggered)
 })
 
 onUnmounted(() => {
   unsubscribe?.()
   unsubscribeSpike?.()
   unsubscribeRelay?.()
+  unsubscribeInverted?.()
 })
 </script>
 

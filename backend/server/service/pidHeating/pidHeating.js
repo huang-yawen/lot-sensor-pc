@@ -58,6 +58,7 @@ const { MQTT_QOS } = require('../../config/mqtt')
 const { firstValue, getTopic, buildSwitchPayload } = require('../../utils/protocol')
 const { resolveDeviceNo, resolveFieldAliases } = require('../../utils/mappedData')
 const { getDirectValue, saveDirectData } = require('../directData/saveDirectConfig')
+const { isThermostatSuspended } = require('../dataQuality/sensorInverted')
 // 控制模式（手动/自动）统一走 getControlMode，跟 pumpVelocityControl.js 对称。
 const { getCurrentMode } = require('../directData/getControlMode')
 const { saveOperationHistory } = require('../operationHistory')
@@ -303,6 +304,13 @@ async function evaluatePidHeating(info) {
     if (isLockedByFault(deviceNo)) return []
   }
 
+
+  // ====== 传感器逻辑异常短路 ======
+  // 数据质量板块（规则三 sensorInverted）判定进出水两路温度接反后会暂停恒温控制：
+  // PID 的被控量是 T2 出水温度，两路接反时它读到的其实是进水温度——水越热读数越低，
+  // PID 会判断"还不够热"继续加大功率，形成正反馈一路冲到超温。这不是调参能救的问题，
+  // 必须停下来等人工改接线。逆温差症状消失后 sensorInverted 会自动解除暂停。
+  if (isThermostatSuspended(deviceNo)) return []
 
   // ====== 手动模式短路 ======
   // 跟 pumpVelocityControl.js 对称：手动模式下提前 return []，省掉 isPidEnabled

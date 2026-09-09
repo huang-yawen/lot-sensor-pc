@@ -27,7 +27,7 @@
  * 真正的"异常就停机"是安全联锁（safety/）和故障状态机（faultStatus/）的职责，
  * 它们各有自己的判定和复位流程，这里越权动手会和那两块打架。
  *
- * 【配置】SPIKE_FILTER.relayStuck 见同目录 config.js，改后需重启后端。
+ * 【配置】DATA_QUALITY.relayStuck 见同目录 config.js，改后需重启后端。
  */
 
 // ========== 赛场速改索引（要改什么 -> 去哪） ==========

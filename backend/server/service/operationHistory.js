@@ -157,6 +157,7 @@ async function getOperationHistory({ currentPage = 1, pageSize = 5, startTime = 
                WHEN 'calibration' THEN '自动校时'
                WHEN 'auto_control' THEN '自动控制'
                WHEN 'quantity_shutdown' THEN '定量停机'
+               WHEN 'temp_shutdown' THEN '定温停机'
                WHEN 'schedule' THEN '定时任务'
                WHEN 'auto' THEN '底层设备'
                WHEN 'device' THEN '底层设备'
