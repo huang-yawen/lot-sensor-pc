@@ -253,9 +253,10 @@ outletBlockage: true,  // ② 出水口堵塞
 dryBurn: true,         // ③ 干烧
 pumpIdle: true,        // ④ 水泵空转
 pumpFault: true,       // ⑤ 水泵故障
+pipeLeak: true,        // ⑥ 管道漏水（流量>上限 且 压力<下限或=0）
 dryBurnDurationMs: 60000, dryBurnMinRiseC: 0.1, pumpWarmupMs: 3000, ...
 ```
-`faultStatus.js` 文件头有五种故障的判定逻辑和优先级说明。重启后端。
+`faultStatus.js` 文件头有六种故障的判定逻辑和优先级说明。重启后端。
 
 ### 3.4 开关联动规则 / 组合
 `service/linkageRules/config.js`：
@@ -550,7 +551,7 @@ backend/server/
 │  └─ intelligent/{recognize.js, config.js} ... 智能判定（config.js 全是现场适配参数）
 ├─ service/
 │  ├─ safety/{safetyInterlock.js, config.js} .. 安全联锁
-│  ├─ faultStatus/{faultStatus.js, config.js} . 五种硬故障
+│  ├─ faultStatus/{faultStatus.js, config.js} . 六种硬故障
 │  ├─ linkageRules/{linkageRules.js, config.js} 正常工况联动（9 条规则）
 │  ├─ pidHeating/{pidHeating.js, config.js} ... PID 恒温
 │  ├─ pumpVelocityControl/{...,config.js} ..... 恒流速

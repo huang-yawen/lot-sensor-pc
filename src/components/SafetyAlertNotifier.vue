@@ -26,6 +26,7 @@ function handleSafetyTriggered(trigger) {
     type: 'error',
     duration: 10000, // 停留 10 秒，也可手动关；比阈值告警的 6 秒长
     position: 'top-right',
+    offset: 50, // 距离顶部 30px，避免太靠上
   })
 }
 

@@ -1,22 +1,23 @@
 /**
- * 【文件职责】故障状态服务：检测五种硬故障，触发后保存故障前快照、强制关闭水泵和加热、
+ * 【文件职责】故障状态服务：检测六种硬故障，触发后保存故障前快照、强制关闭水泵和加热、
  *   把系统状态切到 FAULT、复位按钮自动拨到"开"（仅 UI 显示，不修改硬件），并锁定指令页面
  *   的其他开关（只读；阈值/参数类指令项不锁，故障期间可以继续调整），用户人工修复设备后
  *   手动把复位按钮拨回"关"，系统按快照恢复所有参数和开关显示、按快照重启执行器，回到 NORMAL。
  *
- * === 五种故障检测逻辑（编号对应需求文档）===
+ * === 六种故障检测逻辑（编号对应需求文档）===
  *   ① pipe_blockage      进水口/管道堵塞：水泵预热完成后压力 < 压力下限 OR 压力 > 压力上限
  *   ② outlet_blockage    出水口堵塞：水泵预热完成后流量 < 流量下限
  *   ③ dry_burn           干烧：加热器开启后连续 dryBurnDurationMs (默认 5000ms)
  *                          出水温度变化 < dryBurnMinRiseC (默认 0.1℃)
  *   ④ pump_idle          水泵空转：水泵预热完成，流量传感器读数 == 0
  *   ⑤ pump_fault         水泵故障：水泵预热完成，进出水温差 > tempDiffThreshold
- * ①②④⑤ 共用同一个"预热"前置条件：水泵必须已经连续开启满 pumpWarmupMs（默认
+ *   ⑥ pipe_leak          管道漏水：水泵预热完成后流量 > 流量上限 AND (压力 < 压力下限 OR 压力=0)
+ * ①②④⑤⑥ 共用同一个"预热"前置条件：水泵必须已经连续开启满 pumpWarmupMs（默认
  * 5000ms，配置中心设置）才开始判断，水泵刚启动的瞬间压力/流量/温差还没稳定，直接拿
  * "水泵开着"当条件容易在启动瞬间误判。
  *
  * === 故障优先级（同时触发时按此排序取最高优先级处理和显示）===
- *   干烧(③) > 管道堵塞(①) > 水泵故障(⑤) > 水泵空转(④) > 出水口堵塞(②)
+ *   干烧(③) > 管道堵塞(①) > 管道漏水(⑥) > 水泵故障(⑤) > 水泵空转(④) > 出水口堵塞(②)
  *
  * === 复位按钮状态机 ===
  *   | 当前状态 | 触发条件 | 动作 | 下一状态 |
@@ -29,23 +30,23 @@
  *   立即重新触发故障，再次保存快照、全关执行器、复位自动变 on。
  *
  * === 配置中心关联 ===
- *   FAULT_STATUS 见对应 config.js（enabled / alarmCooldownMs / 五种故障独立开关 /
- *   dryBurnDurationMs / dryBurnMinRiseC）。flowLow/pressureLow/pressureHigh 只从指令中心
- *   t_direct 实时读取；温差阈值（tempDiff）指令中心配置了就优先用指令中心的，没配置时
- *   退回 FAULT_STATUS.tempDiffThreshold 兜底（跟 PID 的 Kp/Ki/Kd 同一套"指令中心优先、
+ *   FAULT_STATUS 见对应 config.js（enabled / alarmCooldownMs / 六种故障独立开关 /
+ *   dryBurnDurationMs / dryBurnMinRiseC）。flowLow/flowHigh/pressureLow/pressureHigh
+ *   只从指令中心 t_direct 实时读取；温差阈值（tempDiff）指令中心配置了就优先用指令中心的，
+ *   没配置时退回 FAULT_STATUS.tempDiffThreshold 兜底（跟 PID 的 Kp/Ki/Kd 同一套"指令中心优先、
  *   配置中心兜底"模式）。
  */
 
 // ========== 赛场速改索引（要改什么 → 去哪） ==========
-//  关掉故障保护         config.js enabled=false（或逐条关 pipeBlockage/dryBurn/pumpIdle/...）
+//  关掉故障保护         config.js enabled=false（或逐条关 pipeBlockage/dryBurn/pumpIdle/pumpFault/pipeLeak/...）
 //  改干烧计时/温差等     config.js（dryBurnDurationMs/dryBurnMinRiseC/tempDiffThreshold/pumpWarmupMs）
-//  改压力/流量下限等阈值  指令中心 t_direct，不在本文件
-//  五种故障怎么判        detectFault() 约 L196（干烧另有 checkDryBurn() 约 L166）
+//  改压力/流量上下限等阈值 指令中心 t_direct，不在本文件
+//  六种故障怎么判        detectFault() 约 L196（干烧另有 checkDryBurn() 约 L166）
 //  触发后做什么          triggerFault() 约 L312
 //  复位按钮拨回后恢复    handleResetButtonOff() 约 L384
 //  每条消息的入口        evaluateFaultStatus() 约 L480
 // ===================================================
-// 故障状态自己的开关和参数（总开关、五种故障、预热宽限、干烧计时等）都在这里。
+// 故障状态自己的开关和参数（总开关、六种故障、预热宽限、干烧计时等）都在这里。
 const CONFIG = require('./config')
 const { SINGLE_DEVICE_MODE } = require('../../config/appSettings')
 const { getDefaultDeviceId, getAllDeviceIds } = require('../../utils/mappedData')
@@ -82,6 +83,7 @@ const {
 const FAULT_TYPES = [
   { id: 'dry_burn',        code: '③', priority: 1, name: '干烧',         detail: '加热开启后温度长时间未变化' },
   { id: 'pipe_blockage',   code: '①', priority: 2, name: '进水口/管道堵塞', detail: '压力超出上下限范围' },
+  { id: 'pipe_leak',       code: '⑥', priority: 2.5, name: '管道漏水',     detail: '流量超上限且压力低于下限或为0' },
   { id: 'pump_fault',      code: '⑤', priority: 3, name: '水泵故障',      detail: '水泵开启时进出水温差超过阈值' },
   { id: 'pump_idle',       code: '④', priority: 4, name: '水泵空转',      detail: '水泵开启但流量为 0' },
   { id: 'outlet_blockage', code: '②', priority: 5, name: '出水口堵塞',    detail: '流量低于下限阈值' },
@@ -159,7 +161,7 @@ async function recordAlarm(deviceNo, trigger) {
 }
 
 /* ============================================================
- * 4. 五种故障检测（按需求文档编号）
+ * 4. 六种故障检测（按需求文档编号）
  * ============================================================ */
 
 /** ③ 干烧：加热开启后，连续 dryBurnDurationMs 出水温度变化 < dryBurnMinRiseC。 */
@@ -188,8 +190,8 @@ function checkDryBurn(deviceNo, heatOn, tempOut, faultConfig) {
 }
 
 /**
- * 主评估：检测五种故障，按优先级取最高的一个返回。
- * 多故障同时命中时，只触发优先级最高的那个（避免一份报警里塞五种故障）。
+ * 主评估：检测六种故障，按优先级取最高的一个返回。
+ * 多故障同时命中时，只触发优先级最高的那个（避免一份报警里塞六种故障）。
  *
  * @returns {Object|null} { id, code, priority, name, detail } 或 null
  */
@@ -199,8 +201,9 @@ async function detectFault(info, deviceNo, faultConfig) {
 
   const pumpOnDurationMs = trackPumpOnDuration(deviceNo, states.pumpOn === true)
 
-  const [flowLow, pressureLow, pressureHigh, tempDiffFromDirect, warmupMs, dryBurnDurationMs, dryBurnMinRiseC] = await Promise.all([
+  const [flowLow, flowHigh, pressureLow, pressureHigh, tempDiffFromDirect, warmupMs, dryBurnDurationMs, dryBurnMinRiseC] = await Promise.all([
     getThresholdValue('flowLow', deviceNo),
+    getThresholdValue('flowHigh', deviceNo),
     getThresholdValue('pressureLow', deviceNo),
     getThresholdValue('pressureHigh', deviceNo),
     getThresholdValue('tempDiff', deviceNo),
@@ -210,7 +213,7 @@ async function detectFault(info, deviceNo, faultConfig) {
     getNumberValue('dry_burn_min_rise', deviceNo, faultConfig.dryBurnMinRiseC, 0.1),
   ])
 
-  // 水泵开启满 warmupMs 才算"预热完成"，②④⑤三条故障都要求预热完成才判断，
+  // 水泵开启满 warmupMs 才算"预热完成"，②④⑤⑥四条故障都要求预热完成才判断，
   // 避免水泵刚启动、流量/温差还没稳定的瞬间被误判。
   const pumpWarmedUp = pumpOnDurationMs != null && pumpOnDurationMs >= warmupMs
 
@@ -281,6 +284,24 @@ async function detectFault(info, deviceNo, faultConfig) {
         id: 'pump_fault', code: '⑤', priority: 3,
         name: '水泵故障',
         detail: `进出水温差=${diff.toFixed(2)} > 阈值=${tempDiffThreshold}`,
+      })
+    }
+  }
+
+  // ⑥ 管道漏水：水泵预热完成后，流量 > 上限 AND (压力 < 下限 OR 压力 = 0)
+  // 物理依据：管道漏水时，水从漏洞流走，管路阻力减小导致流量异常增大；
+  // 同时泄漏点保不住压，压力显著降低甚至归零。两个条件同时满足才判定为漏水
+  // （只有流量大不一定是漏水，比如阀门开大了；只有压力低也不一定是，比如水泵功率不足）。
+  // flowHigh/pressureLow 都从指令中心实时读取，跟其余阈值同口径，改后即时生效。
+  if (faultConfig.pipeLeak !== false && pumpWarmedUp && sensors.flow != null && flowHigh != null && sensors.flow > flowHigh) {
+    const pressureAbnormal = sensors.pressure == null
+      || sensors.pressure === 0
+      || (pressureLow != null && sensors.pressure < pressureLow)
+    if (pressureAbnormal) {
+      triggers.push({
+        id: 'pipe_leak', code: '⑥', priority: 2.5,
+        name: '管道漏水',
+        detail: `流量=${sensors.flow} > 上限=${flowHigh}，压力=${sensors.pressure ?? '无读数'}${pressureLow != null ? `，下限=${pressureLow}` : ''}`,
       })
     }
   }
@@ -467,7 +488,7 @@ async function handleResetButtonOff(deviceNo) {
  * 每条 MQTT 消息到达后调用。
  * 流程：
  *   - FAULT_STATUS.enabled 关闭则跳过
- *   - 系统处于 NORMAL 态：检测五种故障，命中则进入故障态（首次触发）
+ *   - 系统处于 NORMAL 态：检测六种故障，命中则进入故障态（首次触发）
  *   - 系统处于 FAULT 态且当前故障类型一致：不重复触发（cooldown 兜底）
  *   - 系统处于 FAULT 态但出现了更高优先级的故障：用新故障覆盖当前故障
  *   - 系统处于 FAULT 态且当前数据已不构成故障：保持 FAULT 态等用户手动复位

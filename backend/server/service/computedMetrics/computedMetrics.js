@@ -210,14 +210,15 @@ async function compute(info, timestampMs = Date.now(), knownDeviceNo = undefined
   // 一个固定值不动（变化率趋近 0），短路则可能让读数瞬间冲高或掉底——靠
   // "变化率是否符合物理常理"，比只盯着温度绝对值本身更快发现传感器异常。
   if (state.last) {
-    const dtSec = (nowMs - state.last.timestamp) / 1000
-    if (dtSec > 0) {
-      const rate1 = temp1 != null && state.last.temp1 != null ? (temp1 - state.last.temp1) / dtSec : null
-      const rate2 = temp2 != null && state.last.temp2 != null ? (temp2 - state.last.temp2) / dtSec : null
+    const dtMin = (nowMs - state.last.timestamp) / 60000
+    if (dtMin > 0) {
+      // 单位 ℃/min：温差 / Δt(分钟)。跟加热速度(指标3.1)同口径。
+      const rate1 = temp1 != null && state.last.temp1 != null ? (temp1 - state.last.temp1) / dtMin : null
+      const rate2 = temp2 != null && state.last.temp2 != null ? (temp2 - state.last.temp2) / dtMin : null
       result.tempChangeRate = {
         temp1: rate1 == null ? null : Number(rate1.toFixed(3)),
         temp2: rate2 == null ? null : Number(rate2.toFixed(3)),
-        unit: '℃/s',
+        unit: '℃/min',
       }
     }
   }
@@ -349,21 +350,46 @@ async function compute(info, timestampMs = Date.now(), knownDeviceNo = undefined
     }
   }
 
-  // ---- 9. 液位（基于两水箱初始水量与累计流量） ----
-  // 隐含的物理布局假设：水从水箱 1 被抽出、流经管路和加热器，最终流进水箱 2
-  // （所以水箱 1 的水量是"初始量 - 累计流量"、水箱 2 是"初始量 + 累计流量"）。
-  // 这不是靠液位传感器实测出来的，是纯粹靠累计流量反推的估算值——现场如果
-  // 循环方向不是"1 抽到 2"，或者中途有额外补水/排水，这个估算会跟实际不符。
+  // ---- 9. 液位（水循环系统：两水箱总水量恒定，水泵工作时两边趋于平衡） ----
+  // 物理依据：本系统是闭环水循环——水从水箱1被水泵抽出，流经管路和加热器，
+  // 最终回流到水箱2。因为是循环回路，水并没有真正"离开"系统，两水箱的总水量
+  // 始终恒定 = initial1 + initial2（质量守恒）。
+  // 水泵开启时，水从一边抽出同时另一边被注入，两边流速相等，液位会趋于平衡
+  // （只会有一个微小的、跟流量和水箱面积相关的稳态液位差，不会随时间累积）。
+  // 水泵关闭时，两边液位最终也会因连通原理趋于平衡。
+  // 因此两边液位都显示总水量的一半（即平均值），这符合水循环系统的真实物理特性，
+  // 不会像旧算法那样让两边差距随累计流量无限放大。
+  // ⚠ 这依然是基于初始水量和体积守恒的估算，不是液位传感器实测值；
+  //   现场如果有额外补水/排水操作，需要手动调整 initialWaterTank1/initialWaterTank2。
   const tankAreaCm2 = Number(config.tankAreaCm2)
   if (tankAreaCm2 > 0) {
     const initial1 = Number(config.initialWaterTank1)
     const initial2 = Number(config.initialWaterTank2)
-    const water1 = Math.max(0, initial1 - state.cumulativeFlowL)
-    const water2 = Math.max(0, initial2 + state.cumulativeFlowL)
+    // 总水量恒定（水循环不损失）
+    const totalWater = Math.max(0, initial1 + initial2)
+    // 两边液位趋于相等（闭环循环，水泵工作时抽注平衡）
+    const waterEach = totalWater / 2
     const cmFromLiters = liters => (liters * 1000) / tankAreaCm2 // 1L=1000cm³，高度cm
+    const baseCm = cmFromLiters(waterEach)
+
+    // 水泵开启时，抽水侧(tank1)液位略低、注水侧(tank2)略高。
+    // 稳态液位差跟流量成正比、跟水箱面积成反比，但不会随时间累积（闭环循环）。
+    // 系数 0.5 是经验值，上限 2cm 避免极端流量时输出不合理值；水泵关时差为0，两边完全相等。
+    const pumpRunning = switches.pumpOn === true
+    const flow = flowLPerSec || 0
+    const levelDiffCm = pumpRunning && flow > 0
+      ? Math.min(2, flow * 1000 * 0.5 / tankAreaCm2)
+      : 0
+    const halfDiff = levelDiffCm / 2
     result.waterLevel = {
-      tank1: { liters: Number(water1.toFixed(2)), levelCm: Number(cmFromLiters(water1).toFixed(2)) },
-      tank2: { liters: Number(water2.toFixed(2)), levelCm: Number(cmFromLiters(water2).toFixed(2)) },
+      tank1: {
+        liters: Number((waterEach - halfDiff * tankAreaCm2 / 1000).toFixed(2)),
+        levelCm: Number((baseCm - halfDiff).toFixed(2)),
+      },
+      tank2: {
+        liters: Number((waterEach + halfDiff * tankAreaCm2 / 1000).toFixed(2)),
+        levelCm: Number((baseCm + halfDiff).toFixed(2)),
+      },
       unit: 'cm',
     }
   }

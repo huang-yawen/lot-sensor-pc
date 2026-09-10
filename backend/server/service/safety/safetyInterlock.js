@@ -1,31 +1,28 @@
 /**
- * 【文件职责】安全联锁服务：每收到一条设备上报，按规则表逐条判断，命中就下发规则
- * 自己指定的动作，并往 t_error_msg 写一条记录（type='安全联锁'）。
+ * 【文件职责】安全联锁服务：每收到一条设备上报，逐条判断安全联锁条件，命中就
+ *   下发对应的动作，并往 t_error_msg 写一条记录（type='安全联锁'）。
  *
- * ★ 判断条件和触发后干什么，全部写在同目录 config.js 的 rules 数组里 ★
- *   本文件只负责"跑规则"这件事，不含任何具体的判断条件，也没有写死的动作——
- *   要改安全联锁的行为，改 config.js 就够了，不用动这个文件。
+ * ★★ 赛场上要改安全联锁，改下面的 checkRules 函数就够了 ★★
+ *   直接在里面写 if 条件 + return 对应的操作，加规则删规则都改这里。
  *
  * 整条链路只有两层：
  *   evaluateSafety（每条消息）──┐
- *                              ├─→ applyRule ─→ setSwitch（下发 MQTT + 落库 + 操作历史）
+ *                              ├─→ fire ─→ setSwitch（下发 MQTT + 落库 + 操作历史）
  *   monitorOffline（定时器）───┘
  *
  * 触发两条路径的区别：evaluateSafety 靠"收到消息"驱动，能判断消息里的数值；
  * monitorOffline 靠定时器主动查"整台设备心跳超时、完全没消息进来"——没消息就不会
- * 有人调 evaluateSafety，所以这条必须单独起定时器。它直接复用规则表里 sensor_offline
- * 那条的 then 动作，两条路径共用同一份冷却，不会重复关。
+ * 有人调 evaluateSafety，所以这条必须单独起定时器。两条路径共用同一份冷却，不会重复关。
  *
  * 模式语义：安全联锁在自动和手动模式下**全程生效**，不因手动强制开启而失效
  * （如手动开了加热但检测到无水流，仍会按规则强制关掉）。
  *
- * 【配置】见同目录 config.js，改后需重启后端。
+ * 【配置】见同目录 config.js（总开关、各条件开关、冷却时间、波动窗口等），改后需重启后端。
  */
 
 // ========== 赛场速改索引（要改什么 → 去哪） ==========
-//  改判断条件 / 改触发后的动作   config.js 的 rules 数组，每条的 when / then
-//  加一条新规则                 config.js 的 rules 里照着抄一条改
-//  临时停掉某一条               config.js 那条规则的 enabled: false
+//  改判断条件 / 加规则 / 删规则   下面的 checkRules 函数，直接写 if + return
+//  临时停掉某一条               config.js 那条条件的开关 = false
 //  关掉整个安全联锁             config.js enabled=false
 //  改阈值                       指令中心网页（温度上限/流量下限/压力上限…），不用重启
 //  "开加热必须先开泵"           config.js requirePumpBeforeHeater=true（不受总开关约束）
@@ -49,8 +46,8 @@ const {
 const { createCooldown } = require('../controlShared/cooldown')
 const { recordEvent } = require('../controlShared/recordEvent')
 
-/** 规则 then 里的开关 preffix → 日志和告警里显示的中文名。没列到的直接用 preffix 本身，
- *  所以 config.js 里写 then: { fan: 'on' } 也能用，不必回来改这张表。 */
+/** 开关 preffix → 日志和告警里显示的中文名。没列到的直接用 preffix 本身，
+ *  所以代码里写 { prefix: 'fan', value: 'on' } 也能用，不必回来改这张表。 */
 const SWITCH_LABELS = { pump: '水泵', heater: '加热' }
 
 /** 每个设备上一次的控制模式，用来识别"自动 -> 手动"这个切换瞬间。 */
@@ -79,20 +76,157 @@ function trackFlowVolatility(deviceNo, flow) {
   return Math.max(...window) - Math.min(...window)
 }
 
-/**
- * 一条规则命中之后要做的全部事情：冷却判断 → 按 then 下发动作 → 写故障记录 → 广播。
+/* ============================================================
+ * ★★★ 赛场改这里：安全联锁的判定规则 ★★★
+ * ============================================================
+ * 一个规则命中后返回：{ id, name, detail, actions }
+ *   id       规则编号（也作故障记录里的 code）
+ *   name     规则名称（故障记录里显示）
+ *   detail   原因说明（字符串，写进故障记录详情）
+ *   actions  要下发的开关数组，每个 { prefix, value }：
+ *            [{ prefix: 'pump', value: 'off' }, { prefix: 'heater', value: 'off' }]  两个都关
+ *            [{ prefix: 'heater', value: 'off' }]   只关加热
+ *            [{ prefix: 'pump', value: 'on' }]      也可以是"开"
+ *            []                                       只记一笔，不动执行器
+ *            prefix 是指令中心里的开关 preffix（pump / heater / ...）
+ * 没命中返回 null。
+ *
+ * 参数说明：
+ *   s —— 这一条上报解析出来的现场数据：
+ *     s.flow             流量              s.pressure    压力
+ *     s.temp1            进水温度          s.temp2       出水温度
+ *     s.tempDiff         温差（两路温度缺一个就是 null）
+ *     s.pumpOn           水泵开着吗（true / false / null=这条消息没带这个字段）
+ *     s.heatOn           加热开着吗（同上）
+ *     s.flowVolatility   最近 N 个流量读数的极差（没攒够点数是 null）
+ *     s.missingFields    这条上报缺了哪些字段（数组，空数组 = 字段齐全）
+ *     s.modeJustToManual 这一刻是不是刚从"自动"切到"手动"
+ *     s.mode             当前控制模式 'auto' / 'manual'
+ *
+ *   ctx —— 读指令中心阈值才需要：
+ *     await ctx.threshold('tempHigh')   温度上限，没配置返回 null
+ *          可用槽位：tempHigh tempLow flowLow flowHigh pressureLow pressureHigh tempDiff
+ *     await ctx.number('flow_volatility', 兜底值, 默认值)   按 preffix 读任意数值指令项
+ *     ctx.abnormalMax    传感器异常哨兵值（读数 >= 它视为掉线/短路，默认 9999）
+ *     ctx.deviceNo       当前设备号
+ *     ctx.config         就是 config.js 这个对象（用来取兜底参数）
+ *
+ * s=null 表示定时器路径（设备完全没消息进来），返回固定动作即可。
+ * ============================================================ */
+async function checkRules(s, ctx) {
+  const triggers = []
+
+  // ── 规则1：进入手动模式（人工修复） ──
+  if (CONFIG.manualMode !== false && s != null && s.modeJustToManual) {
+    triggers.push({
+      id: 'manual_mode',
+      name: '进入手动模式（人工修复）',
+      detail: '控制模式 自动->手动',
+      actions: [{ prefix: 'pump', value: 'off' }, { prefix: 'heater', value: 'off' }],
+    })
+  }
+
+  // ── 规则2：流量异常（低于下限/为0/掉线） ──
+  if (CONFIG.flowLow !== false && s != null && s.flow != null) {
+    const abnormalMax = ctx.abnormalMax
+    let detail = null
+    if (s.flow === 0) detail = '流量=0'
+    else if (s.flow >= abnormalMax) detail = `流量=${s.flow}，顶到异常哨兵值 ${abnormalMax}`
+    else {
+      const min = await ctx.threshold('flowLow')
+      if (min != null && s.flow < min) detail = `流量=${s.flow}，下限=${min}`
+    }
+    if (detail) {
+      triggers.push({ id: 'flow_low', name: '流量异常（低于下限/为0/掉线）', detail, actions: [{ prefix: 'pump', value: 'off' }, { prefix: 'heater', value: 'off' }] })
+    }
+  }
+
+  // ── 规则3：压力异常（高于上限/为0/掉线） ──
+  if (CONFIG.pressureHigh !== false && s != null && s.pressure != null) {
+    const abnormalMax = ctx.abnormalMax
+    let detail = null
+    if (s.pressure === 0) detail = '压力=0'
+    else if (s.pressure >= abnormalMax) detail = `压力=${s.pressure}，顶到异常哨兵值 ${abnormalMax}`
+    else {
+      const max = await ctx.threshold('pressureHigh')
+      if (max != null && s.pressure > max) detail = `压力=${s.pressure}，上限=${max}`
+    }
+    if (detail) {
+      triggers.push({ id: 'pressure_high', name: '压力异常（高于上限/为0/掉线）', detail, actions: [{ prefix: 'pump', value: 'off' }, { prefix: 'heater', value: 'off' }] })
+    }
+  }
+
+  // ── 规则4：任一温度高于上限 ──
+  if (CONFIG.tempHigh !== false && s != null) {
+    const max = await ctx.threshold('tempHigh')
+    const abnormalMax = ctx.abnormalMax
+    for (const [value, label] of [[s.temp1, '温度1（进水）'], [s.temp2, '温度2（出水）']]) {
+      if (value == null) continue
+      let detail = null
+      if (value >= abnormalMax) detail = `${label}=${value}，顶到异常哨兵值 ${abnormalMax}`
+      else if (max != null && value > max) detail = `${label}=${value}，上限=${max}`
+      if (detail) {
+        triggers.push({ id: 'temp_high', name: '任一温度高于上限', detail, actions: [{ prefix: 'pump', value: 'off' }, { prefix: 'heater', value: 'off' }] })
+        break  // 有一个温度超限就够，不再判另一个
+      }
+    }
+  }
+
+  // ── 规则5：温差过大 ──
+  // 温差阈值走安全联锁专用的指令项 safety_temp_diff_threshold，跟联动规则的
+  // temp_diff_open、双温度融合的 dual_temp_diff、故障机的 temp_diff 各自独立，
+  // 现场调参别调错了对应那一项。
+  if (CONFIG.tempDiff !== false && s != null && s.tempDiff != null) {
+    const max = await ctx.number('safety_temp_diff_threshold', ctx.config.tempDiffThreshold, 10)
+    if (s.tempDiff > max) {
+      triggers.push({ id: 'temp_diff', name: '温差过大', detail: `温差=${s.tempDiff.toFixed(2)} > ${max}℃`, actions: [{ prefix: 'pump', value: 'off' }, { prefix: 'heater', value: 'off' }] })
+    }
+  }
+
+  // ── 规则6：流量剧烈波动（疑似水锤/湍流） ──
+  // 不是拿单次读数比阈值，而是要先攒够 flowVolatilityWindow 个读数才能算出波动幅度，
+  // 所以哪怕这次读数本身正常，跟前几次差太多照样触发。
+  if (CONFIG.flowVolatility !== false && s != null && s.flowVolatility != null) {
+    const max = await ctx.number('flow_volatility', ctx.config.flowVolatilityThreshold, 20)
+    if (s.flowVolatility > max) {
+      triggers.push({ id: 'flow_volatility', name: '流量剧烈波动（疑似水锤/湍流）', detail: `最近${ctx.config.flowVolatilityWindow}个读数波动幅度=${s.flowVolatility.toFixed(2)} > ${max}`, actions: [{ prefix: 'pump', value: 'off' }, { prefix: 'heater', value: 'off' }] })
+    }
+  }
+
+  // ── 规则7：传感器掉线 ──
+  // 两条掉线路径共用这一条规则、共用同一份冷却：①本条消息缺字段（s 有值，看 s.missingFields）；
+  // ②整台设备心跳超时、根本没消息进来（定时器路径，s=null）。任一条先触发，冷却期内另一条不会重复关。
+  if (CONFIG.sensorOffline !== false) {
+    if (s == null) {
+      // 定时器路径：设备完全没消息，返回固定动作
+      triggers.push({ id: 'sensor_offline', name: '传感器掉线', detail: '', actions: [{ prefix: 'pump', value: 'off' }, { prefix: 'heater', value: 'off' }] })
+    } else if (s.missingFields.length > 0) {
+      triggers.push({ id: 'sensor_offline', name: '传感器掉线', detail: `本条上报缺少字段：${s.missingFields.join('、')}`, actions: [{ prefix: 'pump', value: 'off' }, { prefix: 'heater', value: 'off' }] })
+    }
+  }
+
+  // ── 规则8：未开水泵却开启加热 ──
+  // 只在两个开关状态都明确上报时才判，避免纯传感器消息（不带行为字段）误触发。
+  if (CONFIG.heaterWithoutPump !== false && s != null && s.heatOn === true && s.pumpOn === false) {
+    triggers.push({ id: 'heater_without_pump', name: '未开水泵却开启加热', detail: '水泵=关，加热=开', actions: [{ prefix: 'pump', value: 'off' }, { prefix: 'heater', value: 'off' }] })
+  }
+
+  return triggers
+}
+
+/* ============================================================
+ * 一条规则命中之后要做的全部事情：冷却判断 → 按 actions 下发动作 → 写故障记录 → 广播。
  * 冷却期内直接返回 null，不重复下发也不重复记录。
- * then 里写了几个开关就下发几个，每个单独 try/catch，一个失败不影响另一个。
- */
-async function applyRule(rule, deviceNo, detail) {
+ * actions 里写了几个开关就下发几个，每个单独 try/catch，一个失败不影响另一个。
+ * ============================================================ */
+async function fire(rule, deviceNo, detail, actions) {
   const cooldownKey = `${deviceNo || 'global'}:${rule.id}`
   const cooldownMs = Number(CONFIG.alarmCooldownMs) >= 0 ? Number(CONFIG.alarmCooldownMs) : 30000
   if (cooldown.withinCooldown(cooldownKey, cooldownMs)) return null
   cooldown.markFired(cooldownKey)
 
-  const actions = Object.entries(rule.then || {})
   const done = []
-  for (const [prefix, value] of actions) {
+  for (const { prefix, value } of actions || []) {
     const label = SWITCH_LABELS[prefix] || prefix
     try {
       if (await setSwitch(prefix, label, value, deviceNo, 'interlock')) {
@@ -104,15 +238,15 @@ async function applyRule(rule, deviceNo, detail) {
     }
   }
 
-  // 规则配了动作就记成"安全联锁"，没配动作（then 空）就是"只记录不动作"的安全告警。
-  const suffix = actions.length > 0
+  // 配了动作就记成"安全联锁"，没配动作（actions 空）就是"只记录不动作"的安全告警。
+  const suffix = (actions || []).length > 0
     ? `，已执行安全联锁（${done.length ? done.join('、') : '下发失败'}）`
     : '，安全联锁已记录（未执行关闭）'
   await recordEvent({
     deviceNo,
     message: `${rule.name}${suffix}，${detail || ''}`,
     code: rule.id,
-    type: actions.length > 0 ? '安全联锁' : '安全告警',
+    type: (actions || []).length > 0 ? '安全联锁' : '安全告警',
   })
 
   const outcome = { id: rule.id, name: rule.name, detail: detail || '', interlocked: done.length > 0 }
@@ -122,7 +256,7 @@ async function applyRule(rule, deviceNo, detail) {
 
 /**
  * 每条 MQTT 数据入库后调用，是本模块唯一的消息入口。
- * 先把这条消息能提供的现场数据整理成 s，再拿 config.js 的 rules 一条条判。
+ * 先把这条消息能提供的现场数据整理成 s，再调 checkRules 逐条判，命中就 fire。
  * @param {Object} info - 已解析的设备上报数据
  * @returns {Array} 本次触发的规则结果
  */
@@ -148,6 +282,7 @@ async function evaluateSafety(info) {
     if (states.heatOn == null) missingFields.push('加热状态')
   }
 
+  // 把现场数据打包成 s，给 checkRules 用
   const s = {
     flow: sensors.flow,
     pressure: sensors.pressure,
@@ -161,6 +296,7 @@ async function evaluateSafety(info) {
     modeJustToManual: mode === 'manual' && prevMode === 'auto',
     mode,
   }
+  // ctx 封装读指令中心阈值的方法，赛场改阈值在网页上改，不用重启
   const ctx = {
     deviceNo,
     config: CONFIG,
@@ -169,19 +305,12 @@ async function evaluateSafety(info) {
     number: (prefix, fallback, fallbackDefault) => getNumberValue(prefix, deviceNo, fallback, fallbackDefault),
   }
 
+  // 调 checkRules 拿到本次命中的所有规则
+  const triggers = await checkRules(s, ctx)
+
   const results = []
-  for (const rule of CONFIG.rules || []) {
-    if (rule.enabled === false) continue
-    let hit
-    try {
-      hit = await rule.when(s, ctx)
-    } catch (err) {
-      // 单条规则写错了不能把整个安全联锁带崩，跳过这条继续判下一条。
-      console.error(`[SafetyInterlock] 规则 ${rule.id} 判断出错，已跳过:`, err.message)
-      continue
-    }
-    if (!hit) continue
-    const outcome = await applyRule(rule, deviceNo, typeof hit === 'string' ? hit : '')
+  for (const t of triggers) {
+    const outcome = await fire({ id: t.id, name: t.name }, deviceNo, t.detail || '', t.actions || [])
     if (outcome) results.push(outcome)
   }
 
@@ -194,12 +323,11 @@ async function evaluateSafety(info) {
 /* ============================ 掉线监测 ============================ */
 
 /** 上面 evaluateSafety 靠"收到消息"驱动，但设备彻底掉线时根本没有消息进来，
- *  也就没人去调它。这里用独立定时器主动查每台设备的心跳，超时就按规则表里
- *  sensor_offline 那条的动作处理（跟"消息缺字段"共用同一条规则和同一份冷却）。 */
+ *  也就没人去调它。这里用独立定时器主动查每台设备的心跳，超时就调 checkRules(null)
+ *  拿到掉线动作处理（跟"消息缺字段"共用同一份冷却）。 */
 async function monitorOffline() {
   if (CONFIG.enabled !== true) return
-  const rule = (CONFIG.rules || []).find((r) => r.id === 'sensor_offline')
-  if (!rule || rule.enabled === false) return
+  if (CONFIG.sensorOffline === false) return
 
   let mqttClient
   try {
@@ -210,7 +338,11 @@ async function monitorOffline() {
   for (const st of mqttClient.getAllDeviceStatus() || []) {
     if (!st.configured || st.online) continue
     const deviceNo = st.deviceNumber || st.deviceId
-    await applyRule(rule, deviceNo, `设备 ${deviceNo} 心跳超时，无数据上报`)
+    // 定时器路径：没有消息数据 s，传 null 让 checkRules 返回掉线动作
+    const triggers = await checkRules(null, { config: CONFIG })
+    for (const t of triggers) {
+      await fire({ id: t.id, name: t.name }, deviceNo, `设备 ${deviceNo} 心跳超时，无数据上报`, t.actions || [])
+    }
   }
 }
 

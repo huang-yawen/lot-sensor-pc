@@ -31,6 +31,7 @@ function handleAlarmTriggered(alarm) {
     type: 'warning',
     duration: 6000,       // 6 秒后自动消失，不需要用户手动关闭
     position: 'top-right',
+    offset: 50, // 距离顶部 30px，避免太靠上
   })
 }
 
@@ -47,6 +48,7 @@ function handleSpikeTriggered(trigger) {
     type: 'warning',
     duration: 6000,
     position: 'top-right',
+    offset: 30, // 距离顶部 30px，避免太靠上
   })
 }
 
@@ -65,6 +67,7 @@ function handleRelayStuckTriggered(trigger) {
     type: isFault ? 'error' : 'warning',
     duration: isFault ? 0 : 6000,
     position: 'top-right',
+    offset: 30, // 距离顶部 30px，避免太靠上
   })
 }
 
@@ -83,6 +86,7 @@ function handleSensorInvertedTriggered(trigger) {
     type: recovered ? 'success' : 'error',
     duration: recovered ? 6000 : 0,
     position: 'top-right',
+    offset: 30, // 距离顶部 30px，避免太靠上
   })
 }
 

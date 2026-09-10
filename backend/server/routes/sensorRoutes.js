@@ -224,7 +224,7 @@ router.get('/api/computed-metrics', async (req, res) => {
 //   多设备模式：通过 ?d_no=xxx 指定设备；不传 d_no 时返回所有设备故障态列表
 //   返回：{
 //     enabled: bool,                  // FAULT_STATUS 总开关是否启用
-//     faultTypes: FAULT_TYPES,        // 五种故障类型表（供前端展示）
+//     faultTypes: FAULT_TYPES,        // 六种故障类型表（供前端展示）
 //     data: { systemState, activeFaultId, resetButton, faultTriggeredAt },  // 单设备
 //     anyLocked: bool                 // 多设备模式下的兜底聚合
 //   }

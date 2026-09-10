@@ -1,60 +1,33 @@
 /**
- * 【文件职责】本地阈值告警与自动联锁规则。逻辑在同目录 evaluateRules.js。
- * 【值的来源】从原"配置中心"持久化文件固化下来的当前实际生效值。改完重启后端生效。
- * 【谁在读】evaluateRules.js 本身；app.js（转 WebSocket 广播）、mqtt handler（每条消息触发评估）、
- * errorHistory 的 errorQueryFilter / errorTypeNames（把规则 id 翻成中文名）。
+ * 【文件职责】本地阈值告警与自动联锁的开关和参数。判定逻辑在同目录 evaluateRules.js 的 checkAlarms 函数里。
  *
- * enabled：总开关，是否由服务端按 rules 自行计算告警；不影响设备主动上报的告警。
- * autoInterlockEnabled：规则触发后是否执行 rule.action（下发控制指令）。默认关，开启前必须实机安全测试。
+ * ★★ 赛场上要改告警判定条件或动作，改 evaluateRules.js 的 checkAlarms 函数 ★★
+ *   本文件只管开关和参数，改完重启后端生效。
+ *
+ * 【值的来源】从原"配置中心"持久化文件固化下来的当前实际生效值。
+ * 【谁在读】evaluateRules.js 本身；app.js（转 WebSocket 广播）、mqtt handler（每条消息触发评估）。
+ *
+ * enabled：总开关，是否由服务端按规则自行计算告警；不影响设备主动上报的告警。
+ * autoInterlockEnabled：规则触发后是否下发控制指令（每条规则里写的 action）。默认关，开启前必须实机安全测试。
  * 当前状态：总开关关着（enabled=false）。
  *
- * rules 每条字段：
- *   id            - 稳定唯一英文编号，也作告警编号
- *   name          - 页面显示名
- *   source_table + source_field - 待比较字段的"槽位"（物理名从字段映射表动态解析）
- *   operator      - > >= < <= == !=
- *   threshold     - 数值阈值
- *   enabled       - 是否启用该规则
- *   cooldownMs    - 可选，告警冷却时间
- *   require       - 可选前置条件：{ source_table, source_field, values: [任一允许值] }
- *   action        - 联锁动作 { field: 下发 JSON 属性名, value: 值(会过 CONTROL_VALUE_MAP) }
- *                   只有 autoInterlockEnabled=true 时才实际下发
+ * 各规则写成独立开关（temperatureHigh / flowLow / pressureHigh），赛场想临时停
+ * 某一条把它设成 false 即可，不用动判定逻辑；阈值用对应 threshold 参数改。
  */
 module.exports = {
   enabled: false,
   autoInterlockEnabled: false,
-  rules: [
-    {
-      id: 'temperature_high',
-      name: '出水温度过高',
-      source_table: 't_sensor_data',
-      source_field: 'field2',
-      operator: '>',
-      threshold: 29,
-      action: { field: 'heater', value: 'off' },
-      enabled: true,
-    },
-    {
-      id: 'flow_low',
-      name: '循环流量过低',
-      source_table: 't_sensor_data',
-      source_field: 'field3',
-      operator: '<',
-      threshold: 0.5,
-      // 只有水泵处于开启状态时，低流量才属于异常。
-      require: { source_table: 't_behavior_data', source_field: 'field1', values: ['open', 'on', 1, true] },
-      action: { field: 'heater', value: 'off' },
-      enabled: true,
-    },
-    {
-      id: 'pressure_high',
-      name: '管路压力过高',
-      source_table: 't_sensor_data',
-      source_field: 'field4',
-      operator: '>',
-      threshold: 10,
-      action: { field: 'pump', value: 'off' },
-      enabled: true,
-    },
-  ],
+
+  // ==================== 各规则开关（赛场临时停掉某一条用） ====================
+  temperatureHigh: true,  // 出水温度过高
+  flowLow: true,           // 循环流量过低
+  pressureHigh: true,      // 管路压力过高
+
+  // ==================== 阈值参数 ====================
+  temperatureHighThreshold: 29,   // 出水温度上限（℃）
+  flowLowThreshold: 0.5,           // 循环流量下限
+  pressureHighThreshold: 10,      // 管路压力上限
+
+  // ==================== 冷却 ====================
+  cooldownMs: 30000,  // 同一个"设备+规则"多久内只触发一次（毫秒）
 }

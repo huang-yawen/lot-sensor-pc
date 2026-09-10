@@ -43,7 +43,7 @@ module.exports = {
   PC_HEARTBEAT_INTERVAL: 1000,
 
   // 超过该时间没收到某设备心跳就判离线（毫秒）。最小 1000。
-  HEARTBEAT_TIMEOUT: 50000,
+  HEARTBEAT_TIMEOUT: 5000,
 
   // 心跳判定模式（两种互斥）：
   //   'receive' = 设备发一条 sensor/behavior 主题的数据就代表在线，不用单独发心跳包（默认）。

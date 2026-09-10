@@ -11,7 +11,7 @@
  */
 module.exports = {
   // 板块总开关。关掉后两条规则都不生效（数据一律原样入库、不做任何检测）。
-  enabled: true,
+  enabled: false,
 
   // 故障记录页是否显示"数据质量记录"表格（只控制前端展示，不影响检测和写库）。
   showOnErrorPage: true,
@@ -22,7 +22,7 @@ module.exports = {
   //       中途跳回去就整批丢弃，永不入库。详见 spikeFilter.js 文件头。
 
   // 跳变判定比例。0.5 = ±50%：本次值相对上次已确认值变化超过 50% 就视为疑似跳变。
-  ratio: 0.5,
+  ratio: 0.2,
   // 连续采集多少次确认。3 = 跳变后再收 2 条（共 3 条）都稳定在新水位，才认这是真实
   // 阶跃、把这 3 条补写进库；中途跳回去就把这几条当毛刺整批丢弃。
   confirmCount: 3,
@@ -56,7 +56,7 @@ module.exports = {
   // 处置：①报"实际状态与控制指令不符" ②自动重发 retryCount 次关闭指令
   //       ③全部无效则判定硬件故障、提示人工断电检修并停止重试。详见 relayStuck.js 文件头。
   relayStuck: {
-    enabled: true,          // 本条规则开关（受上面板块总开关 enabled 约束）
+    enabled: false,          // 本条规则开关（受上面板块总开关 enabled 约束）
 
     heater: true,           // 是否检测加热器（靠出水温度是否还在上升反推）
     pump: true,             // 是否检测水泵（靠瞬时流量是否还不为 0 反推）
@@ -85,11 +85,11 @@ module.exports = {
   // 处置：①报"传感器逻辑配置异常"，提示检查硬件拓扑 ②暂停自动恒温控制，
   //       防止 PID 因为被控量方向反了而正反馈超温。详见 sensorInverted.js 文件头。
   sensorInverted: {
-    enabled: true,
+    enabled: false,
 
     // 进水 − 出水 超过这么多（℃）才算"逆温差"。要比两路传感器之间的测量误差大，
     // 否则两个探头本身的偏差就会误报。
-    tempDiffThreshold: 2,
+    tempDiffThreshold: 0.3,
 
     // 加热模块开启超过这么久（毫秒，默认 3 分钟）才开始判。刚开加热时水还没热起来，
     // 出水比进水冷是正常的。

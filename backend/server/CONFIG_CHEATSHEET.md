@@ -63,7 +63,7 @@
 | 键 | 作用 | 读取方 | 关键子项 |
 |---|---|---|---|
 | `SAFETY_INTERLOCK` | 安全联锁：命中任一启用条件即强制关泵关热 + 写 `t_error_msg` | `safety/safetyInterlock.js` | 各条件布尔开关；`abnormalMax` 异常哨兵；`tempDiffThreshold` 兜底；`monitorIntervalMs`（**需重启**） |
-| `FAULT_STATUS` | 五种硬故障 + 快照恢复 + 锁面板 | `faultStatus/faultStatus.js` | `pipeBlockage/outletBlockage/dryBurn/pumpIdle/pumpFault` 开关；`pumpWarmupMs` 预热宽限；`dryBurnDurationMs/dryBurnMinRiseC`；`tempDiffThreshold` 兜底 |
+| `FAULT_STATUS` | 六种硬故障 + 快照恢复 + 锁面板 | `faultStatus/faultStatus.js` | `pipeBlockage/outletBlockage/dryBurn/pumpIdle/pumpFault/pipeLeak` 开关；`pumpWarmupMs` 预热宽限；`dryBurnDurationMs/dryBurnMinRiseC`；`tempDiffThreshold` 兜底 |
 | `LINKAGE_RULES` | 正常工况联动规则集（可任意勾选组合） | `linkageRules/linkageRules.js` | `pumpAlwaysOn` / `heaterHysteresis*` / `flowSingle` / `tempSingle` / `dualTemp` / `tempFlow` / `pressureFlow` / `tempPressure` 等逐条开关 |
 | `PID_HEATING` | PID 时间比例恒温（只接管加热）；真正启用看指令中心 `pid_enabled` | `pidHeating/pidHeating.js` | `kp/ki/kd`、`windowMs`、`deadband/derivativeFilter/dutyRampLimit/kff` 增强参数 |
 | `PUMP_VELOCITY_CONTROL` | 恒流速（`mode: hysteresis` 滞环 / `pid` 占空比） | `pumpVelocityControl/*` | `defaultTargetVelocity`、`minOnMs/minOffMs` 防短循环、`windowMs`、PID 系数 |

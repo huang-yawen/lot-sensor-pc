@@ -73,7 +73,7 @@ Node + Express 单进程。三条链路跑在一起：
 | 设备上报的 JSON 字段名变了 | **不改代码**：改数据库 `t_sensor_field_mapper` / `t_behavior_field_mapper` 的 `p_name`（`utils/mappedData.js` 按它对号入座到 `field1..field10`） |
 | MQTT 地址 / 主题 / 心跳方式 | 配置中心 `MQTT_URL` / `MQTT_TOPICS` / `HEARTBEAT_MODE`（见 `CONFIG_CHEATSHEET.md`），保存即热更新，无需重启 |
 | 故障判定阈值（压力/流量/温差…） | 前端「指令配置」页对应指令项（`t_direct`，按 `preffix` 实时读）；删掉指令项才退回配置中心兜底 |
-| 五种硬故障的判定逻辑本身 | `service/faultStatus/faultStatus.js`（文件头有编号对照表） |
+| 六种硬故障的判定逻辑本身 | `service/faultStatus/faultStatus.js`（文件头有编号对照表） |
 | 正常工况联动规则的开关组合 | 配置中心 `LINKAGE_RULES` 逐条布尔开关；规则实现在 `service/linkageRules/linkageRules.js` 下半部分 |
 | PID 系数 Kp/Ki/Kd、控制周期、占空比上下限 | 「指令配置」页 PID 子项；`service/pidHeating/pidHeating.js` 只在指令项缺失时用 `PID_HEATING` 兜底 |
 | 智能判定对接的现场接口形态（同步/异步、JSON/表单/文本） | **不改代码**：配置中心 `INTELLIGENT_JUDGMENT` 各子键；适配逻辑在 `controllers/intelligent/recognize.js` |
