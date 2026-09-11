@@ -50,7 +50,10 @@ export const useDeviceStore = defineStore('deviceStore', () => {
                 // 列表数据顺手提取设备编号，供指令设置页选择设备时复用。
                 fullList.forEach(item => {
                     console.log('[deviceStore] 单条数据:', item);
-                    const deviceNumber = String(item['设备编号'] ?? '').trim()
+                    // 设备编号列是 d_no；d_no 没填时用内部编号（number）顶替，跟后端
+                    // mappedData.js 的 getDefaultDeviceId / resolveDNoByNumber 同一套规则，
+                    // 否则这台设备在指令页面选不到，推送里的设备号也对不上。
+                    const deviceNumber = String(item['设备编号'] ?? '').trim() || String(item['内部编号'] ?? '').trim()
                     if (deviceNumber) rawIds.push(deviceNumber)
                     if (item['创建时间']) {
                         try {

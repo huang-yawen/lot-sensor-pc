@@ -9,7 +9,7 @@
  * 离线暂存、上线补发和消息文案均以后端 / useDirectStore 的结果为准，组件不能直接发布 MQTT。
  * -->
 <template>
-  <div class="container">
+  <div class="container" ref="containerRef" @focusout="onContainerFocusOut">
     <div class="quick-switches">
       <DynamicNode v-for="node in quickSwitches" :key="node.id" :node="node" :form-data="formData" :icons="icons"
         compact @save="handleSave" :id="prop.id" />
@@ -63,7 +63,6 @@ const pendingUpdates = new Set();
 // 以“设备编号+配置项+值”标识请求中的操作，拦截控件事件重复触发造成的双重下发。
 let unsubscribePendingCommands = null;
 let unsubscribeDirectUpdate = null;
-let unsubscribeBehaviorSync = null;
 let unsubscribePidHeating = null;
 let unsubscribeHeaterBlocked = null;
 let unsubscribeFaultTriggered = null;
@@ -90,28 +89,6 @@ function handleHeaterBlocked(info) {
   ElMessage.warning(info.message || "PID恒温控制：加热被拦截");
 }
 
-// 硬编码的开关 preffix ↔ t_behavior_field_mapper.f_name 映射：数据库里没有能直接
-// 关联“指令项”和“行为数据字段”的字段，只能靠这份约定维护；如果以后改了水泵/加热
-// 的中文名或 preffix，这里要同步改。只覆盖开关类字段，不碰目标温度等参数配置项。
-const SWITCH_FIELD_MAP = { pump: "水泵", heater: "加热" };
-
-// 收到设备行为数据上报时，把水泵/加热的真实开关状态同步进表单，这样即使设备状态是
-// 被网页以外的方式（物理按钮、设备自身逻辑等）改变的，页面也能实时反映真实值，
-// 不用手动刷新。只同步这两个开关字段，不影响用户正在编辑的其他参数。
-const syncSwitchStates = async () => {
-  try {
-    const res = await api.get("/api/dataByType", { params: { type: "behavior", pageSize: 1, page: 1 } });
-    const latest = res.data?.data?.list?.[0];
-    if (!latest) return;
-    prop.storeData.forEach((node) => {
-      const fieldLabel = SWITCH_FIELD_MAP[node.preffix];
-      if (!fieldLabel || latest[fieldLabel] == null) return;
-      formData[node.id] = latest[fieldLabel] === "开" ? "on" : "off";
-    });
-  } catch (err) {
-    console.error("[DeviceSetting] 同步开关真实状态失败:", err);
-  }
-};
 const icons = markRaw({
   0: Icons.Pointer, 1: Icons.SwitchButton, 2: Icons.Edit,
   3: Icons.Operation, 4: Icons.Guide, 5: Icons.Memo
@@ -175,6 +152,44 @@ const initializeForm = async () => {
   } finally {
     isInitializing.value = false;
   }
+};
+
+// 收到 direct_data_updated 推送后的刷新调度：
+// - 防抖 300ms：故障快照恢复、暂存指令补发这类一次写好几行 t_direct 的场景，
+//   后端会连发多条推送，合并成一次刷新，避免页面连刷、连打 /api/directRender。
+// - 用户正在指令面板的输入框里敲字时不刷新：initializeForm 会整体重置 formData，
+//   会把还没保存的输入冲掉；先记下"欠一次刷新"，等焦点离开面板再补上。
+const containerRef = ref(null);
+const REFRESH_DEBOUNCE_MS = 300;
+let refreshTimer = null;
+let refreshPendingOnBlur = false;
+
+const isEditingInput = () => {
+  const el = document.activeElement;
+  return !!el && !!containerRef.value?.contains(el) && (el.tagName === "INPUT" || el.tagName === "TEXTAREA");
+};
+
+const scheduleRefresh = () => {
+  clearTimeout(refreshTimer);
+  refreshTimer = setTimeout(() => {
+    refreshTimer = null;
+    if (isEditingInput()) {
+      refreshPendingOnBlur = true;
+      return;
+    }
+    initializeForm();
+  }, REFRESH_DEBOUNCE_MS);
+};
+
+// focusout 触发时新焦点还没落下，放到下一轮再判断焦点是不是真的离开了输入框。
+const onContainerFocusOut = () => {
+  if (!refreshPendingOnBlur) return;
+  setTimeout(() => {
+    if (refreshPendingOnBlur && !isEditingInput()) {
+      refreshPendingOnBlur = false;
+      initializeForm();
+    }
+  }, 0);
 };
 
 const handleUpdate = async (id, value) => {
@@ -271,15 +286,15 @@ onMounted(async () => {
   });
   connectWebSocket();
 
-  unsubscribeDirectUpdate = wsOn('direct_data_updated', async (payload) => {
+  // 后端任何一处写 t_direct（手动下发、联动/PID/安全联锁/停机等自动控制、故障恢复、
+  // 设备上报同步）都会推这个事件，d_no 为 null 表示全局配置变了，所有面板都要刷新。
+  unsubscribeDirectUpdate = wsOn('direct_data_updated', (payload) => {
     const targetId = String(payload?.d_no ?? 'null')
     const myId = String(prop.id)
     if (targetId === myId || targetId === 'null' || payload?.reset) {
-      await initializeForm()
+      scheduleRefresh()
     }
   })
-
-  unsubscribeBehaviorSync = wsOn("behavior_data", syncSwitchStates);
 
   unsubscribePidHeating = wsOn("sensor_data", (payload) => {
     if (payload && payload._pidHeating) pidHeatingStatus.value = payload._pidHeating;
@@ -302,11 +317,11 @@ onMounted(async () => {
 onUnmounted(() => {
   unsubscribePendingCommands?.();
   unsubscribeDirectUpdate?.();
-  unsubscribeBehaviorSync?.();
   unsubscribePidHeating?.();
   unsubscribeHeaterBlocked?.();
   unsubscribeFaultTriggered?.();
   if (faultTimer) clearInterval(faultTimer);
+  clearTimeout(refreshTimer);
 });
 </script>
 

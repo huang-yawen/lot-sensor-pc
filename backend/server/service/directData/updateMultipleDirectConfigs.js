@@ -19,9 +19,7 @@ module.exports = async (req, res) => {
             console.warn('[Backend Update] no row changed')
         }
 
-        const wsBroadcast = req.app.get('wsBroadcast')
-        if (wsBroadcast) wsBroadcast('direct_data_updated', { config_id, value, d_no })
-
+        // direct_data_updated 由 saveDirectData 写库后统一广播（见 app.js onDirectDataChanged），这里不再单独发。
         res.json({ success: true, message: 'Configuration saved successfully.' })
     } catch (err) {
         console.error('Backend /multipleDirectData error:', err)

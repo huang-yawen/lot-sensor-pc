@@ -4,6 +4,13 @@
  */
 
 const promisePool = require('../../config/dbPool')
+const EventEmitter = require('events')
+
+// t_direct 每次真正写入（更新/插入）后对外通知，app.js 订阅后统一广播
+// direct_data_updated 给指令页面。写 t_direct 的地方很多（手动下发、联动、PID、
+// 安全联锁、定量/定温停机、故障快照恢复、设备上报同步等），统一在这里发，
+// 不用每个调用方各自记得去广播。写法跟 faultStatus.js 的 onFault 一致。
+const events = new EventEmitter()
 
 /**
  * 标准化设备编号
@@ -70,6 +77,7 @@ const saveDirectData = async ({ config_id, value, d_no }) => {
 
     // 更新成功
     if (updateResult.affectedRows > 0) {
+        events.emit('changed', { config_id, value, d_no: finalDNo })
         return { action: 'update', d_no: finalDNo }
     }
 
@@ -98,6 +106,7 @@ const saveDirectData = async ({ config_id, value, d_no }) => {
             `INSERT INTO t_direct (config_id, value, d_no) VALUES (?, ?, NULL)`,
             [config_id, value]
         )
+        events.emit('changed', { config_id, value, d_no: finalDNo })
         return { action: 'insert', d_no: finalDNo }
     }
 
@@ -107,11 +116,13 @@ const saveDirectData = async ({ config_id, value, d_no }) => {
         VALUES (?, ?, ?)
     `
     await promisePool.query(insertQuery, [config_id, value, finalDNo])
+    events.emit('changed', { config_id, value, d_no: finalDNo })
     return { action: 'insert', d_no: finalDNo }
 }
 
 module.exports = {
     normalizeDeviceNo,
     getDirectValue,
-    saveDirectData
+    saveDirectData,
+    onDirectDataChanged: (listener) => events.on('changed', listener),
 }

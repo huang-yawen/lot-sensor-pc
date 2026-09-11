@@ -368,9 +368,7 @@ module.exports = async (req, res) => {
         source: 'manual'
       })
 
-      const wsBroadcast = req.app.get('wsBroadcast')
-      if (wsBroadcast) wsBroadcast('direct_data_updated', { config_id, value, d_no: saveDNo })
-
+      // direct_data_updated 由 saveDirectData 写库后统一广播（见 app.js onDirectDataChanged），这里不再单独发。
       return res.json({
         success: true,
         message: '本地配置已保存（未配置 MQTT 字段，不下发设备）',
@@ -484,8 +482,7 @@ module.exports = async (req, res) => {
       : historyResult.success
         ? '指令已发送、保存并记录操作历史'
         : '指令已发送并保存，但操作历史记录失败'
-    const wsBroadcast = req.app.get('wsBroadcast')
-    if (wsBroadcast) wsBroadcast('direct_data_updated', { config_id, value, d_no: saveDNo })
+    // direct_data_updated 由 saveDirectData 写库后统一广播（见 app.js onDirectDataChanged），这里不再单独发。
 
     return res.json({
       success: true,

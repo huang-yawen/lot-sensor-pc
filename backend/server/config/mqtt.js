@@ -12,7 +12,8 @@ module.exports = {
   //   路由器   mqtt://192.168.1.100:1883
   //   lsr热点  mqtt://10.97.241.240:1883
   //   本机     mqtt://localhost:1883
-  MQTT_URL: 'mqtt://192.168.1.110:1883',
+  // MQTT_URL: 'mqtt://192.168.1.110:1883',
+  MQTT_URL: 'mqtt://localhost:1883',
   // 客户端标识。同一个 Broker 上 client id 必须唯一——两个后端实例用同一个 id 会被
   // Broker 交替踢下线，表现为 MQTT 反复断连重连、指令下发时报「MQTT 未连接」。
   MQTT_CLIENT_ID: 'lot-sensor-pc-test1',
@@ -43,7 +44,7 @@ module.exports = {
   PC_HEARTBEAT_INTERVAL: 1000,
 
   // 超过该时间没收到某设备心跳就判离线（毫秒）。最小 1000。
-  HEARTBEAT_TIMEOUT: 5000,
+  HEARTBEAT_TIMEOUT: 500000,
 
   // 心跳判定模式（两种互斥）：
   //   'receive' = 设备发一条 sensor/behavior 主题的数据就代表在线，不用单独发心跳包（默认）。

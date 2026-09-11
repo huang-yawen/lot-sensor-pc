@@ -28,7 +28,7 @@
 
 <script setup>
 import { computed, ref, onMounted, onUnmounted } from 'vue'
-import { connect, on, close } from '@/utils/websocket'
+import { connect, on } from '@/utils/websocket'
 import { useSystemConfigStore } from '@/stores/useSystemConfigStore'
 import api from '@/api'
 
@@ -60,11 +60,14 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+    // 不调用 close()：WebSocket 是全局单例连接，其他页面/组件（指令页面、实时数据页等）
+    // 共用同一条连接，这里关掉会连带断开它们，且 close() 会置 isManualClose=true 导致
+    // 不再自动重连。TopNav 常驻不会轻易卸载，卸载时只清理自己的订阅即可，跟其余用到
+    // @/utils/websocket 的组件（SensorRealtime.vue 等）保持同样的约定。
     if (wsUnsubscribe) {
       wsUnsubscribe()
       wsUnsubscribe = null
     }
-    close()
 })
 </script>
 

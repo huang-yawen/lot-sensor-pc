@@ -28,6 +28,7 @@ const { onSpike } = require('./service/dataQuality/spikeFilter');
 const { onRelayStuck } = require('./service/dataQuality/relayStuck');
 const { onSensorInverted } = require('./service/dataQuality/sensorInverted');
 const { onHeaterBlocked } = require('./service/pidHeating/pidHeating');
+const { onDirectDataChanged } = require('./service/directData/saveDirectConfig');
 const mqttClient = require('./mqtt/index')
 
 const app = express();
@@ -135,6 +136,13 @@ function broadcast(type, payload) {
 // 只在后端确认整批暂存指令都已发送并入库后通知页面。
 mqttClient.on('pendingCommandsFlushed', (payload) => {
     broadcast('pending_commands_flushed', payload);
+});
+
+// t_direct（指令当前值）任何一处写入都推给指令页面刷新：不只是用户手动下发，
+// 联动/PID/安全联锁/定量定温停机/故障快照恢复/设备上报同步这些后端自动改的
+// 开关值也要让页面实时看到。不走节流，前端自己做防抖合并。
+onDirectDataChanged((payload) => {
+    broadcast('direct_data_updated', payload);
 });
 
 // ==================== 消息节流（Throttle） ====================

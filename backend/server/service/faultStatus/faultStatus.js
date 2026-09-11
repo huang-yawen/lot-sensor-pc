@@ -116,16 +116,27 @@ const pumpStartStateMap = new Map()
 const cooldown = createCooldown()
 
 /**
- * 返回水泵已连续开启的时长（毫秒）；水泵未开启时返回 null。
+ * 返回水泵已连续开启的时长（毫秒）；从未开启过时返回 null。
  * 水泵每次从关变开时记一个起始时间戳，之后每次调用返回"现在 - 起始时间"；
  * 水泵一关就把起始时间清掉，下次再开会重新计时。宽限期长度（pumpWarmupMs）
  * 在配置中心 FAULT_STATUS.pumpWarmupMs 设置。
+ *
+ * @param {boolean|null} pumpOn - 水泵开关的三态读数（见 controlHelpers.js 的
+ *   readSwitchStates）：true=确认开，false=确认关，null=这条消息没能解析出水泵
+ *   的行为上报（不知道，不代表关闭）。只有明确收到 false 才清空计时；null 时
+ *   保留已有计时继续走，不能当成"关"处理——否则只要偶尔有一条消息解析不出
+ *   水泵状态，预热计时就会被清零重来，pump_warmup_ms 配多久都攒不够，
+ *   ①②④⑤⑥ 这几个要求"预热完成"的故障保护就永远不会触发。
  */
 function trackPumpOnDuration(deviceNo, pumpOn) {
   const key = deviceNo || 'global'
-  if (!pumpOn) {
+  if (pumpOn === false) {
     pumpStartStateMap.delete(key)
     return null
+  }
+  if (pumpOn == null) {
+    const since = pumpStartStateMap.get(key)
+    return since == null ? null : Date.now() - since
   }
   const now = Date.now()
   let since = pumpStartStateMap.get(key)
@@ -164,12 +175,22 @@ async function recordAlarm(deviceNo, trigger) {
  * 4. 六种故障检测（按需求文档编号）
  * ============================================================ */
 
-/** ③ 干烧：加热开启后，连续 dryBurnDurationMs 出水温度变化 < dryBurnMinRiseC。 */
+/**
+ * ③ 干烧：加热开启后，连续 dryBurnDurationMs 出水温度变化 < dryBurnMinRiseC。
+ * @param {boolean|null} heatOn - 加热开关的三态读数（同 trackPumpOnDuration 的 pumpOn
+ *   参数）：只有明确收到 false（确认关闭）才清空基线重新计时；null（这条消息没解析出
+ *   加热的行为上报，不知道）时不清空，只是这一轮跳过判断，避免偶尔解析不出状态就把
+ *   干烧计时基线冲掉。
+ */
 function checkDryBurn(deviceNo, heatOn, tempOut, faultConfig) {
   const key = deviceNo || 'global'
-  // 加热关闭 / 出水温度无效时清空状态，下次重新开始计时
-  if (!heatOn || tempOut == null) {
+  // 加热确认关闭：清空状态，下次重新开始计时。
+  if (heatOn === false) {
     dryBurnStateMap.delete(key)
+    return false
+  }
+  // 加热开关"不知道"、或这条消息温度读数缺失：跳过这一轮判断，保留已有基线。
+  if (heatOn == null || tempOut == null) {
     return false
   }
   const durationMs = Number(faultConfig.dryBurnDurationMs) > 0 ? Number(faultConfig.dryBurnDurationMs) : 5000
@@ -199,7 +220,7 @@ async function detectFault(info, deviceNo, faultConfig) {
   const sensors = await readSensors(info)
   const states = await readSwitchStates(info)
 
-  const pumpOnDurationMs = trackPumpOnDuration(deviceNo, states.pumpOn === true)
+  const pumpOnDurationMs = trackPumpOnDuration(deviceNo, states.pumpOn)
 
   const [flowLow, flowHigh, pressureLow, pressureHigh, tempDiffFromDirect, warmupMs, dryBurnDurationMs, dryBurnMinRiseC] = await Promise.all([
     getThresholdValue('flowLow', deviceNo),
