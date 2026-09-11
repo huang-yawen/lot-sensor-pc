@@ -18,7 +18,7 @@ module.exports = {
   tempHigh: false,            // 任一温度高于上限
   tempDiff: false,            // 温差过大
   flowVolatility: false,      // 流量剧烈波动（疑似水锤/湍流）
-  sensorOffline: true,        // 传感器掉线（消息缺字段 或 设备心跳超时）
+  sensorOffline: false,        // 传感器掉线（消息缺字段 或 设备心跳超时）
   heaterWithoutPump: false,   // 未开水泵却开启加热
 
   // ==================== 参数（规则里用 ctx.config 取） ====================

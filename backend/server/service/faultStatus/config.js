@@ -23,11 +23,11 @@
 module.exports = {
   enabled: false,           // 故障状态总开关
 
-  pipeBlockage: true,       // 故障①：进水口/管道堵塞
+  pipeBlockage: false,       // 故障①：进水口/管道堵塞
   outletBlockage: true,     // 故障②：出水口堵塞
-  dryBurn: true,            // 故障③：干烧
-  pumpIdle: true,           // 故障④：水泵空转
-  pumpFault: true,          // 故障⑤：水泵故障
+  dryBurn: false,            // 故障③：干烧
+  pumpIdle: false,           // 故障④：水泵空转
+  pumpFault: false,          // 故障⑤：水泵故障
   pipeLeak: true,           // 故障⑥：管道漏水（流量>上限 且 压力<下限或=0）
 
   dryBurnDurationMs: 60000, // 加热开启后判定"温度不上升"所需的持续时长（毫秒）

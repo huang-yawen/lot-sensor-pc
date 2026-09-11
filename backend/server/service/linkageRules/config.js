@@ -11,7 +11,7 @@
  * 当前状态：总开关开着，具体规则全部关着（只有 enabled=true 但没有勾选任何一条规则）。
  */
 module.exports = {
-  enabled: true,                   // 联动总开关
+  enabled: false,                   // 联动总开关
 
   pumpAlwaysOn: false,             // 水泵常开：无故障、读数没顶到异常哨兵就保持运行
 
@@ -30,5 +30,5 @@ module.exports = {
   dualTempDiffThreshold: 2,        // 双温度融合温差阈值（℃），建议比安全联锁的温差阈值小
   tempFlow: false,                 // 温度+流量融合
   pressureFlow: false,             // 压力+流量融合
-  tempPressure: false,             // 温度+压力融合
+  tempPressure: true,             // 温度+压力融合
 }

@@ -419,6 +419,23 @@ module.exports = async (req, res) => {
       console.log('[DirectUpdate] MQTT 第二次发送成功')
     } catch (err) {
       console.error('[DirectUpdate] MQTT 发送失败:', err.message)
+
+      // MQTT 客户端本身未连接（比如 Broker 掉线、client id 冲突被踢下线）时，
+      // 心跳判断的"设备在线"跟"现在能不能真的发出去"是两回事：设备可能仍在正常
+      // 上报，只是 PC 这端连不上 Broker。这种情况不该直接报错丢弃指令，而是跟
+      // "设备离线"一样退回暂存，等 MQTT 重连、设备下次心跳时自动补发，行为跟
+      // 上面第 3 步的离线暂存保持一致。全局指令（deviceId 为空）没有具体设备可
+      // 挂靠暂存队列，仍按原来的失败逻辑处理。
+      if (err.code === 'MQTT_DISCONNECTED' && deviceId) {
+        console.log(`[DirectUpdate] MQTT 未连接，设备 ${deviceId} 指令改为暂存`)
+        mqttClient.addPendingCommand(deviceId, config_id, value)
+        return res.json({
+          success: true,
+          message: 'MQTT 暂时未连接，指令已暂存，将在重连后自动发送并保存',
+          data: { status: 'queued' }
+        })
+      }
+
       return res.status(503).json({
         success: false,
         message: 'MQTT 发送失败，指令未保存到数据库',
