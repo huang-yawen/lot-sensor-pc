@@ -109,6 +109,9 @@ function getDeviceState(deviceNo) {
 
 /** 干烧检测：记录"加热开启后温度基线 + 起始时间"，加热关闭则清空。 */
 const dryBurnStateMap = new Map()
+// 【干烧新增候选条件B专用状态】T1/T2 双温度基线，跟 dryBurnStateMap 分开存。
+// 启用候选B时把这行和下面 checkDryBurnDualNoRise()、detectFault() 里对应的触发块一起放开。
+// const dryBurnNoRiseStateMap = new Map()
 /** 水泵启动预热计时：记录水泵"从关到开"的起始时间，水泵关闭则清空。 */
 const pumpStartStateMap = new Map()
 /** 故障告警冷却：与安全联锁同一份实现（controlShared/cooldown），各自持有独立计时状态，
@@ -211,6 +214,53 @@ function checkDryBurn(deviceNo, heatOn, tempOut, faultConfig) {
 }
 
 /**
+ * 【干烧新增候选条件A】加热模块开启，但流量传感器读数 < 流量下限（无水流通过），
+ * 直接判定干烧——不用等温度变化，流量本身就说明没水流经加热模块。
+ * 跟现有干烧①共用同一个 faultConfig.dryBurn 开关和 dry_burn 故障 id，因为需求文档里
+ * 这仍然是"干烧"这一种故障，只是新增一种判定依据。是一次性布尔表达式，没有状态。
+ * 启用时把这个函数和 detectFault() 里对应的候选A触发块一起放开即可。
+ */
+// function checkDryBurnByFlow(heatOn, flow, flowLow) {
+//   return heatOn === true && flow != null && flowLow != null && flow < flowLow
+// }
+
+/**
+ * 【干烧新增候选条件B】加热模块开启超过 durationMs（草稿默认2分钟），但 T1（进水温度
+ * sensors.temp1）和 T2（出水温度 sensors.temp2）都没有明显上升趋势——跟现有干烧①
+ * （只看出水温度 temp2 单点）不同，这里要求两个温度传感器都不上升才判定，更严格，
+ * 用于排除"只是出水口局部升温、实际水还在正常循环"的误判场景。
+ * 实现方式参照 checkDryBurn：记基线+计时，任一温度比基线明显上升（>= minRise）就重新
+ * 计时；heatOn 三态语义、null 时不清空基线的处理跟 checkDryBurn 完全一致。
+ * 启用时把这个函数和上面 dryBurnNoRiseStateMap、detectFault() 里对应的候选B触发块
+ * 一起放开。
+ * @param {boolean|null} heatOn
+ * @param {number|null} temp1 - T1，进水温度
+ * @param {number|null} temp2 - T2，出水温度
+ */
+// function checkDryBurnDualNoRise(deviceNo, heatOn, temp1, temp2, durationMs, minRise) {
+//   const key = deviceNo || 'global'
+//   if (heatOn === false) {
+//     dryBurnNoRiseStateMap.delete(key)
+//     return false
+//   }
+//   if (heatOn == null || temp1 == null || temp2 == null) {
+//     return false
+//   }
+//   const state = dryBurnNoRiseStateMap.get(key)
+//   const now = Date.now()
+//   if (!state) {
+//     dryBurnNoRiseStateMap.set(key, { baselineTemp1: temp1, baselineTemp2: temp2, since: now })
+//     return false
+//   }
+//   // T1 或 T2 任一比基线明显上升，都算"有在升温"，重新计时
+//   if (temp1 >= state.baselineTemp1 + minRise || temp2 >= state.baselineTemp2 + minRise) {
+//     dryBurnNoRiseStateMap.set(key, { baselineTemp1: temp1, baselineTemp2: temp2, since: now })
+//     return false
+//   }
+//   return now - state.since >= durationMs
+// }
+
+/**
  * 主评估：检测六种故障，按优先级取最高的一个返回。
  * 多故障同时命中时，只触发优先级最高的那个（避免一份报警里塞六种故障）。
  *
@@ -281,6 +331,27 @@ async function detectFault(info, deviceNo, faultConfig) {
       detail: `加热已开启超过 ${Math.round(durationMs / 1000)} 秒，出水温度=${sensors.temp2} 无明显上升`,
     })
   }
+
+  // 【干烧新增候选A】加热开启但流量 < 下限（无水流通过）。启用时把上面 checkDryBurnByFlow
+  // 放开、这里也放开（复用 faultConfig.dryBurn 总开关和 flowLow，已在上面取到）。
+  // if (faultConfig.dryBurn !== false && checkDryBurnByFlow(states.heatOn, sensors.flow, flowLow)) {
+  //   triggers.push({
+  //     id: 'dry_burn', code: '③', priority: 1,
+  //     name: '干烧',
+  //     detail: `加热已开启，但流量=${sensors.flow} 低于下限=${flowLow}（疑似无水流通过）`,
+  //   })
+  // }
+
+  // 【干烧新增候选B】加热开启超过2分钟，T1/T2 均无上升趋势。启用时把上面
+  // dryBurnNoRiseStateMap、checkDryBurnDualNoRise() 一起放开；120000ms 和 minRise 是草稿值，
+  // 赛场定下来后可以改成常量或接指令中心（参照 tempDiff 的"指令中心优先、配置中心兜底"）。
+  // if (faultConfig.dryBurn !== false && checkDryBurnDualNoRise(deviceNo, states.heatOn, sensors.temp1, sensors.temp2, 120000, dryBurnMinRiseC)) {
+  //   triggers.push({
+  //     id: 'dry_burn', code: '③', priority: 1,
+  //     name: '干烧',
+  //     detail: `加热已开启超过120秒，T1=${sensors.temp1}、T2=${sensors.temp2} 均无明显上升`,
+  //   })
+  // }
 
   // ④ 水泵空转：水泵预热完成，流量 = 0
   if (faultConfig.pumpIdle !== false && pumpWarmedUp && sensors.flow === 0) {
