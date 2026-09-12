@@ -13,6 +13,10 @@
  * 【谁在读】tempShutdown.js 本身。
  */
 module.exports = {
-  enabled: false,   // 兜底开关（指令中心 shutdown_temp_enabled 没配置指令项时才用这个）
-  shutdownTemp: 0,  // 兜底温度阈值（℃），指令中心 shutdown_temp 优先；<= 0 等于不启用
+  enabled: false,    // 兜底开关（指令中心 shutdown_temp_enabled 没配置指令项时才用这个）
+  // 兜底温度阈值（℃），指令中心 shutdown_temp 优先。tempShutdown.js 把 <= 0 当"无效阈值"
+  // 直接跳过判断——这里原来是 0，等于不管开关开没开，这个功能永远不会触发（指令中心
+  // shutdown_temp 这个指令项虽然存在，但从没人在页面上填过值，一直退到这里的 0）。
+  // 40 只是占位值（比当前目标温度 32℃ 高一截），需要按赛题实际水温上限重新标定。
+  shutdownTemp: 40,
 }

@@ -188,12 +188,13 @@ async function evaluateOne(info, values, deviceNo, actuator, nowMs) {
   // ① 界面显示"实际状态与控制指令不符"警告。一轮只报一次，症状消失复位后才会再报。
   if (!state.warned) {
     state.warned = true
+    // 文案统一成"原因｜处置｜数据"三段
     const detail = actuator.key === 'heater'
-      ? `已下发关闭，但出水温度从 ${state.base}℃ 升到 ${reading}℃（上升 ${(reading - state.base).toFixed(2)}℃）`
-      : `已下发关闭，但瞬时流量仍为 ${reading} L/min`
+      ? `出水温度 ${state.base}℃ → ${reading}℃（上升 ${(reading - state.base).toFixed(2)}℃）`
+      : `瞬时流量仍为 ${reading} L/min`
     triggers.push(await fire(
       deviceNo, actuator, 'warning', actuator.warnId,
-      `${actuator.label}实际状态与控制指令不符：${detail}，开始自动重发关闭指令（最多 ${rule.retryCount} 次）`,
+      `${actuator.label}状态与指令不符｜开始自动重发关闭指令（最多 ${rule.retryCount} 次）｜已下发关闭，但${detail}`,
       info,
     ))
   }
@@ -225,7 +226,7 @@ async function evaluateOne(info, values, deviceNo, actuator, nowMs) {
   state.faulted = true
   triggers.push(await fire(
     deviceNo, actuator, 'fault', actuator.faultId,
-    `${actuator.label}连续 ${rule.retryCount} 次重发关闭指令均无效，判定为继电器触点粘连/控制失效（硬件故障），请立即人工断电检修`,
+    `${actuator.label}继电器粘连/控制失效｜已停止重试，请人工断电检修｜连续 ${rule.retryCount} 次重发关闭指令均无效`,
     info,
   ))
   return triggers

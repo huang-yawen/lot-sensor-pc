@@ -170,7 +170,10 @@ function trackPumpOnDuration(deviceNo, pumpOn) {
 async function recordAlarm(deviceNo, trigger) {
   await recordEvent({
     deviceNo,
-    message: `${trigger.name}（${trigger.code}），已执行故障保护（保存快照、强制关闭水泵和加热、系统进入 FAULT、复位按钮自动置 ON、指令页面锁定），${trigger.detail || ''}`,
+    // 文案统一成"原因｜处置｜数据"三段。处置那段只写结果，不再罗列"保存快照 / 进入
+    // FAULT / 复位置 ON / 页面锁定"这一整套——每条故障记录都是同样的固定流程，
+    // 几十上百条里重复同一段 35 个字，表格全是噪声，流程本身写在页面说明里就够了。
+    message: [`${trigger.name}（${trigger.code}）`, '已断电水泵和加热，页面锁定，待手动复位', trigger.detail].filter(Boolean).join('｜'),
     code: trigger.id,
     type: '故障保护',
   })

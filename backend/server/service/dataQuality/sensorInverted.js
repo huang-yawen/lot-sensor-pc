@@ -157,10 +157,9 @@ async function evaluateSensorInverted(info) {
   state.suspended = rule.suspendThermostat
 
   const minutes = (heatingMs / 60000).toFixed(1)
-  const message = `传感器逻辑配置异常：加热已开启 ${minutes} 分钟，出水温度 ${temp2}℃ 反而低于进水温度 ${temp1}℃`
-    + `（温差 ${(temp1 - temp2).toFixed(2)}℃，超过 ${rule.tempDiffThreshold}℃）`
-    + `，判定为传感器安装位置错误或两路信号接反，请检查硬件拓扑`
-    + (state.suspended ? '；已暂停自动恒温控制，防止反向调节导致超温' : '')
+  // 文案统一成"原因｜处置｜数据"三段
+  const message = `进出水温度疑似接反｜${state.suspended ? '已暂停自动恒温控制，' : ''}请检查硬件接线`
+    + `｜加热 ${minutes} 分钟后出水 ${temp2}℃ < 进水 ${temp1}℃（温差 ${(temp1 - temp2).toFixed(2)}℃ > ${rule.tempDiffThreshold}℃）`
   await recordEvent({
     deviceNo,
     message,

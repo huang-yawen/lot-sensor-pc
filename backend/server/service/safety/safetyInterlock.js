@@ -230,7 +230,7 @@ async function fire(rule, deviceNo, detail, actions) {
     const label = SWITCH_LABELS[prefix] || prefix
     try {
       if (await setSwitch(prefix, label, value, deviceNo, 'interlock')) {
-        done.push(`${label}→${value}`)
+        done.push(`${label}→${value === 'on' ? '开' : '关'}`)
         console.log(`[SafetyInterlock] ${rule.name}：${label} -> ${value}，设备 ${deviceNo || '全局'}`)
       }
     } catch (err) {
@@ -239,12 +239,14 @@ async function fire(rule, deviceNo, detail, actions) {
   }
 
   // 配了动作就记成"安全联锁"，没配动作（actions 空）就是"只记录不动作"的安全告警。
-  const suffix = (actions || []).length > 0
-    ? `，已执行安全联锁（${done.length ? done.join('、') : '下发失败'}）`
-    : '，安全联锁已记录（未执行关闭）'
+  // 文案统一成"原因｜处置｜数据"三段：不再写"已执行安全联锁"——type 字段本身就是它，
+  // 描述里再重复一遍只是白占表格宽度。
+  const handled = (actions || []).length === 0
+    ? '仅记录，未动执行器'
+    : (done.length ? `已下发 ${done.join('、')}` : '下发失败')
   await recordEvent({
     deviceNo,
-    message: `${rule.name}${suffix}，${detail || ''}`,
+    message: [rule.name, handled, detail].filter(Boolean).join('｜'),
     code: rule.id,
     type: (actions || []).length > 0 ? '安全联锁' : '安全告警',
   })

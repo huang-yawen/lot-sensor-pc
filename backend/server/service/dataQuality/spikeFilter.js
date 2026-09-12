@@ -130,9 +130,9 @@ async function recordSpikes(deviceNo, jumps, info) {
     if (cooldown.withinCooldown(key, CONFIG.alarmCooldownMs)) continue
     cooldown.markFired(key)
     const percent = Number((jump.delta * 100).toFixed(1))
-    const message = `${jump.type.name}：${jump.prev}${jump.type.unit} -> ${jump.now}${jump.type.unit}`
-      + `，变化 ${percent}%（超过 ±${CONFIG.ratio * 100}%），已暂缓入库`
-      + `，需连续 ${CONFIG.confirmCount} 次确认`
+    // 文案统一成"原因｜处置｜数据"三段
+    const message = `${jump.type.name}｜已暂缓入库，待连续 ${CONFIG.confirmCount} 次确认`
+      + `｜${jump.prev}${jump.type.unit} → ${jump.now}${jump.type.unit}，变化 ${percent}%（限 ±${CONFIG.ratio * 100}%）`
     await recordEvent({
       deviceNo,
       message,

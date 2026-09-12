@@ -25,6 +25,7 @@ const { startMonitor: startSafetyMonitor, onSafetyInterlock } = require('./servi
 const { initFaultStateFromDb, onFault } = require('./service/faultStatus/faultStatus');
 const { onAlarm } = require('./service/alarm/evaluateRules');
 const { onSpike } = require('./service/dataQuality/spikeFilter');
+const { onLinkage } = require('./service/linkageRules/linkageRules');
 const { onRelayStuck } = require('./service/dataQuality/relayStuck');
 const { onSensorInverted } = require('./service/dataQuality/sensorInverted');
 const { onHeaterBlocked } = require('./service/pidHeating/pidHeating');
@@ -229,6 +230,15 @@ onSafetyInterlock((trigger) => {
 // 弹窗那样打断操作、要求用户复位。
 onAlarm((alarm) => {
     broadcast('alarm_triggered', alarm);
+});
+
+// 正常状况联动真的下发了一次开关时立即广播（不走节流）。性质比安全联锁轻——这是
+// "系统按规则正常调节"，不是异常处置，所以前端用 info 级别的短提示
+// （LinkageNotifier.vue），停留时间也比安全联锁短。
+// 只在真下发时才有这个事件：规则命中但结论跟当前状态一致、或被防抖拦住时不下发、
+// 也就不会弹，所以稳态运行时不会刷屏。
+onLinkage((trigger) => {
+    broadcast('linkage_triggered', trigger);
 });
 
 // 传感器数值跳变/毛刺被拦下时立即广播（不走节流）。性质是"轻微警告、提醒人工检查"，

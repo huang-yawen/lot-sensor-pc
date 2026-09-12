@@ -173,7 +173,7 @@ async function checkAlarms(state, deviceNo) {
         name: '温度过高',
         actual,
         threshold: tempHigh,
-        message: `${label}过高：当前值 ${actual} > 阈值 ${tempHigh}`,
+        message: `${label} ${actual} > 上限 ${tempHigh}`,
         action: { field: 'heater', value: 'off' },
       })
       break
@@ -192,7 +192,7 @@ async function checkAlarms(state, deviceNo) {
         name: '温度过低',
         actual,
         threshold: tempLow,
-        message: `${label}过低：当前值 ${actual} < 阈值 ${tempLow}`,
+        message: `${label} ${actual} < 下限 ${tempLow}`,
         action: null,
       })
       break
@@ -208,7 +208,7 @@ async function checkAlarms(state, deviceNo) {
         name: '循环流量过高',
         actual: flow,
         threshold: flowHigh,
-        message: `循环流量过高：当前值 ${flow} > 阈值 ${flowHigh}`,
+        message: `流量 ${flow} > 上限 ${flowHigh}`,
         action: { field: 'pump', value: 'off' },
       })
     }
@@ -223,7 +223,7 @@ async function checkAlarms(state, deviceNo) {
         name: '循环流量过低',
         actual: flow,
         threshold: flowLow,
-        message: `循环流量过低：当前值 ${flow} < 阈值 ${flowLow}`,
+        message: `流量 ${flow} < 下限 ${flowLow}`,
         action: { field: 'heater', value: 'off' },
       })
     }
@@ -237,7 +237,7 @@ async function checkAlarms(state, deviceNo) {
         name: '管路压力过高',
         actual: pressure,
         threshold: pressureHigh,
-        message: `管路压力过高：当前值 ${pressure} > 阈值 ${pressureHigh}`,
+        message: `压力 ${pressure} > 上限 ${pressureHigh}`,
         action: { field: 'pump', value: 'off' },
       })
     }
@@ -254,7 +254,7 @@ async function checkAlarms(state, deviceNo) {
         name: '管路压力过低',
         actual: pressure,
         threshold: pressureLow,
-        message: `管路压力过低：当前值 ${pressure} < 阈值 ${pressureLow}`,
+        message: `压力 ${pressure} < 下限 ${pressureLow}`,
         action: null,
       })
     }
