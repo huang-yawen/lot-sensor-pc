@@ -202,12 +202,16 @@ const computedMetricList = computed(() => {
   }
   if (flags.tempChangeRate) {
     const tc = entry.tempChangeRate
-    const t1 = fmt(tc?.temp1, 3)
-    const t2 = fmt(tc?.temp2, 3)
+    // 2 位小数：口径是 ℃/min，数值比原来按秒算大 60 倍（升温 0.005℃/s 就是 0.3℃/min），
+    // 再留 3 位小数只是噪声。2 也正好是 fmt 的默认位数。
+    const t1 = fmt(tc?.temp1, 2)
+    const t2 = fmt(tc?.temp2, 2)
     list.push({
       key: 'tempChangeRate',
       label: '温度变化率 (进水/出水)',
-      unit: '℃/s',
+      // 单位跟着后端返回值走（同 pressureDropRate 的写法），别在前端写死：
+      // 后端 computedMetrics.js 算的是 ΔT / Δt(分钟)，改过一次口径，写死就会跟实际值对不上。
+      unit: tc?.unit || '℃/min',
       value: tc ? `${t1 ?? '--'} / ${t2 ?? '--'}` : null,
     })
   }
@@ -255,7 +259,8 @@ const computedMetricList = computed(() => {
       key: 'heatingRate',
       label: '加热速度',
       unit: hr?.unit || '℃/min',
-      value: fmt(hr?.value, 3),
+      // 2 位小数：跟温度变化率同为 ℃/min，两张卡片位数保持一致。
+      value: fmt(hr?.value, 2),
       // 后端要求"这一条和上一条都在加热"才给值，所以措辞比上面三项更严格一点。
       note: hr ? '' : '持续加热中才计算',
     })

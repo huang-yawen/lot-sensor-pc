@@ -157,7 +157,7 @@ const TIME_WINDOW_METRICS = [
 // 首页计算数据：每个指标可用布尔值独立控制是否在首页展示；enabled 是总开关。
 //   resistanceK            - 系统阻力系数 K = 泵出口压力(kPa) / 流量(L/s)²
 //   pressureDropRate       - 压力陡降速率，kPa/s
-//   tempChangeRate         - 温度变化率 dT/dt，℃/s
+//   tempChangeRate         - 温度变化率 dT/dt，℃/min
 //   heatExchangeEfficiency - 换热效率 η = (ρ·Cp·Q·max(0,出水−进水)) / P_额定 ×100%
 //   eerHeatBalance         - 热平衡：P_额定 = 水带走的热功率 + 未被带走部分
 //   heatingEfficiency      - 加热效率 = 实际升温ΔT ÷ 理论升温ΔT ×100%
