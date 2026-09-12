@@ -16,7 +16,7 @@
 import { ref, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
 import * as echarts from '@/utils/echarts'
 import { useDisplayStore } from '@/stores/useDisplayStore'
-import { pickRightAxisNames, canScale } from '@/utils/chartAxis'
+import { pickRightAxisNames, pickFlatAxisNames, canScale } from '@/utils/chartAxis'
 
 /**
  * @description ECharts 实例引用
@@ -85,6 +85,16 @@ const initChart = async () => {
 
   // 更新图表数据
   updateChart(props.data)
+}
+
+/**
+ * @description 判断一条 series 是不是纯 0/1 开关量（行为数据分轴用）
+ * @param {{data: Array}} item - 已经转成纯数值的 series
+ * @returns {boolean} 数据非空且每个点都是 0 或 1 时为 true
+ */
+const isBinarySeries = (item) => {
+  const data = item.data || []
+  return data.length > 0 && data.every(value => value === 0 || value === 1)
 }
 
 /**
@@ -163,17 +173,32 @@ const updateChart = (source) => {
       })
     }})
 
-    // 决定每个字段走左轴还是右轴：配置中心手动指定过 right 的一律以手动配置为准；
-    // 一个都没配时按数量级自动分，免得温度（几十）和累计流量（几万）挤在同一根轴上，
-    // 小的那条被压成贴着 0 的直线。行为数据全是 0/1，量级一致，不参与自动分轴。
-    const manualRight = fields.some(field => props.settings[field]?.yAxis === 'right')
-    const rightFields = (props.binary || manualRight)
-      ? new Set(fields.filter(field => props.settings[field]?.yAxis === 'right'))
-      : pickRightAxisNames(series)
+    // 决定每个字段走左轴还是右轴。
+    // 配置中心显式配成 right 的一律以配置为准；其余字段（含配成 left 的——y_axis 字段
+    // 在库里默认就是 'left'，不能当成用户特意选过左轴）继续走自动分轴，不像以前那样
+    // 只要有一个指标配了 right 就把整张图的自动分轴一起关掉。
+    const explicitRight = new Set(fields.filter(field => props.settings[field]?.yAxis === 'right'))
+    const autoSeries = series.filter(item => !explicitRight.has(item.name))
+
+    let autoRight
+    if (props.binary) {
+      // 行为数据以 0/1 开关量为主，但表里也可能混进真数值字段（时长、计数之类）。
+      // 这些字段跟着 0/1 一起锁在 0~1 的轴上会被顶出量程，挪到右轴各自缩放。
+      autoRight = new Set(autoSeries.filter(item => !isBinarySeries(item)).map(item => item.name))
+    } else {
+      // 先看数量级断层；同一量级、但波动被别的曲线量程压平的，再按波动幅度拆一次
+      autoRight = pickRightAxisNames(autoSeries)
+      if (autoRight.size === 0) autoRight = pickFlatAxisNames(autoSeries)
+    }
+
+    const rightFields = new Set([...explicitRight, ...autoRight])
+    // 自动分轴把所有字段都判到了右轴，等于没分轴，收回左轴免得左边空挂一根轴
+    if (explicitRight.size === 0 && rightFields.size === fields.length) rightFields.clear()
     series.forEach(item => { item.yAxisIndex = rightFields.has(item.name) ? 1 : 0 })
 
     const axisConfig = (side) => {
       const isRight = side === 'right'
+      const axisSeries = series.filter(item => item.yAxisIndex === (isRight ? 1 : 0))
       const configured = fields
         .filter(field => rightFields.has(field) === isRight)
         .map(field => props.settings[field])
@@ -181,17 +206,23 @@ const updateChart = (source) => {
       const units = [...new Set(configured.map(setting => setting.unit).filter(Boolean))]
       const min = configured.find(setting => setting.min != null)?.min
       const max = configured.find(setting => setting.max != null)?.max
+      // 只有整根轴都是 0/1 开关量时才锁死 0~1 刻度；混了真数值的那根轴照常按数据缩放
+      const binaryAxis = props.binary && axisSeries.length > 0 && axisSeries.every(isBinarySeries)
       return {
         type: 'value',
         name: units.join('/'),
         position: side,
+        // 这一侧一条 series 都没有时别画，免得右边挂一根没数据的 0~1 假刻度
+        show: axisSeries.length > 0,
+        // 左右两根轴刻度对不齐，各画一套横线会叠成乱网格，只保留左轴的
+        splitLine: { show: !isRight },
         // 脱离 0 刻度，让轴范围紧贴这一侧数据的最大最小值。传感器温度常年在 28.9~29.2
         // 之间走，轴要是从 0 起，这 0.3℃ 只占图高 1%，320px 的图上不到 4 个像素，
         // 看上去就是一条直线；贴着数据画才能把波动撑开看清。
-        scale: canScale(series.filter(item => item.yAxisIndex === (isRight ? 1 : 0))),
-        min: props.binary ? 0 : (min ?? undefined),
-        max: props.binary ? 1 : (max ?? undefined),
-        interval: props.binary ? 1 : undefined,
+        scale: binaryAxis ? false : canScale(axisSeries),
+        min: binaryAxis ? 0 : (min ?? undefined),
+        max: binaryAxis ? 1 : (max ?? undefined),
+        interval: binaryAxis ? 1 : undefined,
       }
     }
 

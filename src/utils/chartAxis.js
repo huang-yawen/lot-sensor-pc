@@ -1,7 +1,8 @@
 /**
- * 【文件职责】按数量级把一张图里的多条 series 自动分到左右两根 y 轴。
- * 同一张图里如果温度（几十）和累计流量（几万）共用一根轴，小的那条会被压成
- * 贴着 0 的直线看不出变化，分到右轴各自缩放才能都看清。
+ * 【文件职责】把一张图里的多条 series 自动分到左右两根 y 轴，两个判据：
+ * pickRightAxisNames 看数量级断层（温度几十 vs 累计流量几万），
+ * pickFlatAxisNames 看波动幅度（量级接近，但其中一条的起伏被另一条的量程压平）。
+ * 小的那条被压成直线看不出变化，分到右轴各自缩放才能都看清。
  * 【谁在用】组件 LineBarCharts；页面 HistoryCharts（累计换热量图 / 开关时长图）。
  * 【配置中心关联】无。
  */
@@ -47,6 +48,41 @@ export function pickRightAxisNames(seriesList) {
   if (cutIndex === -1) return new Set()
 
   return new Set(scales.slice(cutIndex + 1).map((item) => item.name))
+}
+
+// 一条 series 自身的波动幅度（max-min）占同轴全局量程的比例低于这个值，就认为它在共用轴上
+// 被压成了一条直线。5% 意味着在 320px 高的图里它的起伏不到 16px，肉眼基本看不出变化。
+// 这个判据和 SPLIT_RATIO 的量级判据互补：温度 29 和湿度 60 量级只差 2 倍不会触发拆轴，
+// 但温度常年只在 0.3℃ 内波动，被湿度的量程压平，这种情况只有看波动幅度才拆得出来。
+const FLAT_RATIO = 0.05
+
+/**
+ * @description 按波动幅度挑出被压平、该挪到右轴的 series
+ * @param {Array<{name: string, data: Array}>} seriesList - 每条 series 的名字和纯数值数组
+ * @returns {Set<string>} 需要走右轴的 series 名字；没有被压平的、或者全都被压平时返回空集合（保持单轴）
+ */
+export function pickFlatAxisNames(seriesList) {
+  if (!Array.isArray(seriesList) || seriesList.length < 2) return new Set()
+
+  const stats = seriesList
+    .map((item) => {
+      const nums = (item.data || []).map(Number).filter((num) => Number.isFinite(num))
+      if (nums.length === 0) return null
+      return { name: item.name, min: Math.min(...nums), max: Math.max(...nums) }
+    })
+    .filter(Boolean)
+  if (stats.length < 2) return new Set()
+
+  // 所有 series 挤在同一根轴上时轴要覆盖的总量程
+  const globalRange = Math.max(...stats.map((item) => item.max)) - Math.min(...stats.map((item) => item.min))
+  // 全部数据是同一个常数，没有波动可言，拆轴也没用
+  if (globalRange === 0) return new Set()
+
+  const flat = stats.filter((item) => (item.max - item.min) / globalRange < FLAT_RATIO)
+  // 一条都没压平不用拆；全都压平说明没有"大的那组"当基准，拆了两边还是平的
+  if (flat.length === 0 || flat.length === stats.length) return new Set()
+
+  return new Set(flat.map((item) => item.name))
 }
 
 /**

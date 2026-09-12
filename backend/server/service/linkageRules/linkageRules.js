@@ -16,7 +16,7 @@
  *   heaterHysteresis 加热滞回带通断：出水温度低于"目标-回差"才开，达到目标就关（是否生效由指令中心 heater_hysteresis_enabled 决定，不是这里的独立开关；回差值优先取指令中心 heater_hysteresis，没有才用配置中心的兜底值）。反向翻转还受最小开/关驻留时间保护（heater_hysteresis_min_on_ms / heater_hysteresis_min_off_ms），防止在目标温度附近被高频通断，见 getHeaterHysteresisState。
  *   flowSingle     水泵-流量单层：流量在区间内/低于下限->开；高于上限->关（保护）。
  *   pressureSingle 水泵/加热-压力单层：压力低于下限->开泵；高于上限->关泵关热。
- *   tempSingle     加热-温度单层（带滞回）：温度低于目标/下限->开；高于目标/上限->关。
+ *   tempSingle     加热-温度单层（带滞回）：温度低于下限->开；高于上限->关（不再参考目标温度）。
  *   dualTemp       水泵-双温度融合：温差超过阈值->开泵。
  *   tempFlow       水泵/加热-温度+流量融合：温度高且流量正常->关热；温度不高但流量低->开热开泵。
  *   pressureFlow   水泵-压力+流量融合：压力高流量低->关泵；压力低流量正常->开泵；压力高流量高->关泵。
@@ -59,11 +59,13 @@ const {
   isFlowNormal,
   getTempDiff,
   resolveDeviceNoStr,
+  TEMP_SOURCES,
 } = require('../controlShared/controlHelpers')
 
 /** 上次该条件动作，用于日志与最小化重复下发。 */
 const lastActions = new Map()
-/** 记录每个设备上一次的 temp1 读数，供"加热温度持续上升"判断趋势（tempPressure 规则用）。 */
+/** 记录每个设备上一次的观测温度读数（观测点见 TEMP_SOURCES.tempPressureTrend），
+ * 供"加热温度持续上升"判断趋势（tempPressure 规则第一段用）。 */
 const lastTemp = new Map()
 
 /**
@@ -244,7 +246,8 @@ function rulePumpAlwaysOn(sensors, faults) {
  *   由 mergeDecision 综合其它规则的结论。
  */
 function ruleHeaterHysteresis(sensors, states, faults, targetTemp, diffOpenThreshold, hysteresis) {
-  const temp2 = sensors.temp2
+  // 盯进水还是出水由 TEMP_SOURCES.heaterHysteresis 决定，默认出水温度。
+  const temp = sensors[TEMP_SOURCES.heaterHysteresis]
   // 进出水温差：两个读数只要有一个缺失就算不出来（getTempDiff 返回 null）。diff 为
   // null 时③不触发——宁可不触发这层保护，也不能拿 NaN 去跟阈值比较（那样的比较结果
   // 永远是 false，会悄悄绕过保护，看起来规则在生效实际上完全没生效）。
@@ -256,13 +259,13 @@ function ruleHeaterHysteresis(sensors, states, faults, targetTemp, diffOpenThres
   if (states.pumpOn === false || (sensors.flow != null && sensors.flow === 0)) return { pump: null, heater: 'off' }
   // ③ 进出水温差过大：读数不可信或者管路异常，保守起见先关。
   if (diff != null && diff > diffOpenThreshold) return { pump: null, heater: 'off' }
-  // 出水温度暂时读不到（传感器掉线/还没上报）：不知道该开该关，索性不表态，
+  // 观测温度暂时读不到（传感器掉线/还没上报）：不知道该开该关，索性不表态，
   // 不能瞎猜，交给其它规则或者维持上一轮状态。
-  if (temp2 == null) return { pump: null, heater: null }
+  if (temp == null) return { pump: null, heater: null }
   // 已经达到或超过目标温度：够热了，关。
-  if (temp2 >= targetTemp) return { pump: null, heater: 'off' }
+  if (temp >= targetTemp) return { pump: null, heater: 'off' }
   // 明显低于目标温度（掉出滞回带下沿）：不够热，开。
-  if (temp2 < targetTemp - hysteresis) return { pump: null, heater: 'on' }
+  if (temp < targetTemp - hysteresis) return { pump: null, heater: 'on' }
   // 温度落在 [目标-回差, 目标) 这个滞回带区间内：维持现状不动作，避免温度在
   // 目标值附近反复横跳、加热器高频通断。
   return { pump: null, heater: null }
@@ -307,27 +310,23 @@ function rulePressureSingle(sensors, pressureLow, pressureHigh) {
 
 /**
  * 加热-温度单层规则（带滞回）：跟加热滞回带通断（ruleHeaterHysteresis）思路
- * 相似，但这条规则同时看进水、出水两个温度，而且开/关的临界点是拿"目标温度"
- * 和"温度上下限阈值"两个设定一起算出来的：
- *   开的临界点 openThreshold = max(目标温度, 温度下限) - 回差
- *     —— 目标温度和下限阈值取较高的那个当"及格线"，没配置下限阈值时就只看
- *        目标温度。取较高值意味着：只要低于目标温度就该开，除非专门配了一个
- *        更高的下限阈值，那就以这个更严格的下限阈值为准。
- *   关的临界点 closeThreshold = min(目标温度, 温度上限) + 回差
- *     —— 同理，目标温度和上限阈值取较低的那个当"上限线"，取较低值意味着：
- *        只要超过目标温度就该关，除非专门配了一个更低的上限阈值。
+ * 相似，但这条规则同时看进水、出水两个温度，开/关的临界点只看"温度上下限阈值"
+ * （指令中心 temp_low / temp_high），不再参考目标温度：
+ *   开的临界点 openThreshold = 温度下限 - 回差
+ *   关的临界点 closeThreshold = 温度上限 + 回差
+ * 温度下限/上限没配置（读到 null）时，对应方向不表态。
  * 判断时进水、出水两个温度只要有一个超过关闭线就关（宁可错关，优先安全），
  * 只要有一个低于开启线就开（宁可错开，优先把温度追上去）；两条都没触发就
  * 不表态，维持现状。
  * @returns {{pump: null, heater: 'on'|'off'|null}} 这条规则从不管水泵，pump 恒为 null
  */
-function ruleTempSingle(sensors, targetTemp, tempLow, tempHigh, hysteresis) {
-  const openThreshold = Math.max(targetTemp, tempLow ?? targetTemp) - hysteresis
-  const closeThreshold = Math.min(targetTemp, tempHigh ?? targetTemp) + hysteresis
+function ruleTempSingle(sensors, tempLow, tempHigh, hysteresis) {
+  const openThreshold = tempLow != null ? tempLow - hysteresis : null
+  const closeThreshold = tempHigh != null ? tempHigh + hysteresis : null
   const temps = [sensors.temp1, sensors.temp2].filter(v => v != null)
   const result = { pump: null, heater: null }
-  if (temps.some(t => t > closeThreshold)) result.heater = 'off'
-  else if (temps.some(t => t < openThreshold)) result.heater = 'on'
+  if (closeThreshold != null && temps.some(t => t > closeThreshold)) result.heater = 'off'
+  else if (openThreshold != null && temps.some(t => t < openThreshold)) result.heater = 'on'
   return result
 }
 
@@ -407,13 +406,16 @@ function rulePressureFlow(sensors, pressureLow, pressureHigh, flowLow, flowHigh,
  * 水泵/加热-温度+压力融合规则：这条是所有规则里逻辑最绕的一条，分两段看。
  *
  * 第一段——压力高、且加热还在让温度往上冲，就关加热：
- *   压力超过上限、且能读到进水温度时，跟上一次（上一条消息）记录的进水温度
+ *   压力超过上限、且能读到观测温度时，跟上一次（上一条消息）记录的同一个观测温度
  *   比一比：如果这次比上次还高，说明温度是"正在持续上升"，而不是已经趋于
  *   稳定或者在下降。这时候才关加热——只看"这一刻温度多高"是不够的，因为
  *   压力高不一定是加热造成的（也可能是别的原因），只有确认温度确实在因为
  *   持续加热而往上涨，才有必要为了给压力"降降火"而把加热关掉；如果温度已经
  *   不涨了甚至在降，加热对当前的压力风险没有火上浇油，就不用管它。
- *   "上一次的进水温度"存在模块顶部的 lastTemp 这个 Map 里，每次
+ *   默认看出水温度而不是进水温度，是因为加热器加热的是流经的水，升温效果直接
+ *   反映在出水温度上，进水温度基本不受本机加热影响；要换观测点改
+ *   controlHelpers.js 的 TEMP_SOURCES.tempPressureTrend 一处即可。
+ *   "上一次的观测温度"存在模块顶部的 lastTemp 这个 Map 里，每次
  *   evaluateLinkageRules 跑完都会更新，这里只负责读，不负责写。
  *
  * 第二段——压力低、温度也低，先开泵再开热：
@@ -437,10 +439,14 @@ function ruleTempPressure(sensors, states, pressureLow, pressureHigh, tempLow, d
   const pressure = sensors.pressure
   if (pressure == null) return result
 
-  // 第一段：压力高 + 进水温度比上一次还高（持续上升）-> 关加热。
-  if (pressureHigh != null && pressure > pressureHigh && sensors.temp1 != null) {
+  // 第一段：压力高 + 观测温度比上一次还高（持续上升）-> 关加热。
+  // 盯进水还是出水由 TEMP_SOURCES.tempPressureTrend 决定，默认出水温度；
+  // 下面 evaluateLinkageRules 末尾写 lastTemp 时用的是同一个观测点，两边必须一致，
+  // 否则就成了"拿这次的出水跟上次的进水比"，趋势判断完全失真。
+  const trendTemp = sensors[TEMP_SOURCES.tempPressureTrend]
+  if (pressureHigh != null && pressure > pressureHigh && trendTemp != null) {
     const prev = lastTemp.get(deviceNo)
-    if (prev != null && sensors.temp1 > prev) result.heater = 'off'
+    if (prev != null && trendTemp > prev) result.heater = 'off'
   }
   // 第二段：压力低 + 有任一温度低于下限 -> 泵没开就先开泵，泵已经开着就改开加热。
   if (pressureLow != null && pressure < pressureLow && tempLow != null) {
@@ -568,7 +574,7 @@ async function evaluateLinkageRules(info) {
   if (config.pressureSingle === true) collect('pressureSingle', rulePressureSingle(sensors, pressureLow, pressureHigh))
   if (config.tempSingle === true) {
     const tempSingleHysteresis = await getNumberValue('temp_single_hysteresis', deviceNo, config.tempSingleHysteresis, 1)
-    collect('tempSingle', ruleTempSingle(sensors, targetTemp, tempLow, tempHigh, tempSingleHysteresis))
+    collect('tempSingle', ruleTempSingle(sensors, tempLow, tempHigh, tempSingleHysteresis))
   }
   if (config.dualTemp === true) {
     const dualTempDiff = await getNumberValue('dual_temp_diff', deviceNo, config.dualTempDiffThreshold, 2)
@@ -615,7 +621,9 @@ async function evaluateLinkageRules(info) {
     }
   }
 
-  if (sensors.temp1 != null) lastTemp.set(deviceNo, sensors.temp1)
+  // 观测点必须跟 ruleTempPressure 第一段读的那个保持一致，见 TEMP_SOURCES.tempPressureTrend。
+  const trendTemp = sensors[TEMP_SOURCES.tempPressureTrend]
+  if (trendTemp != null) lastTemp.set(deviceNo, trendTemp)
 
   result.actions = actions
   lastActions.set(deviceNo, result)

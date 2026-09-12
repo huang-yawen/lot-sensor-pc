@@ -84,6 +84,29 @@ const THRESHOLD_SLOTS = {
   tempDiff: { prefix: 'temp_diff', name: '温差阈值' },
 }
 
+/**
+ * 温度观测点映射表：每条"只盯一个温度"的控制规则，到底看进水（temp1）还是出水（temp2）。
+ * 赛场按赛题要换观测点时，只改这一张表 + 重启后端即可，不用再去各个规则里翻代码。
+ *
+ * 取值只能是 'temp1'（进水，对应 SENSOR_FIELD_MAP 的 field1）或 'temp2'（出水，field2）。
+ * 规则里统一写成 sensors[TEMP_SOURCES.xxx]，所以改了这里，判定和日志文案会一起跟着变。
+ *
+ * 注意：只有"单点观测"的规则收录在这里。下面这几类不在表里，也不该放进来——
+ *   - 温度单层 / 温度+流量融合 / 温度+压力融合第二段 / 安全联锁温度上下限：
+ *     它们的语义是"进水出水任意一个超限就算"，本来就两个都看，改成单点会改变判定含义。
+ *   - getTempDiff()：算的是两者之差，跟盯哪一个无关。
+ */
+const TEMP_SOURCES = {
+  dryBurn: 'temp2',           // 故障③干烧：加热开启后盯哪个温度"不上升"
+  heaterHysteresis: 'temp2',  // 联动-加热滞回带通断：拿哪个温度跟目标温度比
+  tempPressureTrend: 'temp2', // 联动-温度+压力融合第一段：盯哪个温度判断"持续上升"
+  pidProcess: 'temp2',        // PID 恒温的被控量（PID 要稳定住的那个温度）
+  pidFeedforward: 'temp1',    // PID 前馈补偿参考的温度
+}
+
+/** 观测点的中文名，只用于告警/日志文案。跟着 TEMP_SOURCES 走，换了观测点文案自动同步。 */
+const TEMP_SOURCE_LABELS = { temp1: '进水温度', temp2: '出水温度' }
+
 /** 防抖：同一设备同一开关切换至少间隔 minIntervalMs；所有规则共用同一份计时状态。 */
 const lastSwitchTime = new Map()
 
@@ -256,6 +279,8 @@ function canAct(deviceNo, key, minIntervalMs = 3000) {
 module.exports = {
   getAbnormalMax,
   THRESHOLD_SLOTS,
+  TEMP_SOURCES,
+  TEMP_SOURCE_LABELS,
   resolveConfigIdByPrefix,
   resolveThresholdConfigId,
   toNumber,

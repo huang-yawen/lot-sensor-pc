@@ -62,6 +62,8 @@ const {
   setSwitch,
   resolveConfigIdByPrefix,
   resolveDeviceNoStr,
+  TEMP_SOURCES,
+  TEMP_SOURCE_LABELS,
 } = require('../controlShared/controlHelpers')
 const { createCooldown } = require('../controlShared/cooldown')
 const { recordEvent } = require('../controlShared/recordEvent')
@@ -322,13 +324,14 @@ async function detectFault(info, deviceNo, faultConfig) {
     })
   }
 
-  // ③ 干烧：加热开启后温度长时间不变化
-  if (faultConfig.dryBurn !== false && checkDryBurn(deviceNo, states.heatOn, sensors.temp2, effectiveConfig)) {
+  // ③ 干烧：加热开启后温度长时间不变化。盯进水还是出水由 TEMP_SOURCES.dryBurn 决定。
+  const dryBurnTemp = sensors[TEMP_SOURCES.dryBurn]
+  if (faultConfig.dryBurn !== false && checkDryBurn(deviceNo, states.heatOn, dryBurnTemp, effectiveConfig)) {
     const durationMs = dryBurnDurationMs
     triggers.push({
       id: 'dry_burn', code: '③', priority: 1,
       name: '干烧',
-      detail: `加热已开启超过 ${Math.round(durationMs / 1000)} 秒，出水温度=${sensors.temp2} 无明显上升`,
+      detail: `加热已开启超过 ${Math.round(durationMs / 1000)} 秒，${TEMP_SOURCE_LABELS[TEMP_SOURCES.dryBurn]}=${dryBurnTemp} 无明显上升`,
     })
   }
 

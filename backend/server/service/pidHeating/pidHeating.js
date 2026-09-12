@@ -53,7 +53,7 @@ const promisePool = require('../../config/dbPool')
 // PID 自己的兜底参数（kp/ki/kd/周期/死区等）在这里；是否启用以指令中心 pid_enabled 为准。
 const CONFIG = require('./config')
 const SAFETY_CONFIG = require('../safety/config') // 只读一项：开加热前是否要求先开水泵
-const { SINGLE_DEVICE_MODE, DEFAULT_TARGET_TEMP } = require('../../config/appSettings')
+const { SINGLE_DEVICE_MODE, DEFAULT_TARGET_TEMP, SENSOR_FIELD_MAP } = require('../../config/appSettings')
 const { MQTT_QOS } = require('../../config/mqtt')
 const { firstValue, getTopic, buildSwitchPayload } = require('../../utils/protocol')
 const { resolveDeviceNo, resolveFieldAliases } = require('../../utils/mappedData')
@@ -64,7 +64,7 @@ const { getCurrentMode } = require('../directData/getControlMode')
 const { saveOperationHistory } = require('../operationHistory')
 // 目标温度是加热控制的公共设定值（SP），滞回带通断和 PID 都读同一个，
 // 取值逻辑只在 controlShared/controlHelpers.js 维护一份，这里直接复用。
-const { getTargetTemp } = require('../controlShared/controlHelpers')
+const { getTargetTemp, TEMP_SOURCES } = require('../controlShared/controlHelpers')
 const { isLockedByFault, isAnyLocked } = require('../faultStatus/faultStatus')
 // 周期历史落库：供"历史图表"页面画 PID 加热开关阶梯图，仅展示用途，失败不影响控制。
 const { saveCycleRecord } = require('./pidHeatingCycleHistory')
@@ -190,21 +190,23 @@ async function getPidNumber(slot, deviceNo, fallback) {
 }
 
 /**
- * 读取 T1 进水温度（temp_in / field1）。
- * 仅供参考和诊断使用，不作为 PID 控制目标。
+ * 读取前馈补偿参考的温度，默认 T1 进水温度（temp_in / field1）。
+ * 仅供参考、前馈和诊断使用，不作为 PID 控制目标。
+ * 观测点由 controlHelpers.js 的 TEMP_SOURCES.pidFeedforward 决定。
  */
 async function readTempIn(info) {
-  const aliases = await resolveFieldAliases('t_sensor_data', 'field1')
+  const aliases = await resolveFieldAliases('t_sensor_data', SENSOR_FIELD_MAP[TEMP_SOURCES.pidFeedforward])
   return toNumber(firstValue(info, aliases))
 }
 
 /**
- * 读取 T2 出水温度（temp_out / field2）。
+ * 读取 PID 被控量的温度，默认 T2 出水温度（temp_out / field2）。
  * ⭐ 这是 PID 的核心控制目标，PID 让它稳定到 targetTemperature。
  * 对于固定功率加热器 + 流动水系统，出水口温度才是真正的被控对象。
+ * 观测点由 controlHelpers.js 的 TEMP_SOURCES.pidProcess 决定。
  */
 async function readTempOut(info) {
-  const aliases = await resolveFieldAliases('t_sensor_data', 'field2')
+  const aliases = await resolveFieldAliases('t_sensor_data', SENSOR_FIELD_MAP[TEMP_SOURCES.pidProcess])
   return toNumber(firstValue(info, aliases))
 }
 
