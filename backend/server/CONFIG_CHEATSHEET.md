@@ -74,7 +74,8 @@
 
 | 键 | 作用 | 读取方 |
 |---|---|---|
-| `INTELLIGENT_JUDGMENT` | 对接现场判定服务的**全部**适配参数：`enabled`、`url`、`method`、`bodyFormat`(json/form-data)、`requestTemplate`、`responseFormat`(json/text)、`conclusionPath`/`conclusionRegex`、`asyncMode` 及一整套 `async*` 轮询参数、`mockWhenDisabled`、`showOnSensorPage` 等显示开关 | `controllers/intelligent/recognize.js` |
+| `INTELLIGENT_JUDGMENT` | 对接现场判定服务的全部参数，共 13 个键：`enabled` / `mockWhenDisabled`、`url` / `method` / `timeoutMs` / `headers`、请求体字段名 `requestField`、结论解析 `resultPath` / `conclusionPath` / `confidencePath`、显示开关 `showOnSensorPage` / `showOnBehaviorPage` / `showHistoryMenu`。**手动和自动两种模式共用这一份** | `service/intelligentJudgment/judgeClient.js` |
+| `AUTO_JUDGMENT` | 自动判定模式的节奏：`enabled`（定时器总开关，跟上面那个 `enabled` 不是一回事）、`intervalMs`（多久提交一次）、`recentCount`（每次取最新几条）、`bufferSize`（内存留几条给图表）、`showMenu` | `service/autoJudgment/autoJudgment.js` |
 
 ---
 

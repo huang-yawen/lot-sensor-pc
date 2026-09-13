@@ -24,6 +24,7 @@ const getDirectConfigRender = require('../controllers/direct/directConfigRender'
 // ==================== 智能判定控制器 ====================
 const intelligentRecognize = require('../controllers/intelligent/recognize')
 const judgmentRecords = require('../controllers/intelligent/records')
+const { getRecent: getAutoJudgmentRecent } = require('../service/autoJudgment/autoJudgment')
 
 // ==================== 操作历史控制器 ====================
 const operationHistoryController = require('../controllers/operationHistory')
@@ -94,6 +95,11 @@ router.get('/api/errTypeStats', error.getErrorTypeStats)
 router.post('/api/intelligent/judge', intelligentRecognize)
 router.post('/api/intelligent/recognize', intelligentRecognize)
 router.get('/api/intelligent/records', judgmentRecords)
+// 自动判定页首次打开时补齐历史：WebSocket 只能推之后新产生的结果，
+// 页面刚打开时图表会是空的，靠这个接口取后端内存里已有的最近几条（上限 bufferSize）。
+router.get('/api/intelligent/auto-recent', (req, res) => {
+  res.json({ success: true, data: getAutoJudgmentRecent() })
+})
 
 // ---------- 操作历史 ----------
 router.get('/api/operation-history', operationHistoryController.getHistoryList)

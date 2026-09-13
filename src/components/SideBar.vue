@@ -87,6 +87,10 @@
                         <el-icon><Document /></el-icon>
                         <span>{{ terms.judgment }}记录</span>
                     </el-menu-item>
+                    <el-menu-item v-if="config.AUTO_JUDGMENT?.showMenu" index="/auto-judgment" to="/auto-judgment">
+                        <el-icon><Document /></el-icon>
+                        <span>{{ terms.judgment }}（自动）</span>
+                    </el-menu-item>
                 </el-menu>
             </el-col>
         </el-row>

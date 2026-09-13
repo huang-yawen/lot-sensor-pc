@@ -27,6 +27,8 @@
         <!-- 自定义阈值告警（ALARM_RULES）的实时提示，跟上面故障弹窗是两套独立机制，
              各自监听不同的 WebSocket 事件，互不干扰，见 AlarmNotifier.vue 头部注释。 -->
         <AlarmNotifier />
+        <!-- 正常状况联动下发开关时的实时提示（非阻塞、info 级），见 LinkageNotifier.vue 头部注释。 -->
+        <LinkageNotifier />
     </div>
 </template>
 
@@ -36,6 +38,7 @@ import TopNav from '@/components/TopNav.vue'
 import FaultAlertDialog from '@/components/FaultAlertDialog.vue'
 import SafetyAlertNotifier from '@/components/SafetyAlertNotifier.vue'
 import AlarmNotifier from '@/components/AlarmNotifier.vue'
+import LinkageNotifier from '@/components/LinkageNotifier.vue'
 import { useDisplayStore } from '@/stores/useDisplayStore'
 
 import { ref, onMounted } from 'vue'

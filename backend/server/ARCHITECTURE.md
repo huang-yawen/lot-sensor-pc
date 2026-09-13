@@ -76,7 +76,8 @@ Node + Express 单进程。三条链路跑在一起：
 | 六种硬故障的判定逻辑本身 | `service/faultStatus/faultStatus.js`（文件头有编号对照表） |
 | 正常工况联动规则的开关组合 | 配置中心 `LINKAGE_RULES` 逐条布尔开关；规则实现在 `service/linkageRules/linkageRules.js` 下半部分 |
 | PID 系数 Kp/Ki/Kd、控制周期、占空比上下限 | 「指令配置」页 PID 子项；`service/pidHeating/pidHeating.js` 只在指令项缺失时用 `PID_HEATING` 兜底 |
-| 智能判定对接的现场接口形态（同步/异步、JSON/表单/文本） | **不改代码**：配置中心 `INTELLIGENT_JUDGMENT` 各子键；适配逻辑在 `controllers/intelligent/recognize.js` |
+| 智能判定服务地址 / 请求体字段名 / 结论字段路径 | `controllers/intelligent/config.js`（13 个键，手动+自动两种模式共用）。只支持 POST JSON→同步 JSON 这一种形态；现场是异步轮询/表单/纯文本时改 `service/intelligentJudgment/judgeClient.js` 的 `callService`(发请求) 或 `summarize`(解析响应) |
+| 自动判定跑不跑 / 多久提交一次 / 每次取最新几条 | `service/autoJudgment/config.js`；定时逻辑在同目录 `autoJudgment.js`，结果经 WebSocket `auto_judgment` 推给 `src/views/AutoJudgment.vue` |
 | 页面术语 / 分页大小 / 实时刷新间隔 | 配置中心（`DEVICE_LABEL`、`DEFAULT_PAGE_SIZE`、`REALTIME_REFRESH_INTERVAL` …） |
 | 部署参数（端口、监听地址、CORS、API_TOKEN、NODE_ENV） | `.env`（模板见 `.env.example`），**改后需重启** |
 

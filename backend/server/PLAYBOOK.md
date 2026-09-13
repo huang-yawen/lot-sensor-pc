@@ -15,7 +15,8 @@
 | 累计 / 滑动窗口 / 首页计算 指标定义 | `config/metrics.js` | 重启后端 |
 | 安全联锁 / 故障 / 联动 / PID / 恒流速 / 定量停机 的**开关和纯软件参数** | `service/<域>/config.js` | 重启后端 |
 | 温度/流量/压力**上下限、目标温度、各种阈值、Kp/Ki/Kd** | 前端「设备设置」页（写数据库 `t_direct`），**不用改代码** | 页面即时生效 |
-| 智能判定对接的现场接口形态 | `controllers/intelligent/config.js`（对着 `recognize.js` 顶部的决策树） | 重启后端 |
+| 智能判定服务地址 / 请求体字段名 / 结论路径（手动+自动共用） | `controllers/intelligent/config.js`（13 个键） | 重启后端 |
+| 自动判定跑不跑 / 多久跑一次 / 每次取几条 | `service/autoJudgment/config.js` | 重启后端 |
 | 设备上报字段名和库里对不上 | 数据库 `t_sensor_field_mapper` / `t_behavior_field_mapper` 的 `p_name` | 立即生效（下一条消息） |
 | 历史图表页显示哪些图 | `config/appSettings.js` 的 `HISTORY_CHARTS`，或直接删前端 `HistoryCharts.vue` 里的组件 | 前端重新打包 |
 
@@ -310,83 +311,128 @@ tempPressure: false,    // 温度+压力融合
 
 ---
 
-## 4. 智能判定（现场接口五花八门，全在 `controllers/intelligent/config.js` 调）
+## 4. 智能判定（手动 / 自动两种模式）
 
-先读 `controllers/intelligent/recognize.js` **文件顶部的决策树**——它把每个配置键对应哪条代码路径画清楚了，
-配了一个请求/响应示例。下面是按现场差异分场景：
+| 模式 | 怎么触发 | 逻辑在哪 | 节奏配置 |
+|---|---|---|---|
+| 手动 | 用户在传感器/行为历史页勾选几条，点"智能判定"按钮 | `controllers/intelligent/recognize.js` | 无（点一次判一次） |
+| 自动 | 后端每隔几秒自己提交最新几条，结果推到"自动判定"页 | `service/autoJudgment/autoJudgment.js` | `service/autoJudgment/config.js` |
 
-前端调用固定是：`POST /api/intelligent/judge`，body `{ "type": "sensor"|"behavior", "ids": [记录id...] }`。
+两种模式共用 `service/intelligentJudgment/judgeClient.js` 发请求、解析响应、落库，
+所以**判定服务的地址 / 请求体字段名 / 结论路径只配一遍**，就是下面 4.1~4.3 那 13 个键
+（`controllers/intelligent/config.js`）；自动模式再额外配自己的节奏，见 4.7。
+
+落库都进 `t_judgment_record`，靠 `status` 区分来路：
+手动 `success` / `mock`，自动 `auto` / `auto_mock`，两种模式失败都是 `failed`。
+
+手动模式前端调用固定是：`POST /api/intelligent/judge`，body `{ "type": "sensor"|"behavior", "ids": [记录id...] }`。
+
+两种模式都只覆盖现场判定服务最常见的一种形态：
+**POST 一个 JSON 请求体过去 → 同步拿到 JSON 响应 → 按点路径把结论取出来。**
 
 ### 4.1 判定服务地址 / 方法
 ```js
 url: 'http://127.0.0.1:5000/judgment',   // ← 服务在别的机器就改成那台的局域网 IP
-method: 'POST',                          // 或 'GET'（GET 时请求体拼成 URL 查询参数）
-timeoutMs: 10000,                        // 单次请求超时
+method: 'POST',                          // 只能用带请求体的方法（POST/PUT/PATCH）
+timeoutMs: 10000,                        // 单次请求超时（毫秒），超时 → 接口返回 504
 headers: { 'Content-Type': 'application/json' },  // 要 Token 就加 Authorization
 ```
 
-### 4.2 同步返回结果 vs 异步先提交任务再轮询
+### 4.2 请求体长什么样
+实际发出去的固定是 `{ [requestField]: 勾选的记录数组 }`：
 ```js
-// 同步（默认）：一次请求就拿到结果
-asyncMode: false,
-
-// 异步：第一次请求只返回 job id，要另外轮询查结果
-asyncMode: true,
-asyncJobIdPath: 'job_id',                 // 从提交响应里取任务 id 的点路径
-asyncPollUrl: 'http://.../result/{{jobId}}',  // 查结果地址，{{jobId}} 会被替换
-asyncPollMethod: 'GET',
-asyncPollIntervalMs: 1000,                // 轮询间隔
-asyncMaxWaitMs: 30000,                    // 最多等多久
-asyncStatusPath: 'status',                // 轮询响应里看状态的点路径
-asyncDoneStatusValues: ['done','success','completed'],  // 命中=成功
-asyncFailedStatusValues: ['failed','error'],            // 命中=失败
+requestField: 'data',     // 现场要 { samples:[...] } 就把这里改成 'samples'
 ```
+记录是 `t_sensor_data` / `t_behavior_data` 的整行（含 id、d_no、field1~field10、c_time）。
 
-### 4.3 请求体：JSON vs multipart 表单
+### 4.3 从响应里取结论
 ```js
-bodyFormat: 'json',       // 整体 JSON.stringify（默认）
-// bodyFormat: 'form-data',  // 现场服务要表单/文件字段时用，requestTemplate 每个顶层字段变一个表单项
-```
-
-### 4.4 请求体模板
-```js
-requestTemplate: { data: '{{records}}' },
-// 占位符：{{records}}=全部记录数组  {{record}}=第一条  {{ids}}=id 数组  {{record.field1}}=取字段
-// 占位符独占整个字符串时保留原始类型（不会被转成字符串）
-// 现场要 { samples:[...], token:'x' } 这种：requestTemplate: { samples: '{{records}}', token: 'x' }
-```
-`requestMode: 'batch'`（勾选的多条一次发）/ `'single'`（每条发一次再汇总）。
-
-### 4.5 响应是规范 JSON vs 纯文本
-```js
-responseFormat: 'json',
-resultPath: 'data.results',    // 从响应里取结果数组的点路径（留空=用整个响应）
+resultPath: 'data.results',    // 结果数组的点路径（留空 = 用整个响应）
 conclusionPath: 'result',      // 单条结果里"结论"的点路径
-confidencePath: 'confidence',  // "置信度"的点路径
-
-// 响应是一段中文文字（不是 JSON）：
-responseFormat: 'text',
-conclusionRegex: '检测结果[：:]\\s*(\\S+)',   // 取第 1 个捕获组当结论
-confidenceRegex: '置信度[：:]?\\s*([\\d.]+)', // 取第 1 个捕获组转数字
+confidencePath: 'confidence',  // "置信度"的点路径，取不到或转不成数字存 null
 ```
+取 `resultPath` 定位到的数组里**第一条**代表整批的结论。
+服务直接返回一句结论文字（不是对象）时，`conclusionPath` 留空即可直接用那句话。
 
-### 4.6 没有判定服务，先把流程跑通
+### 4.4 没有判定服务，先把流程跑通
 ```js
 enabled: false,          // 不真的发请求
-mockWhenDisabled: true,  // 用本地占位判定（任一字段绝对值 > 10000 判"数据异常"），status='mock'
+mockWhenDisabled: true,  // 用本地占位判定，记录 status='mock'
 ```
-接上真实服务后 `enabled: true`。
+占位判定只看 `field1~field10`，任一绝对值 > 10000 判"数据异常"，否则"正常"。
+接上真实服务后改 `enabled: true`。
 
-### 4.7 判定一直超时 / 失败
-- 超时 → HTTP 504；服务报错 → HTTP 502；每次都会往 `t_judgment_record` 落一条 `status='failed'` 方便排查。
-- `curl` 直接打现场服务确认它自己是不是好的。
-- 异步模式轮询容忍 3 次连续网络抖动，之后放弃。
+### 4.5 现场接口不是这个形态怎么办
+异步先提交任务再轮询、要 multipart 表单、响应是一段中文文字而不是 JSON——
+**不要加配置项**，直接改 `service/intelligentJudgment/judgeClient.js` 里这两个函数
+（各自十几行，函数上方有说明）——改完手动和自动两种模式一起生效：
+
+| 现场差异 | 改哪个函数 |
+|---|---|
+| 请求怎么发（方法、请求体结构、表单、查询参数） | `callService` |
+| 响应怎么解析（点路径、正则、多段响应合并） | `summarize` |
+
+这两处各自只有十几行，改起来比在一堆"万一用得上"的配置分支里找组合更快，赛场上也不容易配错。
+
+### 4.6 判定一直超时 / 失败
+- 超时 → HTTP 504；服务报错或响应不是合法 JSON → HTTP 502。
+- 每次失败都会往 `t_judgment_record` 落一条 `status='failed'`，
+  `error_message` 里带现场服务返回的原始内容前 300 字符（地址配错打到别的服务上时一眼能看出来）。
+- `curl` 直接打现场判定服务，确认它自己是不是好的。
 
 改完都要**重启后端**。验证：
 ```bash
 curl -X POST http://127.0.0.1:3000/api/intelligent/judge \
   -H 'Content-Type: application/json' \
   -d '{"type":"sensor","ids":[<某条真实记录id>]}'
+```
+
+### 4.7 自动判定模式（每隔几秒自动提交）
+判定服务本身怎么连（4.1~4.3）两种模式共用，这里只配"怎么跑"——`service/autoJudgment/config.js`：
+```js
+enabled: false,        // 自动模式总开关；false 时后端不启动定时器，左侧菜单也不显示
+intervalMs: 5000,      // 每隔多少毫秒提交一次；低于 1000 会被抬到 1000（防止打满判定服务）
+recentCount: 5,        // 每次提交最新多少条传感器数据（按 c_time 倒序取，提交时翻回时间正序）
+bufferSize: 50,        // 后端内存保留最近多少条结果，供"自动判定"页的图表渲染
+showMenu: true,        // 左侧菜单是否显示"自动判定"页
+```
+
+**两个 `enabled` 不要搞混**：
+
+| 配置文件 | `enabled` 的含义 |
+|---|---|
+| `controllers/intelligent/config.js` | 判定结果是真找现场服务要（true），还是用本地占位判定（false） |
+| `service/autoJudgment/config.js` | 要不要开"每隔几秒自动提交"这套定时逻辑 |
+
+两个都 true 才是"自动提交给真实服务"。赛前判定服务还没到位时，可以只开后者，
+用本地占位判定把"自动提交 → 表格 → 三张图"整条链路先演示通。
+
+自动模式固定只判 `t_sensor_data`（不判行为数据）。
+
+结果怎么到页面：`autoJudgment.js` 发事件 → `app.js` `broadcast('auto_judgment', ...)` →
+`src/views/AutoJudgment.vue` 订阅后追加一行表格、三张图各追加一个点。
+页面首次打开时先 `GET /api/intelligent/auto-recent` 把后端内存里已有的结果补上——
+WebSocket 只能推之后新产生的，不补的话刚进页面图是空的。
+
+**某一轮失败不会停机**：服务没起、超时、响应不是 JSON，只记一条日志 + 一条
+`status='failed'` 的判定记录，定时器继续跑下一轮，不用重启后端。
+
+**日志里出现"上一轮还没判完，跳过这一轮"**：说明现场判定服务响应比 `intervalMs` 还慢。
+这是保护，不是故障——上一轮没回来就不再发新请求，免得并发请求成倍压上去、落库顺序也乱。
+偶尔出现可以不管；一直刷就把 `intervalMs` 调到比服务实际响应时间大
+（`t_judgment_record` 相邻两条 `c_time` 的间隔就是实际耗时）。
+注意默认值 `intervalMs: 5000` 比判定服务超时 `timeoutMs: 10000` 小，
+服务一卡就会看到这条日志，属正常现象。
+
+改完**重启后端**。验证：
+```bash
+# 1) 后端启动日志里应该有这一行（enabled=false 时则是"自动判定未启用"）
+#    [AutoJudgment] 自动判定已启动：每 5000ms 提交最新 5 条传感器数据
+
+# 2) 等几秒后取后端内存里的最近结果，应该在不断增加
+curl http://127.0.0.1:3000/api/intelligent/auto-recent
+
+# 3) 页面左侧菜单"智能判定（自动）"，表格和三张图应每 intervalMs 自动追加
 ```
 
 ---
@@ -548,8 +594,10 @@ backend/server/
 │  └─ dbPool.js ............ MySQL 连接池
 ├─ routes/sensorRoutes.js .. 38 条 /api 路由总表
 ├─ controllers/ ............ 薄控制器（解析请求→调 service→返 JSON）
-│  └─ intelligent/{recognize.js, config.js} ... 智能判定（config.js 全是现场适配参数）
+│  └─ intelligent/{recognize.js, config.js} ... 智能判定-手动（config.js 13 个键，两种模式共用）
 ├─ service/
+│  ├─ intelligentJudgment/judgeClient.js ...... 判定服务 HTTP 客户端（手动+自动共用）
+│  ├─ autoJudgment/{autoJudgment.js, config.js} 智能判定-自动（每隔几秒提交最新几条）
 │  ├─ safety/{safetyInterlock.js, config.js} .. 安全联锁
 │  ├─ faultStatus/{faultStatus.js, config.js} . 六种硬故障
 │  ├─ linkageRules/{linkageRules.js, config.js} 正常工况联动（9 条规则）

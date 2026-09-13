@@ -21,7 +21,8 @@
  *   service/dataQuality/config.js .... 数据质量（跳变过滤/继电器粘连/传感器装反）
  *   service/operationHistory.js       操作历史记录模式
  *   service/switchDuration/config.js .. 首页开关运行时长显示
- *   controllers/intelligent/config.js  智能判定适配器
+ *   controllers/intelligent/config.js  智能判定服务参数（手动+自动两种模式共用）
+ *   service/autoJudgment/config.js ... 自动判定的节奏（多久跑一次、每次取几条）
  *
  * 【业务代码怎么读】各模块直接 require 自己那份 config.js（如
  * `require('./config')`），不要再走 systemConfig.getConfig()。getConfig() 只留给
@@ -42,6 +43,7 @@ const ALARM_RULES = require('../service/alarm/config')
 const DATA_QUALITY = require('../service/dataQuality/config')
 const SWITCH_DURATION_DISPLAY = require('../service/switchDuration/config')
 const INTELLIGENT_JUDGMENT = require('../controllers/intelligent/config')
+const AUTO_JUDGMENT = require('../service/autoJudgment/config')
 
 // 场景结构版本，仅用于前端识别配置结构，不表示项目版本。
 const CONFIG_VERSION = 2
@@ -56,6 +58,7 @@ const fullConfig = {
   ...mqtt,
   ...protocol,
   INTELLIGENT_JUDGMENT,
+  AUTO_JUDGMENT,
   SAFETY_INTERLOCK,
   LINKAGE_RULES,
   QUANTITY_SHUTDOWN,

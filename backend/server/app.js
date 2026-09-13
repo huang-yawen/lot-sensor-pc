@@ -30,6 +30,7 @@ const { onRelayStuck } = require('./service/dataQuality/relayStuck');
 const { onSensorInverted } = require('./service/dataQuality/sensorInverted');
 const { onHeaterBlocked } = require('./service/pidHeating/pidHeating');
 const { onDirectDataChanged } = require('./service/directData/saveDirectConfig');
+const { start: startAutoJudgment, onAutoJudgment } = require('./service/autoJudgment/autoJudgment');
 const mqttClient = require('./mqtt/index')
 
 const app = express();
@@ -268,6 +269,13 @@ onHeaterBlocked((info) => {
     broadcast('pid_heater_blocked', info);
 });
 
+// 自动判定每跑完一轮就把结果推给"自动判定"页（表格追加一行、三个图表各追加一个点）。
+// 不走节流：节奏本来就由 service/autoJudgment/config.js 的 intervalMs 控制，
+// 最快也就 1 秒一条，再节流反而会把用户配的节奏改掉。
+onAutoJudgment((entry) => {
+    broadcast('auto_judgment', entry);
+});
+
 // ==================== 设备在线状态定时广播 ====================
 // 每 2 秒广播一次所有设备的在线状态，接近实时
 setInterval(() => {
@@ -294,6 +302,10 @@ setTimeout(() => {
 // ==================== 服务启动初始化 ====================
 // 启动安全联锁掉线监测（条件 6：传感器长时间无数据上报）。
 startSafetyMonitor();
+
+// 启动自动判定定时器。service/autoJudgment/config.js 里 enabled=false 时这里只打一行
+// 日志就返回，不占用任何资源；手动判定（历史页勾选后点按钮）不受它影响，始终可用。
+startAutoJudgment();
 
 // 从数据库同步复位按钮的持久化状态到内存故障态，避免服务重启后内存被重置成
 // NORMAL，但数据库里 reset_button 仍停留在重启前的 on，导致状态显示不一致、

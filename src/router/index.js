@@ -58,6 +58,10 @@ const routes=[
                 path:'/judgment-history',
                 component:()=>import('@/views/JudgmentHistory.vue'),
                 meta: { title: '智能判定记录' }
+            },{
+                path:'/auto-judgment',
+                component:()=>import('@/views/AutoJudgment.vue'),
+                meta: { title: '自动判定' }
             }
         ]
     }
