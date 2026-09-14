@@ -27,9 +27,14 @@
 //  改阈值                       指令中心网页（温度上限/流量下限/压力上限…），不用重启
 //  "开加热必须先开泵"           config.js requirePumpBeforeHeater=true（不受总开关约束）
 //  掉线检测周期                 config.js monitorIntervalMs（改后重启）
+//  水泵预热时长（流量两条规则用） 指令中心 pump_warmup_ms，没配才用 faultStatus/config.js 的
+//                               pumpWarmupMs——跟故障状态机共用一份，改一处两边一起变
 // ===================================================
 const EventEmitter = require('events')
 const CONFIG = require('./config')
+// 水泵预热时长跟故障状态机共用一份：指令中心 pump_warmup_ms 优先，没配才退回
+// FAULT_STATUS.pumpWarmupMs。这里只读它这一个兜底值，不读故障机的其它参数。
+const FAULT_CONFIG = require('../faultStatus/config')
 const { SENSOR_FIELD_MAP } = require('../../config/appSettings')
 const { MQTT_TOPICS } = require('../../config/mqtt')
 const { getCurrentMode } = require('../directData/getControlMode')
@@ -59,16 +64,59 @@ const cooldown = createCooldown()
 const events = new EventEmitter()
 /** 每个设备最近若干个流量读数，用于算波动幅度。 */
 const flowWindowMap = new Map()
+/** 水泵启动预热计时：记录水泵"从关到开"的起始时间，水泵关闭则清空。
+ *  跟故障状态机 faultStatus.js 里的 pumpStartStateMap 是同一个做法，但各记各的——
+ *  两个模块各自收消息、各自复位，共用一份内存状态会互相清零。 */
+const pumpStartStateMap = new Map()
 /** 掉线监测定时器。 */
 let monitorTimer = null
 
+/**
+ * 返回水泵已连续开启的时长（毫秒）；从未开启过时返回 null。写法照搬故障状态机的
+ * trackPumpOnDuration：水泵每次从关变开时记一个起始时间戳，之后每次调用返回
+ * "现在 - 起始时间"；水泵一关就把起始时间清掉，下次再开会重新计时。
+ *
+ * @param {boolean|null} pumpOn - 水泵开关的三态读数（见 controlHelpers.js 的
+ *   readSwitchStates）：true=确认开，false=确认关，null=这条消息没能解析出水泵
+ *   的行为上报（不知道，不代表关闭）。只有明确收到 false 才清空计时；null 时
+ *   保留已有计时继续走，不能当成"关"处理——否则只要偶尔有一条消息解析不出
+ *   水泵状态，预热计时就会被清零重来，预热时长配多久都攒不够，流量两条规则就永远不判。
+ */
+function trackPumpOnDuration(deviceNo, pumpOn) {
+  const key = deviceNo || 'global'
+  if (pumpOn === false) {
+    pumpStartStateMap.delete(key)
+    return null
+  }
+  if (pumpOn == null) {
+    const since = pumpStartStateMap.get(key)
+    return since == null ? null : Date.now() - since
+  }
+  const now = Date.now()
+  let since = pumpStartStateMap.get(key)
+  if (since == null) {
+    since = now
+    pumpStartStateMap.set(key, since)
+  }
+  return now - since
+}
+
 /** 追加一个流量读数到滑动窗口，超出窗口大小丢掉最早的。窗口没填满返回 null
- *  （数据不够不判断，避免设备刚上线就误报），填满后返回最大值-最小值。 */
-function trackFlowVolatility(deviceNo, flow) {
+ *  （数据不够不判断，避免设备刚上线就误报），填满后返回最大值-最小值。
+ *
+ *  pumpWarmedUp=false（水泵没开，或刚开还在预热）时不收这个读数，并把窗口整个清空：
+ *  水泵启动时流量从 0 往上爬，这段爬升本身就是大幅"波动"，留在窗口里的话，预热一结束
+ *  窗口里还同时有启动时的 0 和稳定后的读数，极差很大，会立刻误报"流量剧烈波动"。
+ *  清空后要等预热完成、重新攒满 flowVolatilityWindow 个稳定读数才开始判。 */
+function trackFlowVolatility(deviceNo, flow, pumpWarmedUp) {
   const size = Number.isInteger(Number(CONFIG.flowVolatilityWindow)) && Number(CONFIG.flowVolatilityWindow) >= 2
     ? Number(CONFIG.flowVolatilityWindow)
     : 10
   const key = deviceNo || 'global'
+  if (!pumpWarmedUp) {
+    flowWindowMap.delete(key)
+    return null
+  }
   if (!flowWindowMap.has(key)) flowWindowMap.set(key, [])
   const window = flowWindowMap.get(key)
   window.push(flow)
@@ -99,7 +147,10 @@ function trackFlowVolatility(deviceNo, flow) {
  *     s.tempDiff         温差（两路温度缺一个就是 null）
  *     s.pumpOn           水泵开着吗（true / false / null=这条消息没带这个字段）
  *     s.heatOn           加热开着吗（同上）
- *     s.flowVolatility   最近 N 个流量读数的极差（没攒够点数是 null）
+ *     s.pumpOnDurationMs 水泵已连续开启多久（毫秒，没开是 null）
+ *     s.pumpWarmedUp     水泵预热完成了吗（连续开满预热时长才是 true）
+ *                        预热时长：指令中心 pump_warmup_ms 优先，没配用 FAULT_STATUS.pumpWarmupMs
+ *     s.flowVolatility   最近 N 个流量读数的极差（没攒够点数、或水泵没预热完成是 null）
  *     s.missingFields    这条上报缺了哪些字段（数组，空数组 = 字段齐全）
  *     s.modeJustToManual 这一刻是不是刚从"自动"切到"手动"
  *     s.mode             当前控制模式 'auto' / 'manual'
@@ -128,12 +179,16 @@ async function checkRules(s, ctx) {
   }
 
   // ── 规则2：流量异常（低于下限/为0/掉线） ──
+  // 水泵预热：水泵刚启动时流量还在从 0 往上爬，"流量=0""低于下限"这两种必须等水泵连续
+  // 开满预热时长（s.pumpWarmedUp）才判，否则泵一开就被当场关掉，永远启动不起来。
+  // "顶到异常哨兵值"不等预热：那是传感器掉线/短路，跟泵有没有转起来无关，照样立即关。
   if (CONFIG.flowLow !== false && s != null && s.flow != null&&s.pumpOn==true) {
     const abnormalMax = ctx.abnormalMax
     let detail = null
-    if (s.flow === 0) detail = '流量=0'
-    else if (s.flow >= abnormalMax) detail = `流量=${s.flow}，顶到异常哨兵值 ${abnormalMax}`
-    else {
+    if (s.flow === 0) {
+      if (s.pumpWarmedUp) detail = '流量=0'
+    } else if (s.flow >= abnormalMax) detail = `流量=${s.flow}，顶到异常哨兵值 ${abnormalMax}`
+    else if (s.pumpWarmedUp) {
       const min = await ctx.threshold('flowLow')
       if (min != null && s.flow < min) detail = `流量=${s.flow}，下限=${min}`
     }
@@ -187,7 +242,9 @@ async function checkRules(s, ctx) {
   // ── 规则6：流量剧烈波动（疑似水锤/湍流） ──
   // 不是拿单次读数比阈值，而是要先攒够 flowVolatilityWindow 个读数才能算出波动幅度，
   // 所以哪怕这次读数本身正常，跟前几次差太多照样触发。
-  if (CONFIG.flowVolatility !== false && s != null && s.flowVolatility != null) {
+  // 水泵预热：水泵没开或还在预热时 trackFlowVolatility 不收读数并清空窗口，s.flowVolatility
+  // 是 null；预热完成后要重新攒满窗口才开始判，启动时的流量爬升不会被当成波动。
+  if (CONFIG.flowVolatility !== false && s != null && s.pumpWarmedUp && s.flowVolatility != null) {
     const max = await ctx.number('flow_volatility', ctx.config.flowVolatilityThreshold, 20)
     if (s.flowVolatility > max) {
       triggers.push({ id: 'flow_volatility', name: '流量剧烈波动（疑似水锤/湍流）', detail: `最近${ctx.config.flowVolatilityWindow}个读数波动幅度=${s.flowVolatility.toFixed(2)} > ${max}`, actions: [{ prefix: 'pump', value: 'off' }, { prefix: 'heater', value: 'off' }] })
@@ -283,6 +340,13 @@ async function evaluateSafety(info) {
   const prevMode = lastMode.get(deviceNo)
   lastMode.set(deviceNo, mode)
 
+  // 水泵预热：跟故障状态机同一个做法、同一份预热时长（指令中心 pump_warmup_ms 优先，
+  // 没配才用 FAULT_STATUS.pumpWarmupMs，两个都没有用 5000ms）。每条消息都要更新计时，
+  // 不管流量规则开没开——否则规则中途打开时计时是断的。
+  const pumpOnDurationMs = trackPumpOnDuration(deviceNo, states.pumpOn)
+  const warmupMs = await getNumberValue('pump_warmup_ms', deviceNo, FAULT_CONFIG.pumpWarmupMs, 5000)
+  const pumpWarmedUp = pumpOnDurationMs != null && pumpOnDurationMs >= warmupMs
+
   // 设备每条上报都带齐 SENSOR_FIELD_MAP 里的传感器字段是常态，缺了就说明那一路掉线。
   // 传感器和行为字段合并在同一条消息上报时，水泵/加热状态字段缺失同样算掉线；
   // 分主题上报时纯传感器消息本就不带行为字段，不参与这条判断，免得每条都误触发。
@@ -302,7 +366,9 @@ async function evaluateSafety(info) {
     tempDiff: getTempDiff(sensors),
     pumpOn: states.pumpOn,
     heatOn: states.heatOn,
-    flowVolatility: sensors.flow != null ? trackFlowVolatility(deviceNo, sensors.flow) : null,
+    pumpOnDurationMs,
+    pumpWarmedUp,
+    flowVolatility: sensors.flow != null ? trackFlowVolatility(deviceNo, sensors.flow, pumpWarmedUp) : null,
     missingFields,
     modeJustToManual: mode === 'manual' && prevMode === 'auto',
     mode,

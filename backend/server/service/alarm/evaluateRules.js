@@ -259,7 +259,8 @@ async function checkAlarms(s, ctx) {
   // 同样只在泵开着时判。动作留空（actions: []）= 只记录不动手：压力低可能是漏水，
   // 也可能只是泵没使上劲，这两种情况该做的事相反（前者要停、后者要加压），
   // 光看压力一个值分不出来，真正的漏水判定交给故障状态机⑥，这里只提示。
-  if (CONFIG.pressureLow !== false) {
+  // 泵关着时管路压力天然接近 0，不加 s.pumpOn 会一停泵就刷一条"压力过低"。
+  if (CONFIG.pressureLow !== false && s.pumpOn) {
     const pressureLow = ctx.threshold('pressureLow')
     if (s.pressure != null && pressureLow != null && s.pressure < pressureLow) {
       triggers.push({

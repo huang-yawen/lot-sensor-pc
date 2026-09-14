@@ -13,11 +13,13 @@ module.exports = {
 
   // ==================== 各条件开关（赛场临时停掉某一条用） ====================
   manualMode: false,          // 进入手动模式时强制关泵关热
-  flowLow: false,             // 流量异常（低于下限/为0/掉线）
+  flowLow: false,             // 流量异常（低于下限/为0/掉线）；为0/低于下限要等水泵预热完成才判
   pressureHigh: false,        // 压力异常（高于上限/为0/掉线）
   tempHigh: false,            // 任一温度高于上限
   tempDiff: false,            // 温差过大
-  flowVolatility: false,      // 流量剧烈波动（疑似水锤/湍流）
+  flowVolatility: false,      // 流量剧烈波动（疑似水锤/湍流）；水泵预热完成后重新攒满窗口才判
+  // ↑ 这两条的水泵预热时长跟故障状态机共用：指令项 pump_warmup_ms 优先，没配用
+  //   faultStatus/config.js 的 pumpWarmupMs（本文件里没有单独的预热参数）
   sensorOffline: false,        // 传感器掉线（消息缺字段 或 设备心跳超时）
   // heaterWithoutPump: false,   // 未开水泵却开启加热,放弃
 
