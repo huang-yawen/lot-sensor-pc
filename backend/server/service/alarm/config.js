@@ -29,7 +29,8 @@
  * 【谁在读】evaluateRules.js 本身；app.js（转 WebSocket 广播）、mqtt handler（每条消息触发评估）。
  *
  * enabled：总开关，是否由服务端按规则自行计算告警；不影响设备主动上报的告警。
- * autoInterlockEnabled：规则触发后是否下发控制指令（每条规则里写的 action）。默认关，开启前必须实机安全测试。
+ * autoInterlockEnabled：规则触发后是否下发控制指令（每条规则里写的 actions 数组，可以同时放
+ *   水泵和加热，写法见 evaluateRules.js 的 checkAlarms 注释）。开启前必须实机安全测试。
  * 当前状态：总开关关着（enabled=false），要用告警把它改成 true 再重启后端。
  *
  * 六条规则写成独立开关，三对上下限（温度 / 流量 / 压力），赛场想临时停某一条把它
