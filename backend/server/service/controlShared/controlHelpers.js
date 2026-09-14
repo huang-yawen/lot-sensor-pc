@@ -242,7 +242,10 @@ async function getTargetTemp(deviceNo, fallback) {
 }
 
 /** 下发一次开关指令：找到对应指令项 -> 拼协议报文 -> 发布 MQTT -> 更新 t_direct 显示值
- * -> 记一条操作历史。找不到指令项时返回 false，其余情况返回 true。
+ * -> 记一条操作历史。找不到指令项时返回 false；下发成功返回 { oldValue }——oldValue 是
+ * 下发前指令页面上这个开关的值（'on'/'off'，没存过值时为 null），各模块写记录时拿它拼
+ * "水泵 开→关"里箭头左边的调整前状态。返回对象本身是真值，只判真假的调用方不受影响。
+ * skipPersist=true 时不读页面值，oldValue 固定为 null（故障机从快照取调整前状态）。
  * source 由调用方传入（'linkage_rules' / 'interlock' / 'fault_status' / 'fault_reset' 等），
  * 日志和操作历史里都带着这个来源标签，方便事后区分"这次开关是谁下发的"。
  *
@@ -257,13 +260,39 @@ async function setSwitch(prefix, name, value, deviceNo, source, skipPersist = fa
   const payload = buildSwitchPayload(conf, value)
   if (!SINGLE_DEVICE_MODE && deviceNo) payload.d_no = deviceNo
   await mqttClient.publish(getTopic('control'), payload, { qos: MQTT_QOS })
+  let oldValue = null
   if (!skipPersist) {
-    const oldValue = await getDirectValue({ config_id: conf.id, d_no: deviceNo })
+    oldValue = await getDirectValue({ config_id: conf.id, d_no: deviceNo })
     await saveDirectData({ config_id: conf.id, value, d_no: deviceNo })
     await saveOperationHistory({ d_no: deviceNo, config_id: conf.id, old_value: oldValue, new_value: value, source })
   }
   console.log(`[ControlShared] ${name} -> ${value}（${source}${skipPersist ? '，仅硬件' : ''}），设备 ${deviceNo || '全局'}`)
-  return true
+  return { oldValue }
+}
+
+/** 开关原始值 -> 记录里显示的中文：能认出开/关就写开/关，null 或认不出的值写"未知"
+ *  （比如指令页面上这个开关从没存过值），不瞎猜成"关"。 */
+function switchText(value) {
+  if (value == null) return '未知'
+  const v = String(value).trim().toLowerCase()
+  if (['on', 'open', '1', 'true'].includes(v)) return '开'
+  if (['off', 'close', 'closed', '0', 'false'].includes(v)) return '关'
+  return '未知'
+}
+
+/**
+ * 拼"告警记录"页里一个开关的调整前后状态，安全联锁 / 联动控制 / 故障保护三块共用，
+ * 保证三张表写法一致。约定：箭头左边是调整前，右边是调整后。
+ *   formatSwitchChange('水泵', 'on', 'off')  -> '水泵 开→关'
+ *   formatSwitchChange('水泵', 'off', 'off') -> '水泵 关→关（未变）'
+ *   formatSwitchChange('加热', null, 'off')  -> '加热 未知→关'
+ * 调整前后相同时特意标"（未变）"：安全联锁会把水泵、加热一起关，原本就关着的那个
+ * 实际没动，不标出来会被误读成"又关了一次"。
+ */
+function formatSwitchChange(label, before, after) {
+  const from = switchText(before)
+  const to = switchText(after)
+  return `${label} ${from}→${to}${from === to && from !== '未知' ? '（未变）' : ''}`
 }
 
 // 防抖：记录每个设备+开关上次动作的时间戳，同一个开关必须间隔满 minIntervalMs
@@ -292,6 +321,7 @@ module.exports = {
   getTargetTemp,
   toVelocity,
   setSwitch,
+  formatSwitchChange,
   canAct,
   resolveDeviceNoStr,
   isFlowNormal,

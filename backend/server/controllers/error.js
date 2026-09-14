@@ -3,10 +3,12 @@
  * 前端 ErrorStore 调这些。两个接口用同一套筛选参数、同一套 e_no→中文名 转换。
  *
  *  GET /api/errData       getErrorHistory   分页列表
- *    query { category?('fault'|'safety'|'linkage'|'alarm'，默认 fault), keyword?, startTime?, endTime?, page?=1, pageSize? }
+ *    query { category?('fault'|'safety'|'linkage'|'alarm'|'spike'|'all'，默认 fault), keyword?, startTime?, endTime?, page?=1, pageSize? }
  *    → { success:true, data:{ list:[{ id, 设备编号, 记录信息, 报警时间, 类型 }...], total, page, size } }
+ *      category=all 时每行多一列"类别"（安全告警/安全联锁/故障状态/数据质量/联动控制）
  *  GET /api/errTypeStats  getErrorTypeStats 类型分布（饼图），筛选参数同上（无分页）
  *    → { success:true, data:[{ type:中文名, count }...], total }
+ *      category=all 时按类别统计，type 是类别名
  *
  *  出错 500 { success:false, message }。
  * 【配置】无直接读取。

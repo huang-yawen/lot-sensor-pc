@@ -60,6 +60,7 @@ const {
   readSensors,
   readSwitchStates,
   setSwitch,
+  formatSwitchChange,
   resolveConfigIdByPrefix,
   resolveDeviceNoStr,
   TEMP_SOURCES,
@@ -167,13 +168,29 @@ function trackPumpOnDuration(deviceNo, pumpOn) {
 /** 把一次故障触发写进 t_error_msg（type='故障保护'）。message 里把这次故障保护做了
  * 哪几件事都写明白，故障记录页直接能看懂。e_no 存故障 id（dry_burn 等），
  * errorTypeNames.js 再据此显示中文名。 */
-async function recordAlarm(deviceNo, trigger) {
+/**
+ * @param {Set<string>} failedPrefixes - 断电没成功的开关 preffix（triggerFault 步骤 2 收集），
+ *   这些开关记"下发失败"，不能写成"开→关"让人以为已经断电。
+ */
+async function recordAlarm(deviceNo, trigger, failedPrefixes = new Set()) {
+  // 调整前 = 故障前快照里的开关状态（triggerFault 步骤 1 已先存好快照，所以这里一定查得到
+  // 本次的快照；快照里没有这个开关时写"未知"）。调整后固定是关——故障保护一律断电。
+  const changes = [['pump', '水泵'], ['heater', '加热']]
+    .map(([prefix, label]) => (failedPrefixes.has(prefix)
+      ? `${label} 下发失败`
+      : formatSwitchChange(label, getSwitchValueByPrefix(deviceNo, prefix), 'off')))
+    .join('，')
   await recordEvent({
     deviceNo,
-    // 文案统一成"原因｜处置｜数据"三段。处置那段只写结果，不再罗列"保存快照 / 进入
-    // FAULT / 复位置 ON / 页面锁定"这一整套——每条故障记录都是同样的固定流程，
-    // 几十上百条里重复同一段 35 个字，表格全是噪声，流程本身写在页面说明里就够了。
-    message: [`${trigger.name}（${trigger.code}）`, '已断电水泵和加热，页面锁定，待手动复位', trigger.detail].filter(Boolean).join('｜'),
+    // 文案统一成"原因｜开关：调整前→调整后｜数据"三段，例：
+    //   干烧（③）｜开关：水泵 开→关，加热 开→关（仅硬件断电；页面锁定并保持原状态，待手动复位）｜…
+    // 括号那句必须留：故障保护只断硬件、不改指令页面上的开关显示（见 setSwitch 的
+    // skipPersist），不写明的话看记录的人会以为页面上的开关也该变成"关"。
+    message: [
+      `${trigger.name}（${trigger.code}）`,
+      `开关：${changes}（仅硬件断电；页面锁定并保持原状态，待手动复位）`,
+      trigger.detail,
+    ].filter(Boolean).join('｜'),
     code: trigger.id,
     type: '故障保护',
   })
@@ -450,11 +467,19 @@ async function triggerFault(deviceNo, trigger, faultConfig) {
 
   // 步骤 2：强制关闭水泵和加热（通过 MQTT 断电，但不改 t_direct 中的开关显示值，
   //         页面保持故障前的开关状态。只有 reset_button 自动变 ON。）
+  // failedPrefixes 收集断电没成功的开关，步骤 5 写记录时照实写"下发失败"。
+  // setSwitch 返回 false（指令页面找不到这个开关）和抛异常（MQTT 发布失败等）都算失败。
+  const failedPrefixes = new Set()
   for (const [prefix, name] of [['pump', '水泵'], ['heater', '加热']]) {
     try {
-      await setSwitch(prefix, name, 'off', deviceNo, 'fault_status', true)
-      console.log(`[FaultStatus] 已强制断电 ${name}（${trigger.id}），设备 ${deviceNo || '全局'}（页面开关保持故障前状态）`)
+      if (await setSwitch(prefix, name, 'off', deviceNo, 'fault_status', true)) {
+        console.log(`[FaultStatus] 已强制断电 ${name}（${trigger.id}），设备 ${deviceNo || '全局'}（页面开关保持故障前状态）`)
+      } else {
+        failedPrefixes.add(prefix)
+        console.error(`[FaultStatus] 关闭 ${name} 失败：指令页面找不到 preffix=${prefix} 的开关`)
+      }
     } catch (err) {
+      failedPrefixes.add(prefix)
       console.error(`[FaultStatus] 关闭 ${name} 失败:`, err.message)
     }
   }
@@ -476,7 +501,7 @@ async function triggerFault(deviceNo, trigger, faultConfig) {
   }
 
   // 步骤 5：告警入库
-  await recordAlarm(deviceNo, trigger)
+  await recordAlarm(deviceNo, trigger, failedPrefixes)
 
   // 广播新故障，供 app.js 转成 WebSocket 消息推给前端弹窗提示。
   events.emit('fault', { ...trigger, deviceNo })

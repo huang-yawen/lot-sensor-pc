@@ -11,7 +11,7 @@
  * 当前状态：总开关开着（enabled=true），dualTemp、tempPressure 两条规则生效。
  */
 module.exports = {
-  enabled: true,                    // 联动总开关
+  enabled: false,                    // 联动总开关
 
   pumpAlwaysOn: false,             // 水泵常开：无故障、读数没顶到异常哨兵就保持运行
 
@@ -26,8 +26,8 @@ module.exports = {
   pressureSingle: false,           // 压力单层：低于下限开泵，高于上限关泵、关加热
   tempSingle: false,               // 温度单层（带滞回）：低于温度下限开加热，高于温度上限关加热（不再参考目标温度）
   tempSingleHysteresis: 1,         // 温度单层滞回回差（℃）
-  dualTemp: true,                  // 双温度融合：温差超过阈值开泵
-  dualTempDiffThreshold: 2,        // 双温度融合温差阈值（℃），建议比安全联锁的温差阈值小
+  dualTemp: false,                  // 双温度融合：温差超过阈值开泵
+  dualTempDiffThreshold: 0.8,        // 双温度融合温差阈值（℃），建议比安全联锁的温差阈值小
   tempFlow: false,                 // 温度+流量融合
   pressureFlow: false,             // 压力+流量融合
   tempPressure: true,             // 温度+压力融合

@@ -41,6 +41,7 @@ const {
   readSensors,
   readSwitchStates,
   setSwitch,
+  formatSwitchChange,
   resolveDeviceNoStr,
 } = require('../controlShared/controlHelpers')
 const { createCooldown } = require('../controlShared/cooldown')
@@ -127,7 +128,7 @@ async function checkRules(s, ctx) {
   }
 
   // ── 规则2：流量异常（低于下限/为0/掉线） ──
-  if (CONFIG.flowLow !== false && s != null && s.flow != null) {
+  if (CONFIG.flowLow !== false && s != null && s.flow != null&&s.pumpOn==true) {
     const abnormalMax = ctx.abnormalMax
     let detail = null
     if (s.flow === 0) detail = '流量=0'
@@ -210,7 +211,6 @@ async function checkRules(s, ctx) {
   if (CONFIG.heaterWithoutPump !== false && s != null && s.heatOn === true && s.pumpOn === false) {
     triggers.push({ id: 'heater_without_pump', name: '未开水泵却开启加热', detail: '水泵=关，加热=开', actions: [{ prefix: 'pump', value: 'off' }, { prefix: 'heater', value: 'off' }] })
   }
-
   return triggers
 }
 
@@ -225,25 +225,34 @@ async function fire(rule, deviceNo, detail, actions) {
   if (cooldown.withinCooldown(cooldownKey, cooldownMs)) return null
   cooldown.markFired(cooldownKey)
 
+  // done 只收下发成功的开关（决定 interlocked）；changes 每个开关都收一段，拼进记录。
   const done = []
+  const changes = []
   for (const { prefix, value } of actions || []) {
     const label = SWITCH_LABELS[prefix] || prefix
     try {
-      if (await setSwitch(prefix, label, value, deviceNo, 'interlock')) {
-        done.push(`${label}→${value === 'on' ? '开' : '关'}`)
+      const result = await setSwitch(prefix, label, value, deviceNo, 'interlock')
+      if (result) {
+        done.push(label)
+        changes.push(formatSwitchChange(label, result.oldValue, value))
         console.log(`[SafetyInterlock] ${rule.name}：${label} -> ${value}，设备 ${deviceNo || '全局'}`)
+      } else {
+        // 指令页面上找不到这个开关（preffix 没配），跟下发抛异常一样记成失败。
+        changes.push(`${label} 下发失败`)
       }
     } catch (err) {
+      changes.push(`${label} 下发失败`)
       console.error(`[SafetyInterlock] ${label} -> ${value} 下发失败:`, err.message)
     }
   }
 
   // 配了动作就记成"安全联锁"，没配动作（actions 空）就是"只记录不动作"的安全告警。
-  // 文案统一成"原因｜处置｜数据"三段：不再写"已执行安全联锁"——type 字段本身就是它，
-  // 描述里再重复一遍只是白占表格宽度。
+  // 文案统一成"原因｜开关：调整前→调整后｜数据"三段，例：
+  //   未开水泵却开启加热｜开关：水泵 关→关（未变），加热 开→关｜水泵=关，加热=开
+  // 箭头左边是动作前指令页面上的开关状态，右边是本次下发的状态。
   const handled = (actions || []).length === 0
-    ? '仅记录，未动执行器'
-    : (done.length ? `已下发 ${done.join('、')}` : '下发失败')
+    ? '开关：未调整（仅记录）'
+    : `开关：${changes.join('，')}`
   await recordEvent({
     deviceNo,
     message: [rule.name, handled, detail].filter(Boolean).join('｜'),

@@ -174,7 +174,7 @@ async function checkAlarms(state, deviceNo) {
         actual,
         threshold: tempHigh,
         message: `${label} ${actual} > 上限 ${tempHigh}`,
-        action: { field: 'heater', value: 'off' },
+        action:{ field: 'heater', value: 'off' },
       })
       break
     }
@@ -247,7 +247,7 @@ async function checkAlarms(state, deviceNo) {
   // 同样只在泵开着时判。动作留空（action: null）= 只记录不动手：压力低可能是漏水，
   // 也可能只是泵没使上劲，这两种情况该做的事相反（前者要停、后者要加压），
   // 光看压力一个值分不出来，真正的漏水判定交给故障状态机⑥，这里只提示。
-  if (CONFIG.pressureLow !== false && pumpOn) {
+  if (CONFIG.pressureLow !== false) {
     if (pressure != null && pressureLow != null && pressure < pressureLow) {
       triggers.push({
         id: 'pressure_low',

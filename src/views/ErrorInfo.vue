@@ -6,9 +6,14 @@
  * -->
 <template>
   <div class="error-info-page">
-    <!-- 顶部搜索框，同时驱动下面故障记录/安全联锁记录/联动控制记录/安全告警记录/数据质量记录五个表格。 -->
+    <!-- 顶部搜索框，同时驱动下面故障记录/安全联锁记录/联动控制记录/安全告警记录/数据质量记录五个表格。
+         最左边的"记录类别"下拉框决定显示什么：选"全部"时五类记录合在下面第一块的一张表格 + 一个按类别分的饼图里；
+         选某一类时只显示那一类自己的表格 + 饼图，也只请求那一类数据。 -->
     <div class="search-form">
       <div class="search-form-inner">
+        <el-select v-model="category" style="width: 140px; flex-shrink: 0;" @change="handleCategoryChange">
+          <el-option v-for="opt in categoryOptions" :key="opt.value" :label="opt.label" :value="opt.value" />
+        </el-select>
         <el-input v-model="keyword" style="width: 240px; flex-shrink: 0;" placeholder="输入设备编号" :suffix-icon="Search"
           clearable />
         <div class="block" style="flex-shrink: 0;">
@@ -24,7 +29,54 @@
       </div>
     </div>
 
-    <div class="error-info-container">
+    <div class="error-info-container" v-if="category === 'all'">
+      <h3 class="section-title">全部记录</h3>
+      <div class="table-wrapper">
+        <el-table
+          :data="store.allData"
+          style="width: 100%"
+          v-if="store.allData.length > 0"
+          border
+          stripe
+          :header-cell-style="{ background: '#f8fafc', color: '#475569', fontWeight: 600 }"
+        >
+          <el-table-column
+            v-for="col in allHeaders"
+            :key="col"
+            :prop="col"
+            :label="col"
+            show-overflow-tooltip
+            align="center"
+          />
+        </el-table>
+        <div v-else class="empty-state">
+          {{ store.allLoading ? '加载中...' : '暂无记录' }}
+        </div>
+      </div>
+
+      <div class="pagination-wrapper">
+        <el-pagination v-model:current-page="allCurrentPage" v-model:page-size="allPageSize" :page-sizes="pageSizeOptions"
+          :background="true" layout="sizes, prev, pager, next" :total="store.allTotal || 0"
+          @size-change="handleAllPageSizeChange" @current-change="handleAllPageChange" />
+      </div>
+
+      <div class="chart-container" v-if="chartsEnabled">
+        <div class="chart-panel">
+          <div class="chart-scope">
+            <span class="chart-scope-label">统计范围</span>
+            <el-radio-group v-model="allChartScope" size="small">
+              <el-radio-button value="all">全部</el-radio-button>
+              <el-radio-button value="filtered">当前筛选</el-radio-button>
+              <el-radio-button value="page">当前页</el-radio-button>
+            </el-radio-group>
+            <span class="chart-scope-hint">{{ allChartHint }}</span>
+          </div>
+          <PieChart :data="allChartData" :title="allChartTitle" />
+        </div>
+      </div>
+    </div>
+
+    <div class="error-info-container" v-if="isShown('fault')">
       <h3 class="section-title">故障记录</h3>
       <div class="table-wrapper">
         <el-table
@@ -71,7 +123,7 @@
       </div>
     </div>
 
-    <div class="error-info-container" v-if="showSafetyLog">
+    <div class="error-info-container" v-if="showSafetyLog && isShown('safety')">
       <h3 class="section-title">安全联锁记录</h3>
       <div class="table-wrapper">
         <el-table
@@ -118,7 +170,7 @@
       </div>
     </div>
 
-    <div class="error-info-container">
+    <div class="error-info-container" v-if="isShown('linkage')">
       <h3 class="section-title">联动控制记录</h3>
       <div class="table-wrapper">
         <el-table
@@ -165,7 +217,7 @@
       </div>
     </div>
 
-    <div class="error-info-container">
+    <div class="error-info-container" v-if="isShown('alarm')">
       <h3 class="section-title">安全告警记录</h3>
       <div class="table-wrapper">
         <el-table
@@ -212,7 +264,7 @@
       </div>
     </div>
 
-    <div class="error-info-container" v-if="showSpikeLog">
+    <div class="error-info-container" v-if="showSpikeLog && isShown('spike')">
       <h3 class="section-title">数据质量记录</h3>
       <div class="table-wrapper">
         <el-table
@@ -299,6 +351,23 @@ const showSpikeLog = computed(() => systemStore.config.DATA_QUALITY?.showOnError
 const spikeCurrentPage = ref(1);
 const spikePageSize = ref(5);
 
+// 记录类别下拉框。value 跟后端 /api/errData 的 category 参数、store 里各 fetchXxx 一一对应：
+//   alarm=安全告警记录  safety=安全联锁记录  fault=故障记录  spike=数据质量记录  linkage=联动控制记录
+// 配置中心把某块关掉（showOnErrorPage=false）时，下拉框里也不出现这一项，免得选了看到空白页。
+const category = ref("all");
+const categoryOptions = computed(() => [
+  { value: "alarm", label: "安全告警" },
+  { value: "safety", label: "安全联锁", hidden: !showSafetyLog.value },
+  { value: "fault", label: "故障状态" },
+  { value: "spike", label: "数据质量", hidden: !showSpikeLog.value },
+  { value: "linkage", label: "联动控制" },
+  { value: "all", label: "全部" },
+].filter((opt) => !opt.hidden));
+/** 按类别分开的五块，只有下拉框正好选中它时才显示/请求；"全部"走上面单独的合并视图。 */
+const isShown = (key) => category.value === key;
+const allCurrentPage = ref(1);
+const allPageSize = ref(5);
+
 // 饼图统计范围：all=数据库里该类型的全部记录；filtered=顶部搜索条件筛出来的那批
 // （跟表格同一批数据）；page=表格当前这一页的记录（纯前端聚合，不发请求）。
 const errChartScope = ref("all");
@@ -306,12 +375,14 @@ const safetyChartScope = ref("all");
 const linkageChartScope = ref("all");
 const alarmChartScope = ref("all");
 const spikeChartScope = ref("all");
+const allChartScope = ref("all");
 
-/** 把表格行按"类型"列聚合成饼图要的 [{type, count}]，用于"当前页"范围。 */
-const aggregateByType = (rows) => {
+/** 把表格行按某一列（默认"类型"）聚合成饼图要的 [{type, count}]，用于"当前页"范围。
+ *  "全部"视图的饼图按类别分，所以传"类别"列。 */
+const aggregateByType = (rows, column = "类型") => {
   const counter = new Map();
   for (const row of rows || []) {
-    const type = row["类型"] || "未分类";
+    const type = row[column] || "未分类";
     counter.set(type, (counter.get(type) || 0) + 1);
   }
   return [...counter.entries()]
@@ -319,14 +390,17 @@ const aggregateByType = (rows) => {
     .sort((a, b) => b.count - a.count);
 };
 
-const pickChartData = (scope, allStats, filteredStats, pageRows) => {
+const pickChartData = (scope, allStats, filteredStats, pageRows, column) => {
   if (scope === "all") return allStats;
   if (scope === "filtered") return filteredStats;
-  return aggregateByType(pageRows);
+  return aggregateByType(pageRows, column);
 };
 
 const sumCount = (stats) => (stats || []).reduce((sum, item) => sum + (Number(item.count) || 0), 0);
 
+const allChartData = computed(() =>
+  pickChartData(allChartScope.value, store.allTypeStatsAll, store.allTypeStats, store.allData, "类别")
+);
 const errChartData = computed(() =>
   pickChartData(errChartScope.value, store.errTypeStatsAll, store.errTypeStats, store.errData)
 );
@@ -344,6 +418,8 @@ const spikeChartData = computed(() =>
 );
 
 const SCOPE_LABELS = { all: "全部", filtered: "当前筛选", page: "当前页" };
+const allChartTitle = computed(() => `记录类别分布（${SCOPE_LABELS[allChartScope.value]}）`);
+const allChartHint = computed(() => `共 ${sumCount(allChartData.value)} 条`);
 const errChartTitle = computed(() => `故障类型分布（${SCOPE_LABELS[errChartScope.value]}）`);
 const safetyChartTitle = computed(() => `安全联锁类型分布（${SCOPE_LABELS[safetyChartScope.value]}）`);
 const linkageChartTitle = computed(() => `联动控制规则分布（${SCOPE_LABELS[linkageChartScope.value]}）`);
@@ -354,6 +430,11 @@ const safetyChartHint = computed(() => `共 ${sumCount(safetyChartData.value)} �
 const linkageChartHint = computed(() => `共 ${sumCount(linkageChartData.value)} 条`);
 const alarmChartHint = computed(() => `共 ${sumCount(alarmChartData.value)} 条`);
 const spikeChartHint = computed(() => `共 ${sumCount(spikeChartData.value)} 条`);
+
+const allHeaders = computed(() => {
+  const data = store.allData;
+  return data.length ? Object.keys(data[0]).filter(displayStore.isFieldVisible) : [];
+});
 
 // 故障记录是手写表格，也统一过滤 id/编号列。
 const headers = computed(() => {
@@ -399,27 +480,35 @@ const handleSearch = async (page = 1, showLoading = true) => {
     spikeCurrentPage.value = 1;
     // 饼图的"全部"和"当前筛选"两种范围各拉一份，切换范围时纯前端切换、不用等请求；
     // "当前页"范围直接用表格数据聚合，不占请求。
-    const tasks = [
-      store.fetchErrData({
-        ...params,
-        currentPage: page,
-        pageSize: pageSize.value,
-      }),
-      store.fetchErrTypeStats(params),
-      store.fetchErrTypeStats({}, "all"),
-    ];
-    if (showSafetyLog.value) {
+    // 下拉框没选中的块不显示，也就不发请求。选"全部"时只拉合并视图那一组，page 就是它的页码。
+    const tasks = [];
+    if (category.value === "all") {
+      allCurrentPage.value = page;
+      tasks.push(store.fetchAllData({ ...params, currentPage: page, pageSize: allPageSize.value }));
+      tasks.push(store.fetchAllTypeStats(params));
+      tasks.push(store.fetchAllTypeStats({}, "all"));
+    }
+    if (isShown("fault")) {
+      tasks.push(store.fetchErrData({ ...params, currentPage: page, pageSize: pageSize.value }));
+      tasks.push(store.fetchErrTypeStats(params));
+      tasks.push(store.fetchErrTypeStats({}, "all"));
+    }
+    if (showSafetyLog.value && isShown("safety")) {
       tasks.push(store.fetchSafetyData({ ...params, currentPage: 1, pageSize: safetyPageSize.value }));
       tasks.push(store.fetchSafetyTypeStats(params));
       tasks.push(store.fetchSafetyTypeStats({}, "all"));
     }
-    tasks.push(store.fetchLinkageData({ ...params, currentPage: 1, pageSize: linkagePageSize.value }));
-    tasks.push(store.fetchLinkageTypeStats(params));
-    tasks.push(store.fetchLinkageTypeStats({}, "all"));
-    tasks.push(store.fetchAlarmData({ ...params, currentPage: 1, pageSize: alarmPageSize.value }));
-    tasks.push(store.fetchAlarmTypeStats(params));
-    tasks.push(store.fetchAlarmTypeStats({}, "all"));
-    if (showSpikeLog.value) {
+    if (isShown("linkage")) {
+      tasks.push(store.fetchLinkageData({ ...params, currentPage: 1, pageSize: linkagePageSize.value }));
+      tasks.push(store.fetchLinkageTypeStats(params));
+      tasks.push(store.fetchLinkageTypeStats({}, "all"));
+    }
+    if (isShown("alarm")) {
+      tasks.push(store.fetchAlarmData({ ...params, currentPage: 1, pageSize: alarmPageSize.value }));
+      tasks.push(store.fetchAlarmTypeStats(params));
+      tasks.push(store.fetchAlarmTypeStats({}, "all"));
+    }
+    if (showSpikeLog.value && isShown("spike")) {
       tasks.push(store.fetchSpikeData({ ...params, currentPage: 1, pageSize: spikePageSize.value }));
       tasks.push(store.fetchSpikeTypeStats(params));
       tasks.push(store.fetchSpikeTypeStats({}, "all"));
@@ -428,6 +517,23 @@ const handleSearch = async (page = 1, showLoading = true) => {
   } finally {
     if (showLoading) loading.value = false;
   }
+};
+
+const handleAllPageChange = (page) => {
+  allCurrentPage.value = page;
+  store.fetchAllData({ ...getSearchParams(), currentPage: page, pageSize: allPageSize.value });
+};
+
+const handleAllPageSizeChange = (size) => {
+  allPageSize.value = size;
+  allCurrentPage.value = 1;
+  store.fetchAllData({ ...getSearchParams(), currentPage: 1, pageSize: size });
+};
+
+// 切换记录类别：沿用顶部的设备编号和时间筛选，各块回到第 1 页重新查。
+const handleCategoryChange = () => {
+  currentPage.value = 1;
+  handleSearch(1);
 };
 
 const handlePageChange = (page) => {
@@ -492,10 +598,14 @@ let unsubscribeError = null;
 onMounted(async () => {
   await Promise.all([systemStore.load(), displayStore.loadDisplayConfig()]);
   pageSize.value = systemStore.config.DEFAULT_PAGE_SIZE || 5;
+  allPageSize.value = pageSize.value;
   await handleSearch();
 
   connect();
-  unsubscribeError = wsOn("error_data", () => handleSearch(currentPage.value, false));
+  // 选"全部"时 handleSearch 的 page 是合并表格的页码，推送刷新要停在用户当前看的那一页。
+  unsubscribeError = wsOn("error_data", () =>
+    handleSearch(category.value === "all" ? allCurrentPage.value : currentPage.value, false)
+  );
 });
 
 onUnmounted(() => {
@@ -519,7 +629,7 @@ onUnmounted(() => {
   flex: 0 0 auto;
 }
 
-/* 故障记录/安全联锁记录/联动控制记录/安全告警记录/数据质量记录各板块依次排列，从第二块起加一点间距。 */
+/* 全部记录/故障记录/安全联锁记录/联动控制记录/安全告警记录/数据质量记录各板块依次排列，从第二块起加一点间距。 */
 .error-info-container + .error-info-container {
   margin-top: 8px;
 }

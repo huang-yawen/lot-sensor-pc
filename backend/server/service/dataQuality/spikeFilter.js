@@ -33,17 +33,21 @@
  */
 
 // ========== 赛场速改索引（要改什么 -> 去哪） ==========
-//  关掉整个板块        config.js enabled=false
-//  改 ±50% 这个比例    config.js ratio
-//  改"连续几次确认"    config.js confirmCount
-//  某个字段不监控      config.js fields.<temp1|temp2|flow|pressure>=false
-//  零点附近误判太多    config.js minBase 调大
+//  只关毛刺过滤这一条  config.js spikeFilter.enabled=false（规则二、三照常）
+//  关掉整个板块        config.js enabled=false（三条规则全关）
+//  改 ±50% 这个比例    config.js spikeFilter.ratio
+//  改"连续几次确认"    config.js spikeFilter.confirmCount
+//  某个字段不监控      config.js spikeFilter.fields.<temp1|temp2|flow|pressure>=false
+//  零点附近误判太多    config.js spikeFilter.minBase 调大
 //  跳变判定逻辑        detectJumps() 约 L80
 //  缓冲/确认/丢弃流程  evaluateSpikeFilter() 约 L120
 // ===================================================
 const EventEmitter = require('events')
-// 本板块自己的开关和参数（总开关、比例、确认次数、逐字段开关等）都在这里。
+// 本板块自己的开关和参数都在这里：CONFIG.enabled 是板块总开关，
+// 本规则的开关和比例、确认次数、逐字段开关等在 CONFIG.spikeFilter 子对象里
+// （跟 relayStuck.js、sensorInverted.js 各读自己那个子对象是同一个结构）。
 const CONFIG = require('./config')
+const RULE = CONFIG.spikeFilter
 // 读传感器语义槽位、解析设备号——统一走 controlShared，跟安全联锁/故障机同一份实现。
 const { readSensors, resolveDeviceNoStr } = require('../controlShared/controlHelpers')
 const { createCooldown } = require('../controlShared/cooldown')
@@ -81,7 +85,7 @@ function getState(deviceNo) {
 
 /** 当前启用监控的字段（config.js fields 里没显式写 false 的都算启用）。 */
 function monitoredTypes() {
-  return SPIKE_TYPES.filter(type => CONFIG.fields?.[type.key] !== false)
+  return SPIKE_TYPES.filter(type => RULE.fields?.[type.key] !== false)
 }
 
 /**
@@ -99,9 +103,9 @@ function detectJumps(base, current) {
     const prev = base?.[type.key]
     const now = current?.[type.key]
     if (prev == null || now == null) continue
-    if (Math.abs(prev) < CONFIG.minBase) continue
+    if (Math.abs(prev) < RULE.minBase) continue
     const delta = Math.abs(now - prev) / Math.abs(prev)
-    if (delta > CONFIG.ratio) jumps.push({ type, prev, now, delta })
+    if (delta > RULE.ratio) jumps.push({ type, prev, now, delta })
   }
   return jumps
 }
@@ -127,12 +131,12 @@ async function recordSpikes(deviceNo, jumps, info) {
   const triggers = []
   for (const jump of jumps) {
     const key = `${deviceNo || 'global'}:${jump.type.id}`
-    if (cooldown.withinCooldown(key, CONFIG.alarmCooldownMs)) continue
+    if (cooldown.withinCooldown(key, RULE.alarmCooldownMs)) continue
     cooldown.markFired(key)
     const percent = Number((jump.delta * 100).toFixed(1))
     // 文案统一成"原因｜处置｜数据"三段
-    const message = `${jump.type.name}｜已暂缓入库，待连续 ${CONFIG.confirmCount} 次确认`
-      + `｜${jump.prev}${jump.type.unit} → ${jump.now}${jump.type.unit}，变化 ${percent}%（限 ±${CONFIG.ratio * 100}%）`
+    const message = `${jump.type.name}｜已暂缓入库，待连续 ${RULE.confirmCount} 次确认`
+      + `｜${jump.prev}${jump.type.unit} → ${jump.now}${jump.type.unit}，变化 ${percent}%（限 ±${RULE.ratio * 100}%）`
     await recordEvent({
       deviceNo,
       message,
@@ -169,7 +173,8 @@ async function recordSpikes(deviceNo, jumps, info) {
  *   triggers - 本次新产生的跳变告警（已过冷却），供调用方挂到 info 上。
  */
 async function evaluateSpikeFilter(info) {
-  if (!CONFIG.enabled) return { flush: [info], blocked: false, triggers: [] }
+  // 板块总开关或本规则开关任一关着：原样放行入库，不检测、不缓冲、不告警。
+  if (!CONFIG.enabled || !RULE?.enabled) return { flush: [info], blocked: false, triggers: [] }
 
   const deviceNo = await resolveDeviceNoStr(info)
   const state = getState(deviceNo || 'global')
@@ -180,7 +185,7 @@ async function evaluateSpikeFilter(info) {
   // ① 缓冲区里已经攒着待确认的数据：本条的作用是裁决"那个可疑新水位站不站得住"。
   if (state.pending.length) {
     const head = state.pending[0]
-    if (nowMs - head.atMs >= CONFIG.maxPendingMs) {
+    if (nowMs - head.atMs >= RULE.maxPendingMs) {
       // 超时兜底：设备停发或采集间隔突然变长，不能让这几条永远卡在内存里不入库。
       flush.push(...state.pending.map(item => item.info))
       state.lastAccepted = mergeAccepted(state.lastAccepted, state.pending[state.pending.length - 1].values)
@@ -190,7 +195,7 @@ async function evaluateSpikeFilter(info) {
     } else if (detectJumps(head.values, values).length === 0) {
       // 本条稳定在新水位上，攒进缓冲区。
       state.pending.push({ info, values, atMs: nowMs })
-      if (state.pending.length < CONFIG.confirmCount) {
+      if (state.pending.length < RULE.confirmCount) {
         return { flush: [], blocked: true, triggers: [] }
       }
       // 攒够 confirmCount 条：判定是真实阶跃，按原顺序补写，一条不丢。

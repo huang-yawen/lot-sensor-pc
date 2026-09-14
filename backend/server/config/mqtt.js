@@ -12,8 +12,8 @@ module.exports = {
   //   路由器   mqtt://192.168.1.100:1883
   //   lsr热点  mqtt://10.97.241.240:1883
   //   本机     mqtt://localhost:1883
-  // MQTT_URL: 'mqtt://192.168.1.110:1883',
-  MQTT_URL: 'mqtt://localhost:1883',
+  MQTT_URL: 'mqtt://192.168.1.110:1883',
+  // MQTT_URL: 'mqtt://localhost:1883',
   // 客户端标识。同一个 Broker 上 client id 必须唯一——两个后端实例用同一个 id 会被
   // Broker 交替踢下线，表现为 MQTT 反复断连重连、指令下发时报「MQTT 未连接」。
   MQTT_CLIENT_ID: 'lot-sensor-pc-test1',

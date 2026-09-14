@@ -1,12 +1,13 @@
 /**
  * 【干什么】"故障记录"页的数据源。同一个页面有 5 个互相独立的表格 + 饼图：
- * 故障(fault) / 安全联锁(safety) / 联动控制(linkage) / 阈值告警(alarm) / 数据质量(spike)。
+ * 故障(fault) / 安全联锁(safety) / 联动控制(linkage) / 阈值告警(alarm) / 数据质量(spike)，
+ * 另外还有一组 all：页面下拉框选"全部"时，五类记录合在一张表格 + 一个按类别分的饼图里。
  * 5 组各有一套 data/total/loading/typeStats/typeStatsAll 状态和一对 fetch 方法，
  * 都复用后端同一个 /errData + /errTypeStats 接口，靠 category 参数区分，各自分页互不影响。
  *
  * 【导出】useErrorStore()
  * 【状态】每组 4 个：<组>Data、<组>Total、<组>Loading、<组>TypeStats、<组>TypeStatsAll
- *        （组 = err(即fault) / safety / linkage / alarm / spike）
+ *        （组 = err(即fault) / safety / linkage / alarm / spike / all）
  * 【方法】
  *   fetch<组>Data(params)                 → GET /api/errData?category=...     表格数据（关键字+时间+分页）
  *   fetch<组>TypeStats(params, scope)      → GET /api/errTypeStats?category=... 饼图统计
@@ -48,6 +49,13 @@ export const useErrorStore = defineStore('errorStore', () => {
   const spikeLoading = ref(false);
   const spikeTypeStats = ref([]);
   const spikeTypeStatsAll = ref([]);
+  // "全部"视图：allTypeStatsAll 是不带筛选的全量类别统计（跟其它组的 xxxTypeStatsAll 同义，
+  // 名字里两个 All 含义不同：前一个是"全部类别"，后一个是"不带筛选"）。
+  const allData = ref([]);
+  const allTotal = ref(0);
+  const allLoading = ref(false);
+  const allTypeStats = ref([]);
+  const allTypeStatsAll = ref([]);
 
   const formatDateTime = (value) => {
     if (!value) return "";
@@ -339,7 +347,69 @@ export const useErrorStore = defineStore('errorStore', () => {
     }
   };
 
+  // 全部记录：复用同一个 /errData 接口，传 category=all，五类记录合在一张表里分页，
+  // 每行多一列"类别"。
+  const fetchAllData = async (params = {}) => {
+    allLoading.value = true;
+    try {
+      const response = await api.get("/api/errData", {
+        params: {
+          category: "all",
+          page: params.currentPage || 1,
+          keyword: params.keyword || "",
+          pageSize: params.pageSize || 5,
+          startTime: formatDateTime(params.startTime),
+          endTime: formatDateTime(params.endTime),
+        },
+      });
+
+      const res = response.data;
+      if (res.success) {
+        const list = res.data?.list || [];
+        const displayStore = useDisplayStore()
+        allData.value = list.map((item) => ({
+          ...item,
+          "报警时间": displayStore.formatTime(item["报警时间"]),
+        }));
+        allTotal.value = res.data?.total || list.length;
+      }
+    } catch (error) {
+      console.error("allData 请求失败:", error);
+    } finally {
+      allLoading.value = false;
+    }
+  };
+
+  // 全部记录的类别统计：/errTypeStats 传 category=all，后端按类别（安全告警/安全联锁/
+  // 故障状态/数据质量/联动控制）汇总，不按具体类型。
+  const fetchAllTypeStats = async (params = {}, scope = "filtered") => {
+    try {
+      const query = scope === "all" ? { category: "all" } : {
+        category: "all",
+        keyword: params.keyword || "",
+        startTime: formatDateTime(params.startTime),
+        endTime: formatDateTime(params.endTime),
+      };
+      const response = await api.get("/api/errTypeStats", { params: query });
+
+      const res = response.data;
+      if (res.success) {
+        if (scope === "all") allTypeStatsAll.value = res.data || [];
+        else allTypeStats.value = res.data || [];
+      }
+    } catch (error) {
+      console.error("allTypeStats 请求失败:", error);
+    }
+  };
+
   return {
+    fetchAllData,
+    fetchAllTypeStats,
+    allData,
+    allTotal,
+    allLoading,
+    allTypeStats,
+    allTypeStatsAll,
     fetchErrData,
     fetchErrTypeStats,
     fetchSafetyData,

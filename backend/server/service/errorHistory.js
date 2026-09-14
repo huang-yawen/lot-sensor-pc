@@ -10,6 +10,8 @@ const { LINKAGE_RULE_NAMES } = require('./linkageRules/linkageRules')
 const { SPIKE_TYPES } = require('./dataQuality/spikeFilter')
 const { RELAY_TYPES } = require('./dataQuality/relayStuck')
 const { INVERTED_TYPES } = require('./dataQuality/sensorInverted')
+const SAFETY_CONFIG = require('./safety/config')
+const DATA_QUALITY_CONFIG = require('./dataQuality/config')
 
 /* ==================== e_no -> 中文名 对照 ==================== */
 
@@ -51,7 +53,37 @@ const CATEGORY_TYPES = {
   spike: ['数据质量'],
 }
 
+/** 类别 -> "全部"视图里"类别"列和饼图显示的中文名，跟前端下拉框的选项文字一致。 */
+const CATEGORY_LABELS = {
+  alarm: '安全告警',
+  safety: '安全联锁',
+  fault: '故障状态',
+  spike: '数据质量',
+  linkage: '联动控制',
+}
+
+/**
+ * 反查一条记录属于哪个类别："全部"视图一次查出所有记录，要逐行判断它该归哪一类。
+ * type 命中 CATEGORY_TYPES 里的固定大类就是那一类；都没命中的就是 ALARM_RULES 规则告警
+ * （它的 type 是规则自己的名字，比如"循环流量过低"）——跟 buildWhere 里 alarm 的口径一致。
+ * 注意安全联锁里"没配动作"的规则写库时 type 是'安全告警'，这里按 CATEGORY_TYPES 归到
+ * safety，"类别"列显示"安全联锁"，不会跟 ALARM_RULES 的"安全告警"混在一起。
+ */
+function categoryOfType(type) {
+  const hit = Object.entries(CATEGORY_TYPES).find(([, types]) => types.includes(type))
+  return hit ? hit[0] : 'alarm'
+}
+
+/** 配置里 showOnErrorPage=false 的类别，"全部"视图也不带出来，跟前端下拉框隐藏选项保持一致。 */
+function hiddenCategories() {
+  const hidden = []
+  if (SAFETY_CONFIG.showOnErrorPage === false) hidden.push('safety')
+  if (DATA_QUALITY_CONFIG.showOnErrorPage === false) hidden.push('spike')
+  return hidden
+}
+
 function resolveCategory(query) {
+  if (query?.category === 'all') return 'all'
   if (query?.category === 'safety') return 'safety'
   if (query?.category === 'linkage') return 'linkage'
   if (query?.category === 'spike') return 'spike'
@@ -98,7 +130,14 @@ const buildWhere = (query = {}) => {
     const category = resolveCategory(query)
     const conditions = []
     const params = []
-    if (category === 'alarm') {
+    if (category === 'all') {
+        // 全部类别一起查，只排除配置里隐藏掉的类别（它们都是固定 type，直接 NOT IN）。
+        const hiddenTypes = hiddenCategories().flatMap(key => CATEGORY_TYPES[key])
+        if (hiddenTypes.length) {
+            conditions.push(`type NOT IN (${hiddenTypes.map(() => '?').join(',')})`)
+            params.push(...hiddenTypes)
+        }
+    } else if (category === 'alarm') {
         // 场景配置 ALARM_RULES 触发的规则告警，type 是规则自己的显示名，各不相同、
         // 没法像另外三类那样列一张固定清单去 IN 匹配——改成排除掉那三类已知的固定
         // type，覆盖现在及以后任何新增的规则名，不用每加一条规则就来改这里。
@@ -134,7 +173,8 @@ const buildWhere = (query = {}) => {
         params.push(endTime)
     }
 
-    return { whereClause: `WHERE ${conditions.join(' AND ')}`, params }
+    // "全部"且没有任何筛选时 conditions 是空的，不能拼出一个光秃秃的 "WHERE"（SQL 语法错误）。
+    return { whereClause: conditions.length ? `WHERE ${conditions.join(' AND ')}` : '', params }
 }
 
 /* ==================== 分页列表查询 ==================== */
@@ -160,6 +200,18 @@ async function getErrorHistory(query) {
     // 具体的故障/触发条件名称（比如"干烧""未开水泵却开启加热"），e_no 之外的字段不变。
     const list = rows.map((row) => {
         const { e_no, ...rest } = row
+        if (category === 'all') {
+            // "全部"视图多一列"类别"，并按每行自己的类别换具体类型名；列顺序决定前端表头顺序。
+            const rowCategory = categoryOfType(rest['类型'])
+            return {
+                id: rest.id,
+                '设备编号': rest['设备编号'],
+                '类别': CATEGORY_LABELS[rowCategory],
+                '类型': friendlyName(rowCategory, e_no, rest['类型']),
+                '记录信息': rest['记录信息'],
+                '报警时间': rest['报警时间'],
+            }
+        }
         rest['类型'] = friendlyName(category, e_no, rest['类型'])
         return rest
     })
@@ -203,7 +255,10 @@ async function getErrorTypeStats(query) {
   // 多行落到同一个 fallback 名称上需要相加）。
   const merged = new Map()
   for (const row of rows) {
-    const name = friendlyName(category, row.e_no, row.type)
+    // "全部"视图的饼图按类别分（最多 5 块）；按具体类型分会有三十来块，饼图没法看。
+    const name = category === 'all'
+      ? CATEGORY_LABELS[categoryOfType(row.type)]
+      : friendlyName(category, row.e_no, row.type)
     merged.set(name, (merged.get(name) || 0) + row.count)
   }
 

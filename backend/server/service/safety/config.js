@@ -19,7 +19,7 @@ module.exports = {
   tempDiff: false,            // 温差过大
   flowVolatility: false,      // 流量剧烈波动（疑似水锤/湍流）
   sensorOffline: false,        // 传感器掉线（消息缺字段 或 设备心跳超时）
-  heaterWithoutPump: false,   // 未开水泵却开启加热
+  // heaterWithoutPump: false,   // 未开水泵却开启加热,放弃
 
   // ==================== 参数（规则里用 ctx.config 取） ====================
   tempDiffThreshold: 10,       // 温差阈值兜底值（℃），指令中心没配才用它

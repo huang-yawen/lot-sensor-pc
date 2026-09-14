@@ -68,6 +68,7 @@ const {
   readSwitchStates,
   getTargetTemp,
   setSwitch,
+  formatSwitchChange,
   canAct,
   isFlowNormal,
   getTempDiff,
@@ -133,16 +134,24 @@ const LINKAGE_RULE_NAMES = {
  * @param {string} deviceLabel - 执行器中文名（'水泵'/'加热'）
  * @param {'on'|'off'} action - 这次下发的动作
  * @param {Object} sensors - 当前传感器读数，写进 detail 方便排查
+ * @param {string|null} beforeValue - 下发前指令页面上的开关值（setSwitch 返回的 oldValue）
  */
-async function recordLinkageAlarm(deviceNo, ruleKey, deviceLabel, action, sensors) {
-  const actionLabel = action === 'on' ? '开' : '关'
+async function recordLinkageAlarm(deviceNo, ruleKey, deviceLabel, action, sensors, beforeValue) {
   const ruleLabel = LINKAGE_RULE_NAMES[ruleKey] || ruleKey
-  // 文案统一成"原因｜处置｜数据"三段。规则名本身就说明了命中的是什么，"命中规则"
-  // 四个字是废话；四项读数用 T1/T2 简写，一行表格里才放得下。
-  const detail = `T1=${sensors.temp1 ?? '-'} T2=${sensors.temp2 ?? '-'} 流量=${sensors.flow ?? '-'} 压力=${sensors.pressure ?? '-'}`
+  // 文案统一成"原因｜开关：调整前→调整后｜数据"三段，例：
+  //   水泵-流量单层｜开关：水泵 关→开｜进水温度=44.9℃ 出水温度=45.9℃ 流量=0L/min 压力=0.6kPa
+  // 读数不再用 T1/T2 简写——赛场上看记录的人不一定知道 T1 是进水；单位跟
+  // t_sensor_field_mapper 里登记的一致。没读到的项写"-"，不带单位。
+  const reading = (label, value, unit) => `${label}=${value == null ? '-' : `${value}${unit}`}`
+  const detail = [
+    reading('进水温度', sensors.temp1, '℃'),
+    reading('出水温度', sensors.temp2, '℃'),
+    reading('流量', sensors.flow, 'L/min'),
+    reading('压力', sensors.pressure, 'kPa'),
+  ].join(' ')
   await recordEvent({
     deviceNo,
-    message: `${ruleLabel}｜${deviceLabel}→${actionLabel}｜${detail}`,
+    message: `${ruleLabel}｜开关：${formatSwitchChange(deviceLabel, beforeValue, action)}｜${detail}`,
     code: ruleKey,
     type: '联动控制',
   })
@@ -567,29 +576,41 @@ async function evaluateLinkageRules(info) {
   // 拦住（canAct 保证同一个开关短时间内不会被反复切换）。五个条件缺一不可。
   if (pumpDesired && !pumpVelocityEnabled
     && states.pumpOn !== undefined && states.pumpOn !== (pumpDesired === 'on') && canAct(deviceNo, 'pump')) {
-    await setSwitch('pump', '水泵', pumpDesired, deviceNo, 'linkage_rules')
-    actions.push({ device: 'pump', action: pumpDesired })
-    // 找出这次真的贡献了"该开/该关"这个结论的规则（候选值跟最终结论一致才算贡献，
-    // 只是没表态的 null 不算），贡献规则各写一条联动控制记录，供"告警记录"页面
-    // 精确统计到具体是哪条规则触发的。
-    const pumpRules = ruleResults.filter(r => r.pump === pumpDesired)
-    for (const rule of pumpRules) {
-      await recordLinkageAlarm(deviceNo, rule.key, '水泵', pumpDesired, sensors)
+    const pumpResult = await setSwitch('pump', '水泵', pumpDesired, deviceNo, 'linkage_rules')
+    // setSwitch 返回 false = 指令页面上找不到 preffix=pump 的开关，报文根本没发出去。
+    // 这时不能记"联动控制记录"、不能弹提示、也不算进本轮动作，否则页面上看到"水泵 关→开"
+    // 但设备实际没动，赛场排查会被带偏。
+    if (pumpResult) {
+      actions.push({ device: 'pump', action: pumpDesired })
+      // 找出这次真的贡献了"该开/该关"这个结论的规则（候选值跟最终结论一致才算贡献，
+      // 只是没表态的 null 不算），贡献规则各写一条联动控制记录，供"告警记录"页面
+      // 精确统计到具体是哪条规则触发的。
+      const pumpRules = ruleResults.filter(r => r.pump === pumpDesired)
+      for (const rule of pumpRules) {
+        await recordLinkageAlarm(deviceNo, rule.key, '水泵', pumpDesired, sensors, pumpResult.oldValue)
+      }
+      emitLinkage(deviceNo, '水泵', pumpDesired, pumpRules, sensors)
+    } else {
+      console.warn(`[LinkageRules] 水泵 -> ${pumpDesired} 未下发：指令页面找不到 preffix=pump 的开关，设备 ${deviceNo || '全局'}`)
     }
-    emitLinkage(deviceNo, '水泵', pumpDesired, pumpRules, sensors)
   }
 
   // PID恒温控制开关是开时改由 service/pidHeating/pidHeating.js 接管加热，这里跳过，
   // 避免两边抢控制权（pidEnabled 已经在上面算过一次，这里不用重复查）。
   if (heaterDesired && !pidEnabled
     && states.heatOn !== undefined && states.heatOn !== (heaterDesired === 'on') && canAct(deviceNo, 'heater')) {
-    await setSwitch('heater', '加热', heaterDesired, deviceNo, 'linkage_rules')
-    actions.push({ device: 'heater', action: heaterDesired })
-    const heaterRules = ruleResults.filter(r => r.heater === heaterDesired)
-    for (const rule of heaterRules) {
-      await recordLinkageAlarm(deviceNo, rule.key, '加热', heaterDesired, sensors)
+    const heaterResult = await setSwitch('heater', '加热', heaterDesired, deviceNo, 'linkage_rules')
+    // 同上：没真正下发就不记录、不提示、不算动作。
+    if (heaterResult) {
+      actions.push({ device: 'heater', action: heaterDesired })
+      const heaterRules = ruleResults.filter(r => r.heater === heaterDesired)
+      for (const rule of heaterRules) {
+        await recordLinkageAlarm(deviceNo, rule.key, '加热', heaterDesired, sensors, heaterResult.oldValue)
+      }
+      emitLinkage(deviceNo, '加热', heaterDesired, heaterRules, sensors)
+    } else {
+      console.warn(`[LinkageRules] 加热 -> ${heaterDesired} 未下发：指令页面找不到 preffix=heater 的开关，设备 ${deviceNo || '全局'}`)
     }
-    emitLinkage(deviceNo, '加热', heaterDesired, heaterRules, sensors)
   }
 
   // 观测点必须跟规则9第一段读的那个保持一致，见 TEMP_SOURCES.tempPressureTrend。
