@@ -29,6 +29,7 @@ const { onLinkage } = require('./service/linkageRules/linkageRules');
 const { onRelayStuck } = require('./service/dataQuality/relayStuck');
 const { onSensorInverted } = require('./service/dataQuality/sensorInverted');
 const { onHeaterBlocked } = require('./service/pidHeating/pidHeating');
+const { start: startSchedule } = require('./service/schedule/scheduleService');
 const { onDirectDataChanged } = require('./service/directData/saveDirectConfig');
 const { start: startAutoJudgment, onAutoJudgment } = require('./service/autoJudgment/autoJudgment');
 const mqttClient = require('./mqtt/index')
@@ -52,9 +53,38 @@ app.use(cors({
 }));
 app.use(express.json({ limit: '1mb' }));
 
+// ==================== API 认证 ====================
+// 通过环境变量 API_TOKEN 启用；未配置时不拦截（本地开发友好）。
+// 配置后所有 /api/ 请求需在 x-api-token 头或 ?token= 查询参数中携带正确 token。
+// 静态前端文件（非 /api/ 路径）放行，保证页面能正常加载。
+const API_TOKEN = process.env.API_TOKEN || '';
+if (API_TOKEN) {
+  app.use((req, res, next) => {
+    if (!req.path.startsWith('/api/')) return next();
+    const token = req.headers['x-api-token'] || req.query.token;
+    if (token !== API_TOKEN) {
+      return res.status(401).json({ success: false, message: '未授权访问' });
+    }
+    next();
+  });
+}
+
 // 所有业务接口统一挂载到同一个路由入口，便于集中维护。
 // 具体路由定义见 routes/sensorRoutes.js，app 层不再直接写路由。
 app.use('/', sensorRoutes);
+
+// ==================== 全局错误处理 ====================
+// 兜底所有未被控制器 catch 的异常：生产环境不返回内部错误细节（SQL/路径等），
+// 开发环境仍返回 err.message 便于调试。
+const isProd = process.env.NODE_ENV === 'production';
+// eslint-disable-next-line no-unused-vars
+app.use((err, req, res, next) => {
+  console.error('[GlobalError]', err.message);
+  res.status(500).json({
+    success: false,
+    message: isProd ? '服务器内部错误' : (err.message || '未知错误')
+  });
+});
 
 // ==================== 静态前端托管 ====================
 // 前端构建产物 dist/ 由后端 express.static 直接提供，不需要单独前端服务器。
@@ -75,12 +105,56 @@ console.log('MQTT Broker URL:', systemConfig.getConfig().MQTT_URL);
 // ==================== WebSocket 服务器 ====================
 // 和 HTTP 共用同一个 http.Server，避免多进程端口冲突。
 const server = http.createServer(app);
+
+// 端口被占用，说明这台机器上已经有一个后端实例在跑（常见于 VS Code 终端里跑着一个、
+// 又用 start-backend.bat 起了第二个）。这时必须让新实例立刻退出，不能让它活着：
+// 它抢不到端口、不提供任何 HTTP 服务，却已经用 config/mqtt.js 里那个固定的
+// MQTT_CLIENT_ID 连上了 Broker——MQTT 协议规定同一个 client id 只允许一个活动连接，
+// 于是两个实例被 Broker 交替踢下线，指令页面下发时就会一直弹「MQTT 发送失败」。
+// 这种僵尸实例极难发现：进程列表里看着正常，start-backend.bat 又只杀占用本端口的
+// 进程，根本清不掉它。
+// 不能把这件事交给文件末尾的 uncaughtException 兜底：那里只记日志、不退出（对运行期
+// 的偶发异常是对的，控制系统可用性优先），但启动期的端口冲突性质完全不同——服务压根
+// 没起来，继续留着进程只会捣乱。
+//
+// 【注册位置不能挪】必须在下面 new WebSocketServer 之前注册。ws 库在
+// new WebSocketServer({ server }) 时会给 server 挂一个自己的 'error' 监听器，把错误
+// 转成 wss.emit('error')；而 wss 上没有 error 监听器，EventEmitter 对无人监听的
+// 'error' 会直接抛出。监听器按注册顺序执行，一旦这段挪到 WebSocketServer 之后，
+// ws 那个监听器会先抛异常、中断 emit 循环，这里就永远不会被调用（实测验证过）。
+server.on('error', (err) => {
+  if (err.code === 'EADDRINUSE') {
+    console.error(`端口 ${port} 已被占用，说明已经有一个后端实例在运行。`);
+    console.error('本次启动立即退出，避免两个实例争抢同一个 MQTT client id。');
+    console.error('要重启请先停掉正在运行的那个实例，或直接用 start-backend.bat（它会先杀掉占用该端口的进程）。');
+  } else {
+    console.error('[FATAL] HTTP 服务器启动失败:', err.message);
+  }
+  process.exit(1);
+});
+
 const wss = new WebSocketServer({ server, path: '/ws' });
 
 // 存储所有已连接的 WebSocket 客户端
 const wsClients = new Set();
 
 wss.on('connection', (ws, req) => {
+    // 校验 Origin：拒绝来自非白名单页面的 WebSocket 连接（防恶意网页跨站连入）。
+    const origin = req.headers.origin;
+    if (origin && !allowedOrigins.has(origin)) {
+        console.warn(`[WebSocket] 拒绝非法来源连接: ${origin}`);
+        ws.close(1008, '来源不允许');
+        return;
+    }
+    // 若配置了 API_TOKEN，WebSocket 通过 URL query 传递 ?token=xxx 校验。
+    if (API_TOKEN) {
+        const url = new URL(req.url, 'http://localhost');
+        if (url.searchParams.get('token') !== API_TOKEN) {
+            console.warn('[WebSocket] 拒绝未授权连接');
+            ws.close(1008, '未授权');
+            return;
+        }
+    }
     console.log(`[WebSocket] 客户端已连接, IP: ${req.socket.remoteAddress}`);
     wsClients.add(ws);
     // 首次连接立即发送当前设备状态，避免头部导航等待下一轮定时广播。
@@ -303,6 +377,12 @@ setTimeout(() => {
 // 启动安全联锁掉线监测（条件 6：传感器长时间无数据上报）。
 startSafetyMonitor();
 
+// 启动定时开关自检（到点按指令页设定的时刻自动开关水泵/加热）。
+// 是否真正执行由 service/schedule/config.js 的 enabled 和「控制模式=自动」共同决定。
+// 【别删这一行】定时开关模块没有别的入口，不在这里 start 的话定时器根本不跑，
+// 指令页上时间照样能设、能保存，但到点什么都不会发生，也不报任何错。
+startSchedule();
+
 // 启动自动判定定时器。service/autoJudgment/config.js 里 enabled=false 时这里只打一行
 // 日志就返回，不占用任何资源；手动判定（历史页勾选后点按钮）不受它影响，始终可用。
 startAutoJudgment();
@@ -311,6 +391,17 @@ startAutoJudgment();
 // NORMAL，但数据库里 reset_button 仍停留在重启前的 on，导致状态显示不一致、
 // 复位开关卡死无法通过页面操作恢复。
 initFaultStateFromDb();
+
+// ==================== 进程级异常兜底 ====================
+// 捕获未处理的同步异常和 Promise rejection，防止单次错误导致整个服务崩溃。
+// 控制系统可用性优先：记录错误后不退出进程，让服务继续运行。
+process.on('uncaughtException', (err) => {
+  console.error('[FATAL] 未捕获异常:', err.message);
+  console.error(err.stack);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('[UNHANDLED] 未处理的 Promise rejection:', reason);
+});
 
 server.listen(port, host, () => {
   console.log(`Server started: http://${host}:${port}`);

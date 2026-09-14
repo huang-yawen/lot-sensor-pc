@@ -23,7 +23,8 @@
  * 切回手动模式后定时项从页面消失，后端也同步停止执行，不会出现界面和行为不一致。
  *
  * 到点判定怎么做：自检周期取 500ms，到达设定时刻后在 TRIGGER_GRACE_MS（默认 120 秒）
- * 宽限窗口内的第一次自检就触发，并按"设备 + 指令项 + 日期"去重保证当天只动作一次。
+ * 宽限窗口内的第一次自检就触发，并按"设备 + 指令项 + 日期 + 设定时刻"去重保证当天
+ * 同一时刻只动作一次（当天改了时间会按新时间再触发；下发失败不算触发，下一轮重试）。
  * 不要求当前时刻与设定时刻严格相等——用户选时间到点保存有几秒延迟、某轮自检被慢
  * 查询跳过、服务短暂重启，都不会让设定时刻被永久错过；超过宽限窗口当天不再补触发，
  * 避免长时间停机后把很早以前的开/关动作在错误的时间补上。
@@ -72,9 +73,10 @@ let running = false
 const TRIGGER_GRACE_MS = 120 * 1000
 
 /**
- * 当天去重：key = `${设备号}:${指令项id}:${年-月-日}`，命中表示该定时项今天已触发过。
- * 按"天"而不是按"秒/分钟"去重：配合上面的"到点即触发 + 宽限窗口"，保证每条定时每天
- * 只动作一次。只存内存（量极小，进程重启即清空），开关水泵/加热本身是幂等动作。
+ * 当天去重：key = `${设备号}:${指令项id}:${年-月-日}:${设定时刻}`，命中表示该定时项
+ * 今天在这个设定时刻已触发过。配合上面的"到点即触发 + 宽限窗口"，保证同一个设定时刻
+ * 每天只动作一次；当天改了时间则按新时间重新触发。只存内存（量极小，进程重启即清空），
+ * 开关水泵/加热本身是幂等动作。
  */
 const lastRunDay = new Map()
 
@@ -231,19 +233,24 @@ async function tick() {
       if (elapsedMs < 0) continue                        // 还没到点
       if (elapsedMs > TRIGGER_GRACE_MS) continue         // 已过宽限窗口，今天不补
 
-      // 每条定时项每天只触发一次（按"设备 + 指令项 + 日期"去重）
+      // 同一个设定时刻每天只触发一次（按"设备 + 指令项 + 日期 + 设定时刻"去重）。
+      // key 里带上设定时刻：当天把时间改成别的值（现场反复调时间测试）会重新生效；
+      // 不带的话一条定时当天触发过一次，之后怎么改时间都不会再动作。
       const dayKey = `${now.getFullYear()}-${now.getMonth() + 1}-${now.getDate()}`
-      const dedupeKey = `${deviceNo || 'global'}:${node.id}:${dayKey}`
+      const dedupeKey = `${deviceNo || 'global'}:${node.id}:${dayKey}:${scheduled}`
       if (lastRunDay.has(dedupeKey)) continue
-      lastRunDay.set(dedupeKey, true)
 
       if (!await canTurnOnHeater(binding, deviceNo)) {
+        lastRunDay.set(dedupeKey, true)
         console.warn(`[Schedule] ${hhmmss} 「${node.t_name}」未执行：水泵未开启，不允许打开加热`)
         continue
       }
 
+      // 下发成功后才记"已触发"：MQTT 未连接时 setSwitch 会抛异常跳到下面的 catch，
+      // 这时还没记，宽限窗口内的下一轮自检会自动重试，不会当天直接作废。
       // 目标开关被从数据库删掉时只提醒一次，不影响其它定时项继续工作
       const done = await setSwitch(binding.field, node.t_name, binding.value, deviceNo, SOURCE)
+      lastRunDay.set(dedupeKey, true)
       if (done) {
         console.log(`[Schedule] ${hhmmss} 触发「${node.t_name}」-> ${binding.field}=${binding.value}`)
       } else {

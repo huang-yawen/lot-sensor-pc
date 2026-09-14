@@ -9,7 +9,7 @@
  *   controlHelpers / pidHeating / scheduleService / updateDirectConfigAndPublish 读取。
  */
 module.exports = {
-  enabled: true, // 安全联锁总开关；关掉后下面所有条件都不判（requirePumpBeforeHeater 除外）
+  enabled: false, // 安全联锁总开关；关掉后下面所有条件都不判（requirePumpBeforeHeater 除外）
 
   // ==================== 各条件开关（赛场临时停掉某一条用） ====================
   manualMode: false,          // 进入手动模式时强制关泵关热

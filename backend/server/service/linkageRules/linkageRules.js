@@ -475,20 +475,23 @@ async function evaluateLinkageRules(info) {
   // 把温度和流量两个指标放一起看，而不是各自独立判断。
   //   条件一：有任一温度超过上限、且流量本身正常 -> 关加热。流量正常说明
   //     读数可信、不是因为流量异常才显得"温度虚高"，可以放心认为真的够热了。
-  //   条件二：有任一温度未超上限、且流量又低于下限 -> 同时开加热、开泵。
-  //     流量太低时先把泵开起来保证水在流动，同时因为温度还没到上限，加热
-  //     可以继续开着。
-  // 这两个条件不互斥，如果两个温度读数一个超上限一个没超，两个条件可能同时
-  // 命中——此时以条件二（顺序在后）覆盖条件一的结果，因为代码顺序执行、
-  // 后面的赋值会覆盖前面的。
+  //   条件二：有任一温度未超上限、且流量又低于下限 -> 开泵。流量太低时先把泵开起来
+  //     保证水在流动。
+  //     同时只有进水、出水**两路都没超上限**才开加热：有一路已经超温时只开泵、不开加热。
+  //     原来写的是"任一路没超就开加热"，出水已经 50℃ 超上限、进水 30℃ 没超、流量偏低时
+  //     也会把加热打开，等于在已经超温的情况下继续加热。
+  // 两个条件不会同时命中：条件一要求流量正常（isFlowNormal，流量 >= 下限），条件二要求
+  // 流量 < 下限，二者互斥。
+  // 【加热部分会被 PID 挡掉】指令中心 pid_enabled 开着时，下面下发阶段会跳过所有加热
+  // 结论（加热归 PID 管），这条规则就只剩开泵有效，条件一完全不起作用。
   if (config.tempFlow === true) {
     const result = { pump: null, heater: null }
     const temps = [sensors.temp1, sensors.temp2].filter(v => v != null)
     if (temps.length > 0 && tempHigh != null) {
       if (temps.some(t => t > tempHigh) && flowNormal) result.heater = 'off'
       if (temps.some(t => t < tempHigh) && flowLow != null && sensors.flow != null && sensors.flow < flowLow) {
-        result.heater = 'on'
         result.pump = 'on'
+        if (temps.every(t => t < tempHigh)) result.heater = 'on'
       }
     }
     collect('tempFlow', result)

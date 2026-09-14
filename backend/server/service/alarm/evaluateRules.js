@@ -50,7 +50,10 @@ const { formatLocalDateTime } = require('../../utils/helper')
 const { isLockedByFault, isAnyLocked } = require('../faultStatus/faultStatus')
 // 六个阈值槽位（temp_high / temp_low / flow_low / flow_high / pressure_low / pressure_high）
 // 从指令页面 t_direct 实时读，统一走 controlShared 这一份，跟安全联锁、故障机、联动同源。
-const { getThresholdValue } = require('../controlShared/controlHelpers')
+const { getThresholdValue, getNumberValue } = require('../controlShared/controlHelpers')
+// 水泵预热时长跟故障状态机、安全联锁共用一份：指令中心 pump_warmup_ms 优先，没配才退回
+// FAULT_STATUS.pumpWarmupMs。这里只读这一个兜底值。
+const FAULT_CONFIG = require('../faultStatus/config')
 
 // ========== 赛场速改索引（要改什么 → 去哪） ==========
 //  关掉阈值告警      config.js enabled=false（指令页面上没有告警开关，就看这一处）
@@ -67,6 +70,8 @@ const { getThresholdValue } = require('../controlShared/controlHelpers')
 //                   flowHigh / flowLow / pressureHigh / pressureLow）
 //  某条规则要同时关水泵和加热  checkAlarms 里那条规则的 actions 写两项：
 //                   actions: [{ prefix: 'pump', value: 'off' }, { prefix: 'heater', value: 'off' }]
+//  规则要等水泵预热完成才判  条件里加 && s.pumpWarmedUp（预热时长：指令中心 pump_warmup_ms，
+//                   没配用 faultStatus/config.js 的 pumpWarmupMs，跟故障机、安全联锁共用一份）
 //  换温度/流量/压力是哪个字段  config/appSettings.js 的 SENSOR_FIELD_MAP
 //  加/改判定逻辑     下面 checkAlarms 函数（直接写 if + push）
 // ===================================================
@@ -82,6 +87,34 @@ const lastTriggered = new Map()
 const latestState = new Map()
 /** 告警事件总线，跟 faultStatus.js 里 fault 事件的用法一致，见文件底部 onAlarm。 */
 const events = new EventEmitter()
+/** 水泵启动预热计时：记录水泵"从关到开"的起始时间，水泵关闭则清空。
+ *  跟故障状态机、安全联锁是同一个做法，但各记各的——三个模块各自收消息，共用一份内存状态会互相清零。 */
+const pumpStartStateMap = new Map()
+
+/**
+ * 返回水泵已连续开启的时长（毫秒）；没开时返回 null。水泵每次从关变开时记一个起始时间戳，
+ * 之后每次调用返回"现在 - 起始时间"；水泵一关就把起始时间清掉，下次再开重新计时。
+ *
+ * 跟安全联锁 / 故障机的 trackPumpOnDuration 有一处不同：那边 pumpOn 是三态，消息里没带水泵
+ * 状态（null）时保留计时；本文件的 pumpOn 只有 true / false，没有 null。不过本文件判的是
+ * 跨消息累积的 latestState，某条消息没带水泵字段时会沿用上一次上报的值，不会因此把计时清零；
+ * 只有从来没上报过水泵状态，才会一直是 false、一直不计时。
+ * @param {string} key - latestState 用的设备 key（设备号为空时是 'default'）
+ * @param {boolean} pumpOn
+ */
+function trackPumpOnDuration(key, pumpOn) {
+  if (!pumpOn) {
+    pumpStartStateMap.delete(key)
+    return null
+  }
+  const now = Date.now()
+  let since = pumpStartStateMap.get(key)
+  if (since == null) {
+    since = now
+    pumpStartStateMap.set(key, since)
+  }
+  return now - since
+}
 
 /**
  * 取一条规则（或它的 require 前置条件）要监控的物理字段候选名。
@@ -156,6 +189,12 @@ async function readThreshold(slot, fallback, deviceNo) {
  *     s.pumpOn    水泵开着吗（true / false）
  *     s.heatOn    加热开着吗（true / false）
  *       注意跟安全联锁的 s.pumpOn 不一样：这里没上报过就是 false，不是 null。
+ *     s.pumpOnDurationMs  水泵已连续开启多久（毫秒，没开是 null）
+ *     s.pumpWarmedUp      水泵预热完成了吗（连续开满预热时长才是 true）
+ *       预热时长：指令中心 pump_warmup_ms 优先，没配用 FAULT_STATUS.pumpWarmupMs，都没有用 5000ms，
+ *       跟故障状态机、安全联锁共用同一份值。
+ *       现有六条规则都没用这两个字段；赛场要某条规则等水泵转稳了再判，就在它的条件里加
+ *       `&& s.pumpWarmedUp`，比如流量过低：if (CONFIG.flowLow !== false && s.pumpOn && s.pumpWarmedUp)
  *
  *   ctx —— 读阈值等参数：
  *     ctx.threshold('tempHigh')   阈值，指令页面优先、config.js 兜底，都没有是 null
@@ -424,10 +463,11 @@ async function evaluateRules(info) {
   // 读数、开关状态、六个阈值全部并发查完，不要一个一个串行查，
   // 免得每条上报都被十几次数据库往返拖慢。
   // 阈值：指令页面 t_direct 优先，指令项没配/没填值才退回 config.js。
-  const [temp1, temp2, flow, pressure, pumpOn, heatOn,
+  const [temp1, temp2, flow, pressure, pumpOn, heatOn, warmupMs,
     tempHigh, tempLow, flowHigh, flowLow, pressureHigh, pressureLow] = await Promise.all([
     readSensor('temp1'), readSensor('temp2'), readSensor('flow'), readSensor('pressure'),
     readSwitch('field1'), readSwitch('field2'),
+    getNumberValue('pump_warmup_ms', directDeviceNo, FAULT_CONFIG.pumpWarmupMs, 5000),
     readThreshold('tempHigh', CONFIG.temperatureHighThreshold, directDeviceNo),
     readThreshold('tempLow', CONFIG.temperatureLowThreshold, directDeviceNo),
     readThreshold('flowHigh', CONFIG.flowHighThreshold, directDeviceNo),
@@ -436,8 +476,13 @@ async function evaluateRules(info) {
     readThreshold('pressureLow', CONFIG.pressureLowThreshold, directDeviceNo),
   ])
 
+  // 水泵预热：每条消息都更新计时，不管有没有规则在用——否则赛场中途给某条规则加上
+  // s.pumpWarmedUp 时，计时是断的。
+  const pumpOnDurationMs = trackPumpOnDuration(deviceNo, pumpOn)
+  const pumpWarmedUp = pumpOnDurationMs != null && pumpOnDurationMs >= warmupMs
+
   // 把现场数据打包成 s，给 checkAlarms 用（字段含义见 checkAlarms 上方注释）
-  const s = { temp1, temp2, flow, pressure, pumpOn, heatOn }
+  const s = { temp1, temp2, flow, pressure, pumpOn, heatOn, pumpOnDurationMs, pumpWarmedUp }
   // ctx：阈值已经在上面并发取好，规则里 ctx.threshold('槽位') 直接拿，不再查库
   const thresholds = { tempHigh, tempLow, flowHigh, flowLow, pressureHigh, pressureLow }
   const ctx = {
