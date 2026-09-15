@@ -193,8 +193,8 @@ async function readThreshold(slot, fallback, deviceNo) {
  *     s.pumpWarmedUp      水泵预热完成了吗（连续开满预热时长才是 true）
  *       预热时长：指令中心 pump_warmup_ms 优先，没配用 FAULT_STATUS.pumpWarmupMs，都没有用 5000ms，
  *       跟故障状态机、安全联锁共用同一份值。
- *       现有六条规则都没用这两个字段；赛场要某条规则等水泵转稳了再判，就在它的条件里加
- *       `&& s.pumpWarmedUp`，比如流量过低：if (CONFIG.flowLow !== false && s.pumpOn && s.pumpWarmedUp)
+ *       流量、压力四条规则（规则3~6）都加了 `&& s.pumpWarmedUp`，要等水泵转稳了再判；
+ *       温度两条没加。赛场要让某条规则不等预热，把它条件里的 `&& s.pumpWarmedUp` 删掉即可。
  *
  *   ctx —— 读阈值等参数：
  *     ctx.threshold('tempHigh')   阈值，指令页面优先、config.js 兜底，都没有是 null
@@ -241,7 +241,7 @@ async function checkAlarms(s, ctx) {
         actual,
         threshold: tempLow,
         message: `${label} ${actual} < 下限 ${tempLow}`,
-        actions: [],
+        actions: [{ prefix: 'heater', value: 'on' }],
       })
       break
     }
@@ -249,7 +249,10 @@ async function checkAlarms(s, ctx) {
 
   // ── 规则3：循环流量过高 ──
   // 流量冲过上限通常是泵开得太猛，或者管路漏了阻力变小，先把泵关掉。
-  if (CONFIG.flowHigh !== false) {
+  // 水泵预热：泵刚启动时流量会冲一下再回落，必须等水泵连续开满预热时长（s.pumpWarmedUp）
+  // 才判，否则每次开泵都刷一条"流量过高"并把泵关掉。s.pumpWarmedUp 为 true 本身就要求
+  // 泵开着，所以泵关着时这条也不判（泵没开流量还高，交给传感器掉线/安全联锁那边管）。
+  if (CONFIG.flowHigh !== false && s.pumpWarmedUp) {
     const flowHigh = ctx.threshold('flowHigh')
     if (s.flow != null && flowHigh != null && s.flow > flowHigh) {
       triggers.push({
@@ -265,7 +268,8 @@ async function checkAlarms(s, ctx) {
 
   // ── 规则4：循环流量过低 ──
   // 只有水泵处于开启状态时，低流量才属于异常（避免水泵正常关闭时误报）。
-  if (CONFIG.flowLow !== false && s.pumpOn) {
+  // 水泵预热：泵刚启动时流量还在从 0 往上爬，要等预热完成（s.pumpWarmedUp）才判。
+  if (CONFIG.flowLow !== false && s.pumpOn && s.pumpWarmedUp) {
     const flowLow = ctx.threshold('flowLow')
     if (s.flow != null && flowLow != null && s.flow < flowLow) {
       triggers.push({
@@ -280,7 +284,9 @@ async function checkAlarms(s, ctx) {
   }
 
   // ── 规则5：管路压力过高 ──
-  if (CONFIG.pressureHigh !== false) {
+  // 水泵预热：泵启动瞬间管路会有一下压力冲击（水锤），要等预热完成（s.pumpWarmedUp）才判。
+  // 跟规则3 一样，s.pumpWarmedUp 隐含"泵开着"，泵关着时这条不判。
+  if (CONFIG.pressureHigh !== false && s.pumpWarmedUp) {
     const pressureHigh = ctx.threshold('pressureHigh')
     if (s.pressure != null && pressureHigh != null && s.pressure > pressureHigh) {
       triggers.push({
@@ -299,7 +305,8 @@ async function checkAlarms(s, ctx) {
   // 也可能只是泵没使上劲，这两种情况该做的事相反（前者要停、后者要加压），
   // 光看压力一个值分不出来，真正的漏水判定交给故障状态机⑥，这里只提示。
   // 泵关着时管路压力天然接近 0，不加 s.pumpOn 会一停泵就刷一条"压力过低"。
-  if (CONFIG.pressureLow !== false && s.pumpOn) {
+  // 水泵预热：泵刚启动时压力还没建立起来，要等预热完成（s.pumpWarmedUp）才判。
+  if (CONFIG.pressureLow !== false && s.pumpOn && s.pumpWarmedUp) {
     const pressureLow = ctx.threshold('pressureLow')
     if (s.pressure != null && pressureLow != null && s.pressure < pressureLow) {
       triggers.push({
@@ -308,7 +315,7 @@ async function checkAlarms(s, ctx) {
         actual: s.pressure,
         threshold: pressureLow,
         message: `压力 ${s.pressure} < 下限 ${pressureLow}`,
-        actions: [],
+        actions: [{ prefix: 'pump', value: 'off' }],
       })
     }
   }

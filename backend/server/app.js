@@ -234,7 +234,15 @@ const THROTTLED_TYPES = new Set(['sensor_data', 'behavior_data', 'error_data'])
 /** 各消息类型的定时器 */
 const throttleTimers = {}
 
+/** 各消息类型上次真正广播出去的时间（毫秒时间戳） */
+const lastBroadcastAt = {}
+
 // 按节流间隔广播一种消息类型；从 processedMessage 中拆出来，便于一条消息广播成多种类型。
+// 为什么不是"收到消息后固定等满一个间隔再推"：设备按 1 秒上报时，到达间隔会在 1 秒上下
+// 抖动，固定等满 1 秒的话两条消息很容易落进同一个窗口，前一条被后一条覆盖、页面少一帧
+// （实测 20 秒丢 3 帧，页面停 2 秒才动），而且每条数据都白白晚 1 秒才推出去。
+// 现在按"距上次广播过了多久"算：已满一个间隔就立刻推，没满只等剩下的那点时间。
+// 设备上报频率不超过节流间隔时一条都不丢；上报比间隔快时照样合并，只推最新一条。
 function broadcastThrottled(type, data) {
     // 非节流类型（如 unknown）直接广播。
     if (!THROTTLED_TYPES.has(type)) {
@@ -252,16 +260,19 @@ function broadcastThrottled(type, data) {
     // 更新缓存中的最新数据
     throttleCache[type] = data
 
-    // 如果该类型还没有定时器，启动一个
+    // 如果该类型还没有定时器，启动一个；等待时长 = 节流间隔 − 距上次广播已过去的时间，
+    // 已经超过一个间隔就是 0（下一轮事件循环立即推）
     if (!throttleTimers[type]) {
+        const wait = Math.max(0, interval - (Date.now() - (lastBroadcastAt[type] || 0)))
         throttleTimers[type] = setTimeout(() => {
             // 广播缓存中的最新数据
             if (throttleCache[type] !== undefined) {
                 broadcast(type, throttleCache[type])
+                lastBroadcastAt[type] = Date.now()
                 delete throttleCache[type]
             }
             delete throttleTimers[type]
-        }, interval)
+        }, wait)
     }
 }
 

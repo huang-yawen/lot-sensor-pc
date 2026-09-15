@@ -14,6 +14,9 @@ const { compute: computeMetrics } = require('../../service/computedMetrics/compu
 const { evaluateSpikeFilter } = require('../../service/dataQuality/spikeFilter')
 const { evaluateRelayStuck } = require('../../service/dataQuality/relayStuck')
 const { evaluateSensorInverted } = require('../../service/dataQuality/sensorInverted')
+const { runStep } = require('../runStep')
+
+const TAG = '[SensorRealtime]'
 
 const SENSOR_TOPIC = 'sensor_data'
 
@@ -99,62 +102,59 @@ async function handleMessage(topic, payload) {
     //      水泵恒流速（evaluatePumpVelocityControl）→ 定量停机（evaluateQuantityShutdown）：
     //      按目标温度/流速/流量调节水泵和加热。
     //   5. 派生指标计算（computeMetrics）：计算首页展示用的派生指标，不涉及硬件控制。
-    // 这几步共享同一个 try/catch：中间某一步抛异常，后面的步骤这一轮就不会再执行了
-    // （比如 evaluateSafety 出错，后面的自动控制、PID 都会被跳过）。排查问题时如果发现
-    // "控制逻辑好像没生效"，先看日志里前面有没有某一步先报错了。
-    try {
-        // 数据质量（跳变/毛刺过滤）：跳变值不直接入库，先进缓冲区等连续确认；判定为毛刺的
-        // 整批丢弃，判定为真实变化的按原顺序补写。flush 就是本轮真正该落库的行。
-        const spike = await evaluateSpikeFilter(info)
-        for (const row of spike.flush) await saveSensorData(row)
-        if (spike.triggers.length) info._spikeTriggers = spike.triggers
-        // 数据质量规则二：继电器触点粘连/控制失效——指令已关但传感器显示仍在工作时，
-        // 自动重发关闭指令尝试恢复，重试无效则判定硬件故障、提示人工断电检修。
-        const relayTriggers = await evaluateRelayStuck(info)
-        if (relayTriggers.length) info._relayStuckTriggers = relayTriggers
-        // 数据质量规则三：逆温差/传感器装反——加热开够久了出水反而比进水冷，判定两路接反，
-        // 提示检查硬件拓扑并暂停自动恒温控制（PID 被控量方向反了会正反馈超温）。
-        const invertedTriggers = await evaluateSensorInverted(info)
-        if (invertedTriggers.length) info._sensorInvertedTriggers = invertedTriggers
-        // 告警规则：按配置中心 ALARM_RULES 逐条判断，触发时写记录、可选自动联锁。
-        const alarms = await evaluateRules(info)
-        if (alarms.length) info._alarms = alarms
-        // 安全联锁：触发任一启用条件时关闭水泵和加热（自动模式），或仅记录告警（手动模式）。
-        const safetyTriggers = await evaluateSafety(info)
-        if (safetyTriggers.length) info._safetyTriggers = safetyTriggers
-        // 故障状态：加热模块故障/水泵故障/管道堵塞/管道漏水，触发时关闭水泵和加热并自动切回手动模式。
-        const faultTriggers = await evaluateFaultStatus(info)
-        if (faultTriggers.length) info._faultTriggers = faultTriggers
-        // 正常状况联动：自动模式下按 LINKAGE_RULES 里逐条勾选的规则自动启停水泵和加热。
-        const linkageActions = await evaluateLinkageRules(info)
-        if (linkageActions.length) info._linkageActions = linkageActions
-        // PID 恒温控制：仅接管加热这一个执行器，时间比例控制模拟 PWM 占空比。
-        const pidActions = await evaluatePidHeating(info)
-        if (pidActions.length) info._pidActions = pidActions
-        // PID 本周期加热时长：仅供指令页面展示，不影响控制。
-        const pidHeatingStatus = await getPidHeatingStatus(info)
-        if (pidHeatingStatus) info._pidHeating = pidHeatingStatus
-        // 水泵恒流速控制：仅接管水泵这一个执行器，滞环通断或占空比二选一。
-        const pumpVelocityActions = await evaluatePumpVelocityControl(info)
-        if (pumpVelocityActions.length) info._pumpVelocityActions = pumpVelocityActions
-        // 用入库的 c_time（而不是服务器处理消息的墙钟时间）换算成毫秒时间戳，定量停机和
-        // “需要计算的数据”两处按真实时间差积分流量时共用同一个基准，避免 MQTT 排队延迟/
-        // 设备时钟漂移让各处对同一段时间算出不同的时间差。
-        const cTimeMs = info.c_time ? new Date(String(info.c_time).replace(' ', 'T')).getTime() : NaN
-        const flowTimestampMs = Number.isFinite(cTimeMs) ? cTimeMs : Date.now()
-        // 定量停机：累计流量达到目标后关闭水泵和加热。
-        const qtyResult = await evaluateQuantityShutdown(info, flowTimestampMs)
-        if (qtyResult) info._quantityShutdown = qtyResult
-        // 定温停机：出水温度达到阈值后关闭水泵和加热（与定量停机对称）。
-        const tempResult = await evaluateTempShutdown(info)
-        if (tempResult) info._tempShutdown = tempResult
-        // "需要计算的数据"实时派生指标，仅用于展示，不参与硬件控制。
-        await computeMetrics(info, flowTimestampMs)
-        return info
-    } catch (err) {
-        console.error('[SensorRealtime] Error processing message:', err.message)
-        return null
-    }
+    // 每一步用 runStep 单独包一层：某一步抛异常（比如数据库抖一下写记录失败、MQTT 刚好断线
+    // 下发失败）只打一行"xxx出错，本步跳过"日志，后面的步骤照常执行——不能因为存库或
+    // 写记录失败，就让同一条消息里的安全联锁、故障保护跳过。排查"控制逻辑好像没生效"时，
+    // 先搜日志里有没有"出错，本步跳过"。
+    // 数据质量（跳变/毛刺过滤）：跳变值不直接入库，先进缓冲区等连续确认；判定为毛刺的
+    // 整批丢弃，判定为真实变化的按原顺序补写。flush 就是本轮真正该落库的行。
+    // 过滤本身出错时按"不过滤"处理（跟数据质量开关关着一样），这条数据原样入库。
+    const spike = await runStep(TAG, '数据质量-跳变过滤', () => evaluateSpikeFilter(info), { flush: [info], blocked: false, triggers: [] })
+    for (const row of spike.flush) await runStep(TAG, '保存传感器数据', () => saveSensorData(row), null)
+    if (spike.triggers.length) info._spikeTriggers = spike.triggers
+    // 数据质量规则二：继电器触点粘连/控制失效——指令已关但传感器显示仍在工作时，
+    // 自动重发关闭指令尝试恢复，重试无效则判定硬件故障、提示人工断电检修。
+    const relayTriggers = await runStep(TAG, '数据质量-继电器粘连', () => evaluateRelayStuck(info), [])
+    if (relayTriggers.length) info._relayStuckTriggers = relayTriggers
+    // 数据质量规则三：逆温差/传感器装反——加热开够久了出水反而比进水冷，判定两路接反，
+    // 提示检查硬件拓扑并暂停自动恒温控制（PID 被控量方向反了会正反馈超温）。
+    const invertedTriggers = await runStep(TAG, '数据质量-传感器装反', () => evaluateSensorInverted(info), [])
+    if (invertedTriggers.length) info._sensorInvertedTriggers = invertedTriggers
+    // 告警规则：按配置中心 ALARM_RULES 逐条判断，触发时写记录、可选自动联锁。
+    const alarms = await runStep(TAG, '安全告警', () => evaluateRules(info), [])
+    if (alarms.length) info._alarms = alarms
+    // 安全联锁：命中启用的条件就按规则动作（自动、手动模式都生效；故障锁定期间只记录不动开关）。
+    const safetyTriggers = await runStep(TAG, '安全联锁', () => evaluateSafety(info), [])
+    if (safetyTriggers.length) info._safetyTriggers = safetyTriggers
+    // 故障状态：六种硬故障，触发时断电水泵和加热、进入故障锁定，等人工复位。
+    const faultTriggers = await runStep(TAG, '故障状态', () => evaluateFaultStatus(info), [])
+    if (faultTriggers.length) info._faultTriggers = faultTriggers
+    // 正常状况联动：自动模式下按 LINKAGE_RULES 里逐条勾选的规则自动启停水泵和加热。
+    const linkageActions = await runStep(TAG, '联动控制', () => evaluateLinkageRules(info), [])
+    if (linkageActions.length) info._linkageActions = linkageActions
+    // PID 恒温控制：仅接管加热这一个执行器，时间比例控制模拟 PWM 占空比。
+    const pidActions = await runStep(TAG, 'PID恒温', () => evaluatePidHeating(info), [])
+    if (pidActions.length) info._pidActions = pidActions
+    // PID 本周期加热时长：仅供指令页面展示，不影响控制。
+    const pidHeatingStatus = await runStep(TAG, 'PID状态', () => getPidHeatingStatus(info), null)
+    if (pidHeatingStatus) info._pidHeating = pidHeatingStatus
+    // 水泵恒流速控制：仅接管水泵这一个执行器，滞环通断或占空比二选一。
+    const pumpVelocityActions = await runStep(TAG, '水泵恒流速', () => evaluatePumpVelocityControl(info), [])
+    if (pumpVelocityActions.length) info._pumpVelocityActions = pumpVelocityActions
+    // 用入库的 c_time（而不是服务器处理消息的墙钟时间）换算成毫秒时间戳，定量停机和
+    // “需要计算的数据”两处按真实时间差积分流量时共用同一个基准，避免 MQTT 排队延迟/
+    // 设备时钟漂移让各处对同一段时间算出不同的时间差。
+    const cTimeMs = info.c_time ? new Date(String(info.c_time).replace(' ', 'T')).getTime() : NaN
+    const flowTimestampMs = Number.isFinite(cTimeMs) ? cTimeMs : Date.now()
+    // 定量停机：累计流量达到目标后关闭水泵和加热。
+    const qtyResult = await runStep(TAG, '定量停机', () => evaluateQuantityShutdown(info, flowTimestampMs), null)
+    if (qtyResult) info._quantityShutdown = qtyResult
+    // 定温停机：出水温度达到阈值后关闭水泵和加热（与定量停机对称）。
+    const tempResult = await runStep(TAG, '定温停机', () => evaluateTempShutdown(info), null)
+    if (tempResult) info._tempShutdown = tempResult
+    // "需要计算的数据"实时派生指标，仅用于展示，不参与硬件控制。
+    await runStep(TAG, '派生指标计算', () => computeMetrics(info, flowTimestampMs), null)
+    return info
 }
 
 module.exports = {

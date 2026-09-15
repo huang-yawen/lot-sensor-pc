@@ -45,11 +45,13 @@ module.exports = {
 
   // ==================== 各规则开关（赛场临时停掉某一条用，只在本文件） ====================
   temperatureHigh: true,  // 温度过高（进水/出水任一路超上限）
-  temperatureLow: false,   // 温度过低（进水/出水任一路低于下限）
-  flowHigh: false,         // 循环流量过高
-  flowLow: false,          // 循环流量过低（只在水泵开着时判）
-  pressureHigh: false,     // 管路压力过高
-  pressureLow: false,      // 管路压力过低（只在水泵开着时判）
+  temperatureLow: true,   // 温度过低（进水/出水任一路低于下限）
+  flowHigh: false,         // 循环流量过高（水泵预热完成后才判）
+  flowLow: false,          // 循环流量过低（水泵预热完成后才判）
+  pressureHigh: true,     // 管路压力过高（水泵预热完成后才判）
+  pressureLow: true,      // 管路压力过低（水泵预热完成后才判）
+  // ↑ 流量/压力四条的水泵预热时长：指令中心"水泵预热宽限期(ms)"（pump_warmup_ms）优先，
+  //   没配才用 faultStatus/config.js 的 pumpWarmupMs，跟安全联锁、故障机、数据质量共用一份
 
   // ==================== 阈值兜底值（指令页面没配才用这里的） ====================
   // ★ 下面六个值里，只有 temperatureHighThreshold / flowLowThreshold / pressureHighThreshold

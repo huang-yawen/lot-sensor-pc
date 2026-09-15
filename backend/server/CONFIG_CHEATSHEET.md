@@ -62,13 +62,13 @@
 
 | 键 | 作用 | 读取方 | 关键子项 |
 |---|---|---|---|
-| `SAFETY_INTERLOCK` | 安全联锁：命中任一启用条件即强制关泵关热 + 写 `t_error_msg` | `safety/safetyInterlock.js` | 各条件布尔开关；`abnormalMax` 异常哨兵；`tempDiffThreshold` 兜底；`monitorIntervalMs`（**需重启**）；流量两条规则的水泵预热借用 `FAULT_STATUS.pumpWarmupMs` |
-| `FAULT_STATUS` | 六种硬故障 + 快照恢复 + 锁面板 | `faultStatus/faultStatus.js` | `pipeBlockage/outletBlockage/dryBurn/pumpIdle/pumpFault/pipeLeak` 开关；`pumpWarmupMs` 预热宽限（安全联锁流量规则也共用）；`dryBurnDurationMs/dryBurnMinRiseC`；`tempDiffThreshold` 兜底 |
+| `SAFETY_INTERLOCK` | 安全联锁：命中任一启用条件即强制关泵关热 + 写 `t_error_msg` | `safety/safetyInterlock.js` | 各条件布尔开关；`abnormalMax` 异常哨兵；`tempDiffThreshold` 兜底；`monitorIntervalMs`（**需重启**）；流量异常/压力异常/流量波动三条的水泵预热：指令中心 `pump_warmup_ms` 优先，没配借用 `FAULT_STATUS.pumpWarmupMs` |
+| `FAULT_STATUS` | 六种硬故障 + 快照恢复 + 锁面板 | `faultStatus/faultStatus.js` | `pipeBlockage/outletBlockage/dryBurn/pumpIdle/pumpFault/pipeLeak` 开关；`pumpWarmupMs` 预热宽限兜底（指令中心 `pump_warmup_ms` 优先；安全联锁、阈值告警、数据质量跳变过滤也共用）；`dryBurnDurationMs/dryBurnMinRiseC`；`tempDiffThreshold` 兜底 |
 | `LINKAGE_RULES` | 正常工况联动规则集（可任意勾选组合） | `linkageRules/linkageRules.js` | `pumpAlwaysOn` / `heaterHysteresis*` / `flowSingle` / `tempSingle` / `dualTemp` / `tempFlow` / `pressureFlow` / `tempPressure` 等逐条开关 |
 | `PID_HEATING` | PID 时间比例恒温（只接管加热）；真正启用看指令中心 `pid_enabled` | `pidHeating/pidHeating.js` | `kp/ki/kd`、`windowMs`、`deadband/derivativeFilter/dutyRampLimit/kff` 增强参数 |
 | `PUMP_VELOCITY_CONTROL` | 恒流速（`mode: hysteresis` 滞环 / `pid` 占空比） | `pumpVelocityControl/*` | `defaultTargetVelocity`、`minOnMs/minOffMs` 防短循环、`windowMs`、PID 系数 |
 | `QUANTITY_SHUTDOWN` | 累计流量到 `totalFlowTarget`(L) 自动停机 | `quantityShutdown/*` | `enabled`、`totalFlowTarget`（指令中心 `total_flow_target` 优先） |
-| `ALARM_RULES` | 阈值告警：温度 / 流量 / 压力六条上下限规则，超限写记录 + 弹提示，可选自动联锁 | `alarm/evaluateRules.js`（规则写在 `checkAlarms`）、`app.js`、mqtt handlers、errorHistory | `enabled` 总开关；`autoInterlockEnabled` 是否真的下发规则里的 `actions`（数组，可同时放水泵和加热）；`temperatureHigh/temperatureLow/flowHigh/flowLow/pressureHigh/pressureLow` 逐条开关；`xxxThreshold` 六个阈值兜底（指令中心 `temp_high` 等优先）；`cooldownMs` |
+| `ALARM_RULES` | 阈值告警：温度 / 流量 / 压力六条上下限规则，超限写记录 + 弹提示，可选自动联锁 | `alarm/evaluateRules.js`（规则写在 `checkAlarms`）、`app.js`、mqtt handlers、errorHistory | `enabled` 总开关；`autoInterlockEnabled` 是否真的下发规则里的 `actions`（数组，可同时放水泵和加热）；`temperatureHigh/temperatureLow/flowHigh/flowLow/pressureHigh/pressureLow` 逐条开关（流量/压力四条要等水泵预热完成才判，预热时长同 `pump_warmup_ms`）；`xxxThreshold` 六个阈值兜底（指令中心 `temp_high` 等优先）；`cooldownMs` |
 
 ## 智能判定
 

@@ -27,6 +27,11 @@ const CONFIG = require('./config')
 const { getNumberValue, readSensors, setSwitch, resolveDeviceNoStr } = require('../controlShared/controlHelpers')
 // 控制模式 + 开关读取复用 pidHeating.js 已导出的 readSwitchOn，跟 quantityShutdown.js 同一个来源。
 const { readSwitchOn } = require('../pidHeating/pidHeating')
+const { SINGLE_DEVICE_MODE } = require('../../config/appSettings')
+const { isAnyLocked, isLockedByFault } = require('../faultStatus/faultStatus')
+
+/** 锁定期间"暂不停机"的提示每次锁定只打一次，免得每条消息刷一行。 */
+const lockWarned = new Set()
 
 /** 每个设备是否已触发过停机（避免反复下发关闭指令）。 */
 const shutdownDone = new Map()
@@ -107,6 +112,16 @@ async function evaluateTempShutdown(info) {
 
   // 判断出水温度是否达到停机阈值
   if (sensors.temp2 >= target) {
+    // 故障锁定期间（故障机触发后、人工复位前）不动任何开关：不下发、不改指令页面，也不记
+    // "已停机"——等复位解锁后，下一条消息条件仍满足就照常停机。跟联动、PID、定时开关一致。
+    if (SINGLE_DEVICE_MODE ? isAnyLocked() : isLockedByFault(deviceNo)) {
+      if (!lockWarned.has(deviceNo)) {
+        lockWarned.add(deviceNo)
+        console.warn(`[TempShutdown] 设备 ${deviceNo || '全局'} 出水温度已达停机阈值，但系统处于故障锁定，暂不停机`)
+      }
+      return result
+    }
+    lockWarned.delete(deviceNo)
     // 执行停机动作：关泵关热
     await setSwitch('pump', '水泵', 'off', deviceNo, 'temp_shutdown')
     await setSwitch('heater', '加热', 'off', deviceNo, 'temp_shutdown')

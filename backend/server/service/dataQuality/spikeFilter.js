@@ -39,6 +39,8 @@
 //  改"连续几次确认"    config.js spikeFilter.confirmCount
 //  某个字段不监控      config.js spikeFilter.fields.<temp1|temp2|flow|pressure>=false
 //  零点附近误判太多    config.js spikeFilter.minBase 调大
+//  水泵预热时长        指令中心"水泵预热宽限期(ms)"（pump_warmup_ms），没配才用
+//                      faultStatus/config.js 的 pumpWarmupMs——跟安全联锁、告警、故障机共用一份
 //  跳变判定逻辑        detectJumps() 约 L80
 //  缓冲/确认/丢弃流程  evaluateSpikeFilter() 约 L120
 // ===================================================
@@ -48,8 +50,11 @@ const EventEmitter = require('events')
 // （跟 relayStuck.js、sensorInverted.js 各读自己那个子对象是同一个结构）。
 const CONFIG = require('./config')
 const RULE = CONFIG.spikeFilter
-// 读传感器语义槽位、解析设备号——统一走 controlShared，跟安全联锁/故障机同一份实现。
-const { readSensors, resolveDeviceNoStr } = require('../controlShared/controlHelpers')
+// 读传感器语义槽位、水泵开关状态、解析设备号——统一走 controlShared，跟安全联锁/故障机同一份实现。
+const { readSensors, readSwitchStates, resolveDeviceNoStr, getNumberValue } = require('../controlShared/controlHelpers')
+// 水泵预热时长跟安全联锁、故障状态机共用一份：指令中心 pump_warmup_ms 优先，没配才退回
+// FAULT_STATUS.pumpWarmupMs。这里只读它这一个兜底值，不读故障机的其它参数。
+const FAULT_CONFIG = require('../faultStatus/config')
 const { createCooldown } = require('../controlShared/cooldown')
 const { recordEvent } = require('../controlShared/recordEvent')
 const { formatLocalDateTime } = require('../../utils/helper')
@@ -77,6 +82,14 @@ const stateMap = new Map()
 const cooldown = createCooldown()
 /** 跳变事件总线，用法跟 evaluateRules.js 的 onAlarm、faultStatus.js 的 onFault 一致。 */
 const events = new EventEmitter()
+/** 水泵预热期内不判跳变的字段：水泵刚启动时流量从 0 往上爬、压力从 0 建立起来，
+ *  这段爬升每一条都比上一条变化很大，不跳过的话每次开泵都会被当成毛刺拦下、弹提示。
+ *  温度不受水泵启动影响，照常判。 */
+const PUMP_WARMUP_KEYS = ['flow', 'pressure']
+/** 水泵启动预热计时：记录水泵"从关到开"的起始时间，水泵关闭则清空。
+ *  跟安全联锁、故障状态机是同一个做法，但各记各的——几个模块各自收消息、各自复位，
+ *  共用一份内存状态会互相清零。 */
+const pumpStartStateMap = new Map()
 
 function getState(deviceNo) {
   if (!stateMap.has(deviceNo)) stateMap.set(deviceNo, { lastAccepted: null, pending: [] })
@@ -89,17 +102,53 @@ function monitoredTypes() {
 }
 
 /**
+ * 返回水泵已连续开启的时长（毫秒）；没开时返回 null。写法照搬安全联锁的 trackPumpOnDuration：
+ * 水泵每次从关变开时记一个起始时间戳，之后每次调用返回"现在 - 起始时间"；水泵一关就把
+ * 起始时间清掉，下次再开重新计时。
+ *
+ * @param {boolean|null} pumpOn - readSwitchStates 的三态读数：true=确认开，false=确认关，
+ *   null=这条消息没带水泵状态（不知道，不代表关闭）。只有明确收到 false 才清空计时；
+ *   null 时保留已有计时继续走，否则偶尔一条消息没带水泵状态，预热计时就会被清零重来。
+ */
+function trackPumpOnDuration(deviceNo, pumpOn) {
+  const key = deviceNo || 'global'
+  if (pumpOn === false) {
+    pumpStartStateMap.delete(key)
+    return null
+  }
+  if (pumpOn == null) {
+    const since = pumpStartStateMap.get(key)
+    return since == null ? null : Date.now() - since
+  }
+  const now = Date.now()
+  let since = pumpStartStateMap.get(key)
+  if (since == null) {
+    since = now
+    pumpStartStateMap.set(key, since)
+  }
+  return now - since
+}
+
+/**
  * 逐字段比较两组读数，返回发生跳变的字段列表。
  * @param {Object} base    参照读数（上次已确认值，或缓冲区第一条的可疑新水位）
  * @param {Object} current 本次读数
+ * @param {boolean} pumpWarmingUp 水泵是不是正在预热（已经开了、但还没开满预热时长）
  * @returns {Array} [{ type, prev, now, delta }]，delta 是变化比例（0.5 = 50%）
  *
- * 跳过判定的三种情况：①这一条没带这个字段（now 为 null）；②参照系里还没有这个字段
- * （prev 为 null，比如刚启动）；③参照值太接近 0（见 config.js minBase 的说明）。
+ * 跳过判定的四种情况：①这一条没带这个字段（now 为 null）；②参照系里还没有这个字段
+ * （prev 为 null，比如刚启动）；③参照值太接近 0（见 config.js minBase 的说明）；
+ * ④水泵预热中的流量、压力（见 PUMP_WARMUP_KEYS 的说明）。
+ *
+ * ④只在"预热中"跳过，水泵关着时照常判——跟安全联锁"必须预热完成才判"不一样：这里判的是
+ * 数据本身是不是毛刺，泵关着时流量/压力读数突然乱跳照样是毛刺，要拦。
+ * 预热中跳过的读数没有跳变，会照常入库并并进参照系，所以预热一结束参照值就是刚爬升到位的
+ * 读数，不会拿开泵前的 0 附近的值去比、预热一结束就误报。
  */
-function detectJumps(base, current) {
+function detectJumps(base, current, pumpWarmingUp) {
   const jumps = []
   for (const type of monitoredTypes()) {
+    if (pumpWarmingUp && PUMP_WARMUP_KEYS.includes(type.key)) continue
     const prev = base?.[type.key]
     const now = current?.[type.key]
     if (prev == null || now == null) continue
@@ -182,6 +231,13 @@ async function evaluateSpikeFilter(info) {
   const nowMs = Date.now()
   const flush = []
 
+  // 水泵预热：跟安全联锁同一个做法、同一份预热时长（指令中心 pump_warmup_ms 优先，
+  // 没配才用 FAULT_STATUS.pumpWarmupMs，两个都没有用 5000ms）。每条消息都要更新计时。
+  const { pumpOn } = await readSwitchStates(info)
+  const pumpOnDurationMs = trackPumpOnDuration(deviceNo, pumpOn)
+  const warmupMs = await getNumberValue('pump_warmup_ms', deviceNo, FAULT_CONFIG.pumpWarmupMs, 5000)
+  const pumpWarmingUp = pumpOnDurationMs != null && pumpOnDurationMs < warmupMs
+
   // ① 缓冲区里已经攒着待确认的数据：本条的作用是裁决"那个可疑新水位站不站得住"。
   if (state.pending.length) {
     const head = state.pending[0]
@@ -192,7 +248,7 @@ async function evaluateSpikeFilter(info) {
       console.warn(`[SpikeFilter] 缓冲超时，放行 ${state.pending.length} 条待确认数据（设备=${deviceNo || '全局'}）`)
       state.pending = []
       // 参照系已经换成刚放行的那批，本条继续走下面 ② 的常规判定。
-    } else if (detectJumps(head.values, values).length === 0) {
+    } else if (detectJumps(head.values, values, pumpWarmingUp).length === 0) {
       // 本条稳定在新水位上，攒进缓冲区。
       state.pending.push({ info, values, atMs: nowMs })
       if (state.pending.length < RULE.confirmCount) {
@@ -220,7 +276,7 @@ async function evaluateSpikeFilter(info) {
     return { flush, blocked: false, triggers: [] }
   }
 
-  const jumps = detectJumps(state.lastAccepted, values)
+  const jumps = detectJumps(state.lastAccepted, values, pumpWarmingUp)
   if (!jumps.length) {
     state.lastAccepted = mergeAccepted(state.lastAccepted, values)
     flush.push(info)

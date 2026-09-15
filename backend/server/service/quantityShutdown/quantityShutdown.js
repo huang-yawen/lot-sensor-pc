@@ -28,6 +28,11 @@ const CONFIG = require('./config')
 const { getNumberValue, readSensors, setSwitch, resolveDeviceNoStr } = require('../controlShared/controlHelpers')
 // 总开关同样是"指令中心优先、配置中心兜底"，直接复用 pidHeating 导出的 readSwitchOn。
 const { readSwitchOn } = require('../pidHeating/pidHeating')
+const { SINGLE_DEVICE_MODE } = require('../../config/appSettings')
+const { isAnyLocked, isLockedByFault } = require('../faultStatus/faultStatus')
+
+/** 锁定期间"暂不停机"的提示每次锁定只打一次，免得每条消息刷一行。 */
+const lockWarned = new Set()
 
 /** 每个设备的本轮累计流量（L）。 */
 const flowAccumulator = new Map()
@@ -100,6 +105,16 @@ async function evaluateQuantityShutdown(info, timestampMs = Date.now()) {
 
   // 判断是否达到停机条件
   if (accumulated >= target) {
+    // 故障锁定期间（故障机触发后、人工复位前）不动任何开关：不下发、不改指令页面，也不记
+    // "已停机"——等复位解锁后，下一条消息条件仍满足就照常停机。跟联动、PID、定时开关一致。
+    if (SINGLE_DEVICE_MODE ? isAnyLocked() : isLockedByFault(deviceNo)) {
+      if (!lockWarned.has(deviceNo)) {
+        lockWarned.add(deviceNo)
+        console.warn(`[QuantityShutdown] 设备 ${deviceNo || '全局'} 累计流量已达目标，但系统处于故障锁定，暂不停机`)
+      }
+      return result
+    }
+    lockWarned.delete(deviceNo)
     // 执行停机动作：关泵关热
     await setSwitch('pump', '水泵', 'off', deviceNo, 'quantity_shutdown')
     await setSwitch('heater', '加热', 'off', deviceNo, 'quantity_shutdown')

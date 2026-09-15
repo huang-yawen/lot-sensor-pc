@@ -9,18 +9,24 @@
  *   controlHelpers / pidHeating / scheduleService / updateDirectConfigAndPublish 读取。
  */
 module.exports = {
-  enabled: false, // 安全联锁总开关；关掉后下面所有条件都不判（requirePumpBeforeHeater 除外）
+  enabled: true, // 安全联锁总开关；关掉后下面所有条件都不判（requirePumpBeforeHeater 除外）
+
+  // 命中规则后是否执行 checkRules 里 actions 写的开关动作（下发 MQTT 给底层 + 改指令页面开关值）。
+  // 只有写 true 才下发；写 false、注释掉、删掉都算关：条件照常判、照常写记录和弹提示，
+  // 但一个开关都不发，记录里写"开关：未调整（下发开关已关闭，只记录）"。
+  executeActions: true,
 
   // ==================== 各条件开关（赛场临时停掉某一条用） ====================
-  manualMode: false,          // 进入手动模式时强制关泵关热
-  flowLow: false,             // 流量异常（低于下限/为0/掉线）；为0/低于下限要等水泵预热完成才判
-  pressureHigh: false,        // 压力异常（高于上限/为0/掉线）
-  tempHigh: false,            // 任一温度高于上限
-  tempDiff: false,            // 温差过大
-  flowVolatility: false,      // 流量剧烈波动（疑似水锤/湍流）；水泵预热完成后重新攒满窗口才判
-  // ↑ 这两条的水泵预热时长跟故障状态机共用：指令项 pump_warmup_ms 优先，没配用
+  // 只有写 true 才开；写 false、整行注释掉、删掉都算关
+  manualMode:false,          // 进入手动模式时强制关泵关热
+  flowLow: true,             // 流量异常（低于下限/为0/掉线）；为0/低于下限要等水泵预热完成才判
+  pressureHigh: true,        // 压力异常（高于上限/为0/掉线）；为0/高于上限要等水泵预热完成才判
+  tempHigh: true,            // 任一温度高于上限
+  tempDiff: true,            // 温差过大
+  flowVolatility: true,      // 流量剧烈波动（疑似水锤/湍流）；水泵预热完成后重新攒满窗口才判
+  // ↑ flowLow/pressureHigh/flowVolatility 三条的水泵预热时长跟故障状态机共用：指令项 pump_warmup_ms 优先，没配用
   //   faultStatus/config.js 的 pumpWarmupMs（本文件里没有单独的预热参数）
-  sensorOffline: false,        // 传感器掉线（消息缺字段 或 设备心跳超时）
+  sensorOffline: true,        // 传感器掉线（消息缺字段 或 设备心跳超时）
   // heaterWithoutPump: false,   // 未开水泵却开启加热,放弃
 
   // ==================== 参数（规则里用 ctx.config 取） ====================
@@ -31,7 +37,7 @@ module.exports = {
   // 源头拦截：开加热前必须先开水泵，否则拒绝这次开加热请求。
   // 这条不受上面 enabled 总开关约束——它不是"事后关掉"，而是
   // 在 updateDirectConfigAndPublish / pidHeating / scheduleService 三处下发前直接拦住。
-  requirePumpBeforeHeater: false,
+  requirePumpBeforeHeater: true,
 
   alarmCooldownMs: 30000,  // 同一个"设备+规则"多久内只触发一次（毫秒）
   showOnErrorPage: true,   // 故障记录页是否显示"安全联锁记录"表格（只控制前端展示）

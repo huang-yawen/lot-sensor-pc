@@ -33,6 +33,8 @@ const { HEARTBEAT_TIMEOUT } = require('../config/mqtt')
 const fs = require('fs')
 const path = require('path')
 const { getTopic, buildSwitchPayload } = require('../utils/protocol')
+const { SINGLE_DEVICE_MODE } = require('../config/appSettings')
+const { isAnyLocked, isLockedByFault } = require('../service/faultStatus/faultStatus')
 
 /** 设备多久没收到心跳判离线（毫秒），见 config/mqtt.js。 */
 function getOfflineTimeout() {
@@ -64,6 +66,9 @@ class DeviceManager {
 
     /** @type {Set<string>} 正在发送暂存指令的设备，避免心跳并发触发重复发送 */
     this._flushingDevices = new Set()
+
+    /** @type {Set<string>} 故障锁定期间"开关类暂存指令先不发"的提示已经打过的设备，避免每次心跳刷一行 */
+    this._lockHoldLogged = new Set()
 
     // 暂存指令会写入这个文件，不只存内存里的 _pendingCommands。这样即使后端服务
     // 重启（更新代码、意外崩溃），下次启动时 _loadPendingCommands 也能把没发完的
@@ -402,9 +407,26 @@ class DeviceManager {
 
     this._flushingDevices.add(deviceId)
 
-    console.log(`[DeviceManager] 设备 ${deviceId} 上线，发送 ${commands.length} 条暂存指令（每条发送两次）`)
     try {
-      for (const cmd of [...commands]) {
+      // 故障锁定期间（故障机触发后、人工复位前）开关类暂存指令留在队列里先不发：锁定期间约定
+      // 开关状态不能有任何变化，这时补发一条"开水泵"就等于绕过了锁定。复位解锁后下一次心跳
+      // 会照常补发。数值类指令项故障期间本来就允许改，照常补发。
+      const locked = SINGLE_DEVICE_MODE ? isAnyLocked() : isLockedByFault(deviceId)
+      const toSend = []
+      for (const cmd of commands) {
+        if (locked && await this._isSwitchConfig(cmd.config_id)) continue
+        toSend.push(cmd)
+      }
+      if (!locked) {
+        this._lockHoldLogged.delete(deviceId)
+      } else if (toSend.length < commands.length && !this._lockHoldLogged.has(deviceId)) {
+        this._lockHoldLogged.add(deviceId)
+        console.warn(`[DeviceManager] 设备 ${deviceId} 处于故障锁定，${commands.length - toSend.length} 条开关类暂存指令先不发，复位后再补发`)
+      }
+      if (toSend.length === 0) return
+
+      console.log(`[DeviceManager] 设备 ${deviceId} 上线，发送 ${toSend.length} 条暂存指令（每条发送两次）`)
+      for (const cmd of toSend) {
         const payload = await this._buildPayload(cmd.config_id, cmd.value)
         const oldValue = await getDirectValue({ config_id: cmd.config_id, d_no: deviceId })
         // payload 为 null 说明这条指令没配置 MQTT 字段（本地专用值），跳过下发直接保存。
@@ -437,7 +459,7 @@ class DeviceManager {
       }
       this.mqttClient.emit('pendingCommandsFlushed', {
         deviceId,
-        count: commands.length,
+        count: toSend.length,
       })
     } catch (err) {
       // 保留失败指令及其后的指令，等待下一次心跳或重连后重试。
@@ -448,6 +470,12 @@ class DeviceManager {
   }
 
   // ==================== 工具方法 ====================
+
+  /** 指令项是不是开关类（f_type=1）。指令项不存在时返回 false，交给后面 _buildPayload 照常报错。 */
+  async _isSwitchConfig(configId) {
+    const [rows] = await promisePool.query('SELECT f_type FROM t_direct_config WHERE id = ? LIMIT 1', [configId])
+    return rows.length > 0 && String(rows[0].f_type) === '1'
+  }
 
   /**
    * 根据 config_id 和 value 构建 MQTT 消息 payload

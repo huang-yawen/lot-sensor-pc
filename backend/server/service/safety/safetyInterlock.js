@@ -22,12 +22,13 @@
 
 // ========== 赛场速改索引（要改什么 → 去哪） ==========
 //  改判断条件 / 加规则 / 删规则   下面的 checkRules 函数，直接写 if + return
-//  临时停掉某一条               config.js 那条条件的开关 = false
+//  临时停掉某一条               config.js 那条条件的开关 = false（注释掉/删掉也算关，只有写 true 才开）
 //  关掉整个安全联锁             config.js enabled=false
+//  只判只记录、不下发开关动作     config.js executeActions=false（记录和弹提示照常）
 //  改阈值                       指令中心网页（温度上限/流量下限/压力上限…），不用重启
 //  "开加热必须先开泵"           config.js requirePumpBeforeHeater=true（不受总开关约束）
 //  掉线检测周期                 config.js monitorIntervalMs（改后重启）
-//  水泵预热时长（流量两条规则用） 指令中心 pump_warmup_ms，没配才用 faultStatus/config.js 的
+//  水泵预热时长（规则2/3/6 用）   指令中心 pump_warmup_ms，没配才用 faultStatus/config.js 的
 //                               pumpWarmupMs——跟故障状态机共用一份，改一处两边一起变
 // ===================================================
 const EventEmitter = require('events')
@@ -35,7 +36,7 @@ const CONFIG = require('./config')
 // 水泵预热时长跟故障状态机共用一份：指令中心 pump_warmup_ms 优先，没配才退回
 // FAULT_STATUS.pumpWarmupMs。这里只读它这一个兜底值，不读故障机的其它参数。
 const FAULT_CONFIG = require('../faultStatus/config')
-const { SENSOR_FIELD_MAP } = require('../../config/appSettings')
+const { SENSOR_FIELD_MAP, SINGLE_DEVICE_MODE } = require('../../config/appSettings')
 const { MQTT_TOPICS } = require('../../config/mqtt')
 const { getCurrentMode } = require('../directData/getControlMode')
 const {
@@ -51,6 +52,7 @@ const {
 } = require('../controlShared/controlHelpers')
 const { createCooldown } = require('../controlShared/cooldown')
 const { recordEvent } = require('../controlShared/recordEvent')
+const { isAnyLocked, isLockedByFault } = require('../faultStatus/faultStatus')
 
 /** 开关 preffix → 日志和告警里显示的中文名。没列到的直接用 preffix 本身，
  *  所以代码里写 { prefix: 'fan', value: 'on' } 也能用，不必回来改这张表。 */
@@ -167,9 +169,11 @@ function trackFlowVolatility(deviceNo, flow, pumpWarmedUp) {
  * ============================================================ */
 async function checkRules(s, ctx) {
   const triggers = []
+  // 每条规则的开关统一用 `=== true` 判断：config.js 里写了 true 才判，写 false、注释掉、
+  // 删掉都算关。不要改成 `!== false`，那样注释掉一条反而等于打开。
 
   // ── 规则1：进入手动模式（人工修复） ──
-  if (CONFIG.manualMode !== false && s != null && s.modeJustToManual) {
+  if (CONFIG.manualMode === true && s != null && s.modeJustToManual) {
     triggers.push({
       id: 'manual_mode',
       name: '进入手动模式（人工修复）',
@@ -182,7 +186,7 @@ async function checkRules(s, ctx) {
   // 水泵预热：水泵刚启动时流量还在从 0 往上爬，"流量=0""低于下限"这两种必须等水泵连续
   // 开满预热时长（s.pumpWarmedUp）才判，否则泵一开就被当场关掉，永远启动不起来。
   // "顶到异常哨兵值"不等预热：那是传感器掉线/短路，跟泵有没有转起来无关，照样立即关。
-  if (CONFIG.flowLow !== false && s != null && s.flow != null&&s.pumpOn==true) {
+  if (CONFIG.flowLow === true && s != null && s.flow != null&&s.pumpOn==true) {
     const abnormalMax = ctx.abnormalMax
     let detail = null
     if (s.flow === 0) {
@@ -198,12 +202,17 @@ async function checkRules(s, ctx) {
   }
 
   // ── 规则3：压力异常（高于上限/为0/掉线） ──
-  if (CONFIG.pressureHigh !== false && s != null && s.pressure != null) {
+  // 水泵预热：跟规则2 同一个写法。泵刚启动时压力还没建立（=0）、或者启动瞬间有压力冲击
+  // （高于上限），"压力=0""高于上限"这两种必须等水泵连续开满预热时长（s.pumpWarmedUp）才判；
+  // s.pumpWarmedUp 隐含"泵开着"，所以泵关着时压力=0 也不再判。
+  // "顶到异常哨兵值"不等预热：那是传感器掉线/短路，跟泵有没有转起来无关，照样立即关。
+  if (CONFIG.pressureHigh === true && s != null && s.pressure != null) {
     const abnormalMax = ctx.abnormalMax
     let detail = null
-    if (s.pressure === 0) detail = '压力=0'
-    else if (s.pressure >= abnormalMax) detail = `压力=${s.pressure}，顶到异常哨兵值 ${abnormalMax}`
-    else {
+    if (s.pressure === 0) {
+      if (s.pumpWarmedUp) detail = '压力=0'
+    } else if (s.pressure >= abnormalMax) detail = `压力=${s.pressure}，顶到异常哨兵值 ${abnormalMax}`
+    else if (s.pumpWarmedUp) {
       const max = await ctx.threshold('pressureHigh')
       if (max != null && s.pressure > max) detail = `压力=${s.pressure}，上限=${max}`
     }
@@ -213,7 +222,7 @@ async function checkRules(s, ctx) {
   }
 
   // ── 规则4：任一温度高于上限 ──
-  if (CONFIG.tempHigh !== false && s != null) {
+  if (CONFIG.tempHigh === true && s != null) {
     const max = await ctx.threshold('tempHigh')
     const abnormalMax = ctx.abnormalMax
     for (const [value, label] of [[s.temp1, '温度1（进水）'], [s.temp2, '温度2（出水）']]) {
@@ -232,7 +241,7 @@ async function checkRules(s, ctx) {
   // 温差阈值走安全联锁专用的指令项 safety_temp_diff_threshold，跟联动规则的
   // temp_diff_open、双温度融合的 dual_temp_diff、故障机的 temp_diff 各自独立，
   // 现场调参别调错了对应那一项。
-  if (CONFIG.tempDiff !== false && s != null && s.tempDiff != null) {
+  if (CONFIG.tempDiff === true && s != null && s.tempDiff != null) {
     const max = await ctx.number('safety_temp_diff_threshold', ctx.config.tempDiffThreshold, 10)
     if (s.tempDiff > max) {
       triggers.push({ id: 'temp_diff', name: '温差过大', detail: `温差=${s.tempDiff.toFixed(2)} > ${max}℃`, actions: [{ prefix: 'pump', value: 'off' }, { prefix: 'heater', value: 'off' }] })
@@ -244,7 +253,7 @@ async function checkRules(s, ctx) {
   // 所以哪怕这次读数本身正常，跟前几次差太多照样触发。
   // 水泵预热：水泵没开或还在预热时 trackFlowVolatility 不收读数并清空窗口，s.flowVolatility
   // 是 null；预热完成后要重新攒满窗口才开始判，启动时的流量爬升不会被当成波动。
-  if (CONFIG.flowVolatility !== false && s != null && s.pumpWarmedUp && s.flowVolatility != null) {
+  if (CONFIG.flowVolatility === true && s != null && s.pumpWarmedUp && s.flowVolatility != null) {
     const max = await ctx.number('flow_volatility', ctx.config.flowVolatilityThreshold, 20)
     if (s.flowVolatility > max) {
       triggers.push({ id: 'flow_volatility', name: '流量剧烈波动（疑似水锤/湍流）', detail: `最近${ctx.config.flowVolatilityWindow}个读数波动幅度=${s.flowVolatility.toFixed(2)} > ${max}`, actions: [{ prefix: 'pump', value: 'off' }, { prefix: 'heater', value: 'off' }] })
@@ -254,7 +263,7 @@ async function checkRules(s, ctx) {
   // ── 规则7：传感器掉线 ──
   // 两条掉线路径共用这一条规则、共用同一份冷却：①本条消息缺字段（s 有值，看 s.missingFields）；
   // ②整台设备心跳超时、根本没消息进来（定时器路径，s=null）。任一条先触发，冷却期内另一条不会重复关。
-  if (CONFIG.sensorOffline !== false) {
+  if (CONFIG.sensorOffline === true) {
     if (s == null) {
       // 定时器路径：设备完全没消息，返回固定动作
       triggers.push({ id: 'sensor_offline', name: '传感器掉线', detail: '', actions: [{ prefix: 'pump', value: 'off' }, { prefix: 'heater', value: 'off' }] })
@@ -265,7 +274,7 @@ async function checkRules(s, ctx) {
 
   // ── 规则8：未开水泵却开启加热 ──
   // 只在两个开关状态都明确上报时才判，避免纯传感器消息（不带行为字段）误触发。
-  if (CONFIG.heaterWithoutPump !== false && s != null && s.heatOn === true && s.pumpOn === false) {
+  if (CONFIG.heaterWithoutPump === true && s != null && s.heatOn === true && s.pumpOn === false) {
     triggers.push({ id: 'heater_without_pump', name: '未开水泵却开启加热', detail: '水泵=关，加热=开', actions: [{ prefix: 'pump', value: 'off' }, { prefix: 'heater', value: 'off' }] })
   }
   return triggers
@@ -275,6 +284,11 @@ async function checkRules(s, ctx) {
  * 一条规则命中之后要做的全部事情：冷却判断 → 按 actions 下发动作 → 写故障记录 → 广播。
  * 冷却期内直接返回 null，不重复下发也不重复记录。
  * actions 里写了几个开关就下发几个，每个单独 try/catch，一个失败不影响另一个。
+ *
+ * 故障锁定期间（故障状态机触发后、人工复位前）：不下发任何开关（开、关都不发）、不改指令
+ * 页面，只照常写记录和广播。故障机触发时已经断电，锁定期间整个系统约定"开关状态不再有
+ * 任何变化"，复位时按故障前快照恢复——安全联锁这时再去改开关，页面会跟快照对不上，
+ * 复位后执行器也可能不按故障前状态重启。跟告警联锁、继电器粘连重发的锁定处理一致。
  * ============================================================ */
 async function fire(rule, deviceNo, detail, actions) {
   const cooldownKey = `${deviceNo || 'global'}:${rule.id}`
@@ -285,7 +299,16 @@ async function fire(rule, deviceNo, detail, actions) {
   // done 只收下发成功的开关（决定 interlocked）；changes 每个开关都收一段，拼进记录。
   const done = []
   const changes = []
-  for (const { prefix, value } of actions || []) {
+  const locked = SINGLE_DEVICE_MODE ? isAnyLocked() : isLockedByFault(deviceNo)
+  if (locked && (actions || []).length > 0) {
+    console.warn(`[SafetyInterlock] ${rule.name}：系统处于故障锁定，跳过开关动作（只写记录），设备 ${deviceNo || '全局'}`)
+  }
+  // config.js 的 executeActions 没写 true：actions 一个都不下发（不发 MQTT、不改指令页面），只写记录和弹提示。
+  const actionsOff = CONFIG.executeActions !== true
+  if (!locked && actionsOff && (actions || []).length > 0) {
+    console.warn(`[SafetyInterlock] ${rule.name}：executeActions 已关闭，跳过开关动作（只写记录），设备 ${deviceNo || '全局'}`)
+  }
+  for (const { prefix, value } of (locked || actionsOff) ? [] : (actions || [])) {
     const label = SWITCH_LABELS[prefix] || prefix
     try {
       const result = await setSwitch(prefix, label, value, deviceNo, 'interlock')
@@ -309,7 +332,11 @@ async function fire(rule, deviceNo, detail, actions) {
   // 箭头左边是动作前指令页面上的开关状态，右边是本次下发的状态。
   const handled = (actions || []).length === 0
     ? '开关：未调整（仅记录）'
-    : `开关：${changes.join('，')}`
+    : locked
+      ? '开关：未调整（系统处于故障锁定，已跳过开关动作）'
+      : actionsOff
+        ? '开关：未调整（下发开关已关闭，只记录）'
+        : `开关：${changes.join('，')}`
   await recordEvent({
     deviceNo,
     message: [rule.name, handled, detail].filter(Boolean).join('｜'),
@@ -404,7 +431,7 @@ async function evaluateSafety(info) {
  *  拿到掉线动作处理（跟"消息缺字段"共用同一份冷却）。 */
 async function monitorOffline() {
   if (CONFIG.enabled !== true) return
-  if (CONFIG.sensorOffline === false) return
+  if (CONFIG.sensorOffline !== true) return
 
   let mqttClient
   try {

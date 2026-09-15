@@ -38,10 +38,10 @@
  */
 
 // ========== 赛场速改索引（要改什么 → 去哪） ==========
-//  关掉故障保护         config.js enabled=false（或逐条关 pipeBlockage/dryBurn/pumpIdle/pumpFault/pipeLeak/...）
+//  关掉故障保护         config.js enabled=false（或逐条关 pipeBlockage/dryBurn/pumpIdle/pumpFault/pipeLeak/...；注释掉/删掉也算关，只有写 true 才开）
 //  改干烧计时/温差等     config.js（dryBurnDurationMs/dryBurnMinRiseC/tempDiffThreshold/pumpWarmupMs）
 //  改压力/流量上下限等阈值 指令中心 t_direct，不在本文件
-//  六种故障怎么判        detectFault() 约 L196（干烧另有 checkDryBurn() 约 L166）
+//  六种故障怎么判        checkFaults(s, ctx)（现场数据 s 和阈值 ctx 在 detectFault() 里组装；干烧另有 checkDryBurn()）
 //  触发后做什么          triggerFault() 约 L312
 //  复位按钮拨回后恢复    handleResetButtonOff() 约 L384
 //  每条消息的入口        evaluateFaultStatus() 约 L480
@@ -283,8 +283,9 @@ function checkDryBurn(deviceNo, heatOn, tempOut, faultConfig) {
 // }
 
 /**
- * 主评估：检测六种故障，按优先级取最高的一个返回。
- * 多故障同时命中时，只触发优先级最高的那个（避免一份报警里塞六种故障）。
+ * 主评估：先把这条上报整理成现场数据 s、把本轮阈值和判定参数整理成 ctx，再调
+ * checkFaults(s, ctx) 逐条判六种故障，多个同时命中时只取优先级最高的那个返回
+ * （避免一份报警里塞六种故障）。写法跟安全联锁 evaluateSafety → checkRules 一致。
  *
  * @returns {Object|null} { id, code, priority, name, detail } 或 null
  */
@@ -306,12 +307,12 @@ async function detectFault(info, deviceNo, faultConfig) {
     getNumberValue('dry_burn_min_rise', deviceNo, faultConfig.dryBurnMinRiseC, 0.1),
   ])
 
-  // 水泵开启满 warmupMs 才算"预热完成"，②④⑤⑥四条故障都要求预热完成才判断，
+  // 水泵开启满 warmupMs 才算"预热完成"，①②④⑤⑥都要求预热完成才判断，
   // 避免水泵刚启动、流量/温差还没稳定的瞬间被误判。
   const pumpWarmedUp = pumpOnDurationMs != null && pumpOnDurationMs >= warmupMs
 
-  // 把本轮实际生效的判定参数合进一份配置，交给下面的同步判定函数用，
-  // 这样那些函数不用改签名、也不用各自再去读一次指令中心。
+  // 把本轮实际生效的判定参数合进一份配置，交给 checkDryBurn 用，
+  // 这样它不用改签名、也不用再去读一次指令中心。
   const effectiveConfig = { ...faultConfig, pumpWarmupMs: warmupMs, dryBurnDurationMs, dryBurnMinRiseC }
   // 温差阈值：指令中心配置了"温差阈值"指令项就优先用指令中心的（跟其余阈值一样，
   // 改后需重启后端）；指令中心没配置时才退回配置中心 FAULT_STATUS.tempDiffThreshold
@@ -320,64 +321,134 @@ async function detectFault(info, deviceNo, faultConfig) {
     ? tempDiffFromDirect
     : (Number.isFinite(faultConfig.tempDiffThreshold) ? faultConfig.tempDiffThreshold : 3)
 
+  // 把现场数据打包成 s，给 checkFaults 用
+  const s = {
+    flow: sensors.flow,
+    pressure: sensors.pressure,
+    temp1: sensors.temp1,
+    temp2: sensors.temp2,
+    tempDiff: getTempDiff(sensors),
+    pumpOn: states.pumpOn,
+    heatOn: states.heatOn,
+    pumpOnDurationMs,
+    pumpWarmedUp,
+  }
+  // 本轮用到的阈值和判定参数都已经在上面一次性读好，ctx 里直接是数值，规则里不用 await
+  const ctx = {
+    deviceNo,
+    config: effectiveConfig,
+    flowLow,
+    flowHigh,
+    pressureLow,
+    pressureHigh,
+    tempDiffThreshold,
+    dryBurnDurationMs,
+    dryBurnMinRiseC,
+  }
+
+  // 调 checkFaults 拿到本次命中的所有故障
+  const triggers = checkFaults(s, ctx)
+
+  if (triggers.length === 0) return null
+
+  // 按优先级排序，取最高的那个
+  triggers.sort((a, b) => a.priority - b.priority)
+  return triggers[0]
+}
+
+/* ============================================================
+ * ★★★ 赛场改这里：六种故障的判定规则 ★★★
+ * ============================================================
+ * 一个故障命中后 push 进 triggers：{ id, code, priority, name, detail }
+ *   id        故障编号（也作故障记录里的 code，errorTypeNames.js 据此显示中文名）
+ *   code      需求文档里的编号（①②③…），写进记录文案
+ *   priority  优先级，数字越小越优先；同时命中多个时只处理最小的那个
+ *   name      故障名称（故障记录里显示）
+ *   detail    原因说明（字符串，写进故障记录详情）
+ * 命中后固定做"保存快照 → 断电水泵和加热 → 进故障态 → 复位按钮拨开"，见 triggerFault，
+ * 不需要在这里写动作。
+ *
+ * 参数说明：
+ *   s —— 这一条上报解析出来的现场数据：
+ *     s.flow             流量              s.pressure    压力
+ *     s.temp1            进水温度          s.temp2       出水温度
+ *     s.tempDiff         温差（两路温度缺一个就是 null）
+ *     s.pumpOn           水泵开着吗（true / false / null=这条消息没带这个字段）
+ *     s.heatOn           加热开着吗（同上）
+ *     s.pumpOnDurationMs 水泵已连续开启多久（毫秒，没开是 null）
+ *     s.pumpWarmedUp     水泵预热完成了吗（连续开满预热时长才是 true）
+ *                        预热时长：指令中心 pump_warmup_ms 优先，没配用 config.js 的 pumpWarmupMs
+ *
+ *   ctx —— 本轮已经读好的阈值和判定参数（都是数值，指令中心没配置的阈值是 null）：
+ *     ctx.flowLow / ctx.flowHigh           流量下限 / 上限
+ *     ctx.pressureLow / ctx.pressureHigh   压力下限 / 上限
+ *     ctx.tempDiffThreshold  故障⑤温差阈值（指令中心 temp_diff 优先，没配用 config.js 的 tempDiffThreshold）
+ *     ctx.dryBurnDurationMs  干烧判定时长（毫秒）  ctx.dryBurnMinRiseC  干烧最小升温（℃）
+ *     ctx.deviceNo           当前设备号
+ *     ctx.config             config.js 合上本轮生效参数后的配置（给 checkDryBurn 用）
+ * ============================================================ */
+function checkFaults(s, ctx) {
   const triggers = []
+  // 每种故障的开关统一用 `=== true` 判断：config.js 里写了 true 才判，写 false、注释掉、
+  // 删掉都算关。不要改成 `!== false`，那样注释掉一条反而等于打开。
 
   // ① 进水口/管道堵塞：水泵预热完成后压力 < 下限 或 > 上限（水泵没开/刚启动时压力
   // 读数不代表真实运行状态，前置条件跟②出水口堵塞保持一致）
-  if (faultConfig.pipeBlockage !== false && pumpWarmedUp && sensors.pressure != null) {
-    if ((pressureLow != null && sensors.pressure < pressureLow)
-      || (pressureHigh != null && sensors.pressure > pressureHigh)) {
+  if (CONFIG.pipeBlockage === true && s.pumpWarmedUp && s.pressure != null) {
+    if ((ctx.pressureLow != null && s.pressure < ctx.pressureLow)
+      || (ctx.pressureHigh != null && s.pressure > ctx.pressureHigh)) {
       triggers.push({
         id: 'pipe_blockage', code: '①', priority: 2,
         name: '进水口/管道堵塞',
-        detail: `压力=${sensors.pressure}${pressureLow != null ? `，下限=${pressureLow}` : ''}${pressureHigh != null ? `，上限=${pressureHigh}` : ''}`,
+        detail: `压力=${s.pressure}${ctx.pressureLow != null ? `，下限=${ctx.pressureLow}` : ''}${ctx.pressureHigh != null ? `，上限=${ctx.pressureHigh}` : ''}`,
       })
     }
   }
 
   // ② 出水口堵塞：水泵预热完成后流量 < 下限（水泵刚启动、没开，流量本来就该是 0，不算故障）
-  if (faultConfig.outletBlockage !== false && pumpWarmedUp && sensors.flow != null && flowLow != null && sensors.flow < flowLow) {
+  if (CONFIG.outletBlockage === true && s.pumpWarmedUp && s.flow != null && ctx.flowLow != null && s.flow < ctx.flowLow) {
     triggers.push({
       id: 'outlet_blockage', code: '②', priority: 5,
       name: '出水口堵塞',
-      detail: `流量=${sensors.flow}，下限=${flowLow}`,
+      detail: `流量=${s.flow}，下限=${ctx.flowLow}`,
     })
   }
 
   // ③ 干烧：加热开启后温度长时间不变化。盯进水还是出水由 TEMP_SOURCES.dryBurn 决定。
-  const dryBurnTemp = sensors[TEMP_SOURCES.dryBurn]
-  if (faultConfig.dryBurn !== false && checkDryBurn(deviceNo, states.heatOn, dryBurnTemp, effectiveConfig)) {
-    const durationMs = dryBurnDurationMs
+  // 注意 checkDryBurn 带计时状态（基线温度 + 起始时间），必须放在开关判断后面短路调用：
+  // 干烧开关关着时不调用、不更新基线，跟改写前完全一致。
+  const dryBurnTemp = s[TEMP_SOURCES.dryBurn]
+  if (CONFIG.dryBurn === true && checkDryBurn(ctx.deviceNo, s.heatOn, dryBurnTemp, ctx.config)) {
     triggers.push({
       id: 'dry_burn', code: '③', priority: 1,
       name: '干烧',
-      detail: `加热已开启超过 ${Math.round(durationMs / 1000)} 秒，${TEMP_SOURCE_LABELS[TEMP_SOURCES.dryBurn]}=${dryBurnTemp} 无明显上升`,
+      detail: `加热已开启超过 ${Math.round(ctx.dryBurnDurationMs / 1000)} 秒，${TEMP_SOURCE_LABELS[TEMP_SOURCES.dryBurn]}=${dryBurnTemp} 无明显上升`,
     })
   }
 
   // 【干烧新增候选A】加热开启但流量 < 下限（无水流通过）。启用时把上面 checkDryBurnByFlow
-  // 放开、这里也放开（复用 faultConfig.dryBurn 总开关和 flowLow，已在上面取到）。
-  // if (faultConfig.dryBurn !== false && checkDryBurnByFlow(states.heatOn, sensors.flow, flowLow)) {
+  // 放开、这里也放开（复用 CONFIG.dryBurn 总开关和 ctx.flowLow）。
+  // if (CONFIG.dryBurn === true && checkDryBurnByFlow(s.heatOn, s.flow, ctx.flowLow)) {
   //   triggers.push({
   //     id: 'dry_burn', code: '③', priority: 1,
   //     name: '干烧',
-  //     detail: `加热已开启，但流量=${sensors.flow} 低于下限=${flowLow}（疑似无水流通过）`,
+  //     detail: `加热已开启，但流量=${s.flow} 低于下限=${ctx.flowLow}（疑似无水流通过）`,
   //   })
   // }
 
   // 【干烧新增候选B】加热开启超过2分钟，T1/T2 均无上升趋势。启用时把上面
   // dryBurnNoRiseStateMap、checkDryBurnDualNoRise() 一起放开；120000ms 和 minRise 是草稿值，
   // 赛场定下来后可以改成常量或接指令中心（参照 tempDiff 的"指令中心优先、配置中心兜底"）。
-  // if (faultConfig.dryBurn !== false && checkDryBurnDualNoRise(deviceNo, states.heatOn, sensors.temp1, sensors.temp2, 120000, dryBurnMinRiseC)) {
+  // if (CONFIG.dryBurn === true && checkDryBurnDualNoRise(ctx.deviceNo, s.heatOn, s.temp1, s.temp2, 120000, ctx.dryBurnMinRiseC)) {
   //   triggers.push({
   //     id: 'dry_burn', code: '③', priority: 1,
   //     name: '干烧',
-  //     detail: `加热已开启超过120秒，T1=${sensors.temp1}、T2=${sensors.temp2} 均无明显上升`,
+  //     detail: `加热已开启超过120秒，T1=${s.temp1}、T2=${s.temp2} 均无明显上升`,
   //   })
   // }
 
   // ④ 水泵空转：水泵预热完成，流量 = 0
-  if (faultConfig.pumpIdle !== false && pumpWarmedUp && sensors.flow === 0) {
+  if (CONFIG.pumpIdle === true && s.pumpWarmedUp && s.flow === 0) {
     triggers.push({
       id: 'pump_idle', code: '④', priority: 4,
       name: '水泵空转',
@@ -386,19 +457,18 @@ async function detectFault(info, deviceNo, faultConfig) {
   }
 
   // ⑤ 水泵故障：水泵预热完成后，进出水温差还是 > 阈值——水泵在转，但进出口温度拉不开
-  //    差、或差得离谱，多半是泵没真正打水。温差用共用的 getTempDiff 算（进水或出水读数
-  //    缺一个就返回 null，`diff != null` 一并挡掉，不拿 NaN 比阈值）。这里的 tempDiffThreshold
-  //    是**故障机自己的**那一个：指令中心配了 temp_diff 指令项就用它，没配才退回
-  //    FAULT_STATUS.tempDiffThreshold（见上方 tempDiffThreshold 的取法）。安全联锁的
-  //    "温差过大"用的是 safety_temp_diff_threshold、联动"加热滞回带通断"③号短路用的是
-  //    temp_diff_open、联动"双温度融合"用的是 dual_temp_diff，四个各自独立，不是同一个。
-  if (faultConfig.pumpFault !== false && pumpWarmedUp && tempDiffThreshold != null) {
-    const diff = getTempDiff(sensors)
-    if (diff != null && diff > tempDiffThreshold) {
+  //    差、或差得离谱，多半是泵没真正打水。s.tempDiff 进水或出水读数缺一个就是 null，
+  //    `!= null` 一并挡掉，不拿 NaN 比阈值。这里的 ctx.tempDiffThreshold 是**故障机自己的**
+  //    那一个：指令中心配了 temp_diff 指令项就用它，没配才退回 FAULT_STATUS.tempDiffThreshold
+  //    （见 detectFault 里 tempDiffThreshold 的取法）。安全联锁的"温差过大"用的是
+  //    safety_temp_diff_threshold、联动"加热滞回带通断"③号短路用的是 temp_diff_open、
+  //    联动"双温度融合"用的是 dual_temp_diff，四个各自独立，不是同一个。
+  if (CONFIG.pumpFault === true && s.pumpWarmedUp && ctx.tempDiffThreshold != null) {
+    if (s.tempDiff != null && s.tempDiff > ctx.tempDiffThreshold) {
       triggers.push({
         id: 'pump_fault', code: '⑤', priority: 3,
         name: '水泵故障',
-        detail: `进出水温差=${diff.toFixed(2)} > 阈值=${tempDiffThreshold}`,
+        detail: `进出水温差=${s.tempDiff.toFixed(2)} > 阈值=${ctx.tempDiffThreshold}`,
       })
     }
   }
@@ -408,24 +478,20 @@ async function detectFault(info, deviceNo, faultConfig) {
   // 同时泄漏点保不住压，压力显著降低甚至归零。两个条件同时满足才判定为漏水
   // （只有流量大不一定是漏水，比如阀门开大了；只有压力低也不一定是，比如水泵功率不足）。
   // flowHigh/pressureLow 都从指令中心实时读取，跟其余阈值同口径，改后即时生效。
-  if (faultConfig.pipeLeak !== false && pumpWarmedUp && sensors.flow != null && flowHigh != null && sensors.flow > flowHigh) {
-    const pressureAbnormal = sensors.pressure == null
-      || sensors.pressure === 0
-      || (pressureLow != null && sensors.pressure < pressureLow)
+  if (CONFIG.pipeLeak === true && s.pumpWarmedUp && s.flow != null && ctx.flowHigh != null && s.flow > ctx.flowHigh) {
+    const pressureAbnormal = s.pressure == null
+      || s.pressure === 0
+      || (ctx.pressureLow != null && s.pressure < ctx.pressureLow)
     if (pressureAbnormal) {
       triggers.push({
         id: 'pipe_leak', code: '⑥', priority: 2.5,
         name: '管道漏水',
-        detail: `流量=${sensors.flow} > 上限=${flowHigh}，压力=${sensors.pressure ?? '无读数'}${pressureLow != null ? `，下限=${pressureLow}` : ''}`,
+        detail: `流量=${s.flow} > 上限=${ctx.flowHigh}，压力=${s.pressure ?? '无读数'}${ctx.pressureLow != null ? `，下限=${ctx.pressureLow}` : ''}`,
       })
     }
   }
 
-  if (triggers.length === 0) return null
-
-  // 按优先级排序，取最高的那个
-  triggers.sort((a, b) => a.priority - b.priority)
-  return triggers[0]
+  return triggers
 }
 
 /* ============================================================

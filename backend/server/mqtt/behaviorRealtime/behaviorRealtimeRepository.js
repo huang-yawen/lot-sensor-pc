@@ -5,6 +5,8 @@ const { saveMappedData, resolveDeviceNo } = require('../../utils/mappedData')
 const { saveOperationHistory } = require('../../service/operationHistory')
 const { saveDirectData, getDirectValue } = require('../../service/directData/saveDirectConfig')
 const { getReportedTime } = require('../../utils/protocol')
+const { SINGLE_DEVICE_MODE } = require('../../config/appSettings')
+const { isAnyLocked, isLockedByFault } = require('../../service/faultStatus/faultStatus')
 
 /** 按 preffix 查 t_direct_config 对应的 config_id。 */
 async function resolveConfigIdByPrefix(prefix) {
@@ -73,6 +75,12 @@ async function detectAndRecordChanges(info, d_no) {
 
         let hasChanges = false
 
+        // 故障锁定期间（故障机触发后、人工复位前）不把设备上报的开关状态同步回指令页面：
+        // 故障机只断硬件、页面保持故障前状态，设备断电后上报"关"是预期内的，这时同步就会把
+        // 页面开关改成"关"，打破"锁定期间开关状态不变"的约定。复位时按快照恢复开关、重启
+        // 执行器，之后设备上报的状态再照常同步。数值类指令项不受影响，照常同步。
+        const locked = SINGLE_DEVICE_MODE ? isAnyLocked() : isLockedByFault(d_no)
+
         // 遍历行为数据的每个字段，与 t_direct 的预期值对比
         for (const config of configRows) {
             const infoKey = String(config.preffix).trim()
@@ -98,6 +106,7 @@ async function detectAndRecordChanges(info, d_no) {
             // 宽松识别去比较（跟 controlHelpers.js 的 readSwitchStates、
             // updateDirectConfigAndPublish.js 的 isOnValue 同一套约定）。
             const isSwitch = String(config.f_type) === '1'
+            if (isSwitch && locked) continue
             const toOn = (v) => ['on', 'open', '1', 'true'].includes(String(v).trim().toLowerCase())
             const compareExpected = isSwitch ? String(toOn(expectedVal)) : expectedVal
             const comparableNew = isSwitch ? String(toOn(newVal)) : newVal
