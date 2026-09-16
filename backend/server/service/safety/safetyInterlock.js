@@ -341,7 +341,9 @@ async function fire(rule, deviceNo, detail, actions) {
     deviceNo,
     message: [rule.name, handled, detail].filter(Boolean).join('｜'),
     code: rule.id,
-    type: (actions || []).length > 0 ? '安全联锁' : '安全告警',
+    // executeActions 关着时实际一个开关都没动，跟"没配动作"一样记成'安全告警'；
+    // 两种 type 在 errorHistory.js 里都归到"安全联锁记录"表，不会混进 ALARM_RULES 的"安全告警记录"。
+    type: (actions || []).length > 0 && !actionsOff ? '安全联锁' : '安全告警',
   })
 
   const outcome = { id: rule.id, name: rule.name, detail: detail || '', interlocked: done.length > 0 }

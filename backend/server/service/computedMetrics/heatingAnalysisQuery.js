@@ -52,31 +52,86 @@ function timeWhere(startTime, endTime) {
 
 /**
  * 每行：过滤哨兵异常值后的温度/流量 + 与上一行的秒差 dt_sec + 上一行出水温度 prev_temp2
- * + "这一刻或之前最近一条" t_behavior_data 的加热开关状态 heater_on（相关子查询，跟
- * heaterEnergyQuery.js 同一套：两张表 c_time 不保证精确对齐，取最近一次已知状态）。
+ * + "这一刻或之前最近一条" t_behavior_data 的加热开关状态 heater_on（跟 heaterEnergyQuery.js
+ * 同一套：两张表 c_time 不保证精确对齐，取最近一次已知状态）。
+ *
+ * 状态用"事件流 + 前向填充"取，不用每行一次相关子查询——理由见 heaterEnergyQuery.js
+ * 文件头 ②：相关子查询的边界依赖外层列，进不了索引 range，是平方级开销。
+ * 因为要带绑定参数，这里返回 { sql, params }，调用方把 params 按文本顺序拼进去。
  */
-function baseRowsSql(abnormalMax, tw) {
+function baseRowsSql(abnormalMax, tw, startTime, endTime) {
   const num = (f) =>
     `CASE WHEN CAST(NULLIF(\`${f}\`, '') AS DECIMAL(20,6)) >= ${abnormalMax} ` +
     `THEN NULL ELSE CAST(NULLIF(\`${f}\`, '') AS DECIMAL(20,6)) END`
-  return `
+
+  // 行为记录只取窗口内的状态变化点，窗口之前的由 seed 行代表（边界是常量，走索引 range + LIMIT 1）
+  const behaviorParts = []
+  const behaviorParams = []
+  if (startTime) { behaviorParts.push('c_time >= ?'); behaviorParams.push(startTime) }
+  if (endTime) { behaviorParts.push('c_time <= ?'); behaviorParams.push(endTime) }
+  const behaviorWhere = behaviorParts.length ? `AND ${behaviorParts.join(' AND ')}` : ''
+
+  const seedParams = []
+  let seedTimeSql = `CAST('1000-01-01 00:00:00' AS DATETIME)`
+  let seedStateSql = '0'
+  if (startTime) {
+    seedTimeSql = 'CAST(? AS DATETIME)'
+    seedParams.push(startTime)
+    seedStateSql = `COALESCE((
+            SELECT CASE WHEN TRIM(b.field2) = '1' THEN 1 ELSE 0 END
+            FROM t_behavior_data b
+            WHERE b.c_time < ?
+            ORDER BY b.c_time DESC, b.id DESC
+            LIMIT 1
+          ), 0)`
+    seedParams.push(startTime)
+  }
+
+  const sql = `
     SELECT
-      s.id, s.c_time, s.temp1, s.temp2, s.flow,
-      TIMESTAMPDIFF(SECOND, LAG(s.c_time) OVER (ORDER BY s.c_time ASC, s.id ASC), s.c_time) AS dt_sec,
-      LAG(s.temp2)  OVER (ORDER BY s.c_time ASC, s.id ASC) AS prev_temp2,
-      COALESCE((
-        SELECT CASE WHEN TRIM(b.field2) = '1' THEN 1 ELSE 0 END
-        FROM t_behavior_data b
-        WHERE b.c_time <= s.c_time
-        ORDER BY b.c_time DESC, b.id DESC
-        LIMIT 1
-      ), 0) AS heater_on
+      id, c_time, temp1, temp2, flow, heater_on,
+      TIMESTAMPDIFF(SECOND, LAG(c_time) OVER (ORDER BY c_time ASC, id ASC), c_time) AS dt_sec,
+      LAG(temp2)  OVER (ORDER BY c_time ASC, id ASC) AS prev_temp2
     FROM (
-      SELECT id, c_time, ${num('field1')} AS temp1, ${num('field2')} AS temp2, ${num('field3')} AS flow
-      FROM t_sensor_data
-      WHERE 1=1 ${tw.clause}
-    ) AS s
+      SELECT
+        kind, id, c_time, temp1, temp2, flow,
+        -- 一个 grp 里只有开头那行（行为记录或 seed）带状态，MAX 取到的就是这组的状态
+        MAX(st) OVER (PARTITION BY grp) AS heater_on
+      FROM (
+        SELECT
+          kind, id, c_time, temp1, temp2, flow, st,
+          -- 每遇到一条带状态的行就开一个新组，后面的传感器行都归进这一组
+          SUM(CASE WHEN st IS NOT NULL THEN 1 ELSE 0 END)
+            OVER (ORDER BY c_time ASC, pri ASC, id ASC ROWS UNBOUNDED PRECEDING) AS grp
+        FROM (
+          -- pri 让同一时刻的行为记录排在传感器行之前，等价于原来 b.c_time <= s.c_time 的"含等于"
+          SELECT
+            'seed' AS kind, -1 AS pri, 0 AS id, ${seedTimeSql} AS c_time,
+            CAST(NULL AS DECIMAL(20,6)) AS temp1,
+            CAST(NULL AS DECIMAL(20,6)) AS temp2,
+            CAST(NULL AS DECIMAL(20,6)) AS flow,
+            ${seedStateSql} AS st
+          UNION ALL
+          SELECT
+            'b', 0, id, c_time,
+            CAST(NULL AS DECIMAL(20,6)), CAST(NULL AS DECIMAL(20,6)), CAST(NULL AS DECIMAL(20,6)),
+            CASE WHEN TRIM(field2) = '1' THEN 1 ELSE 0 END
+          FROM t_behavior_data
+          WHERE 1=1 ${behaviorWhere}
+          UNION ALL
+          SELECT 's', 1, id, c_time, temp1, temp2, flow, NULL
+          FROM (
+            SELECT id, c_time, ${num('field1')} AS temp1, ${num('field2')} AS temp2, ${num('field3')} AS flow
+            FROM t_sensor_data
+            WHERE 1=1 ${tw.clause}
+          ) AS s
+        ) AS events
+      ) AS grouped
+    ) AS filled
+    -- WHERE 先于窗口函数求值，所以上面的 dt_sec / prev_temp2 只在传感器行之间算，跟原来一致
+    WHERE kind = 's'
   `
+  return { sql, params: [...seedParams, ...behaviorParams, ...tw.params] }
 }
 
 /**
@@ -92,6 +147,7 @@ async function queryHeatingEfficiency({ limit = 300, startTime, endTime } = {}) 
   // ρ·Cp·Q（W/℃）：Q 由 L/min → m³/s。理论升温 = P_额定 ÷ (ρ·Cp·Q)。
   const rhoCpQ = `(${waterDensity} * ${waterSpecificHeat} * (flow / 60 / 1000))`
   const canEff = `heater_on = 1 AND flow > 0 AND ${heaterRatedPower} > 0`
+  const base = baseRowsSql(abnormalMax, tw, startTime, endTime)
 
   const sql = `
     SELECT
@@ -110,14 +166,14 @@ async function queryHeatingEfficiency({ limit = 300, startTime, endTime } = {}) 
         CASE WHEN ${canEff} AND temp1 IS NOT NULL AND temp2 IS NOT NULL
              THEN (temp2 - temp1) / NULLIF(${heaterRatedPower} / NULLIF(${rhoCpQ}, 0), 0) * 100
              ELSE NULL END AS eff_pct
-      FROM ( ${baseRowsSql(abnormalMax, tw)} ) AS r
+      FROM ( ${base.sql} ) AS r
     ) AS calculated
     GROUP BY bucket
     HAVING actualRiseC IS NOT NULL OR theoreticalRiseC IS NOT NULL
     ORDER BY c_time ASC
     LIMIT ?
   `
-  const [rows] = await promisePool.query(sql, [bucketSeconds, ...tw.params, safeLimit])
+  const [rows] = await promisePool.query(sql, [bucketSeconds, ...base.params, safeLimit])
   return rows
 }
 
@@ -130,6 +186,7 @@ async function queryHeatingRate({ limit = 300, startTime, endTime } = {}) {
   const { abnormalMax } = readParams()
   const tw = timeWhere(startTime, endTime)
   const bucketSeconds = startTime ? calcBucketSeconds({ startTime, endTime, pointLimit: safeLimit }) : 1
+  const base = baseRowsSql(abnormalMax, tw, startTime, endTime)
 
   const sql = `
     SELECT
@@ -146,7 +203,7 @@ async function queryHeatingRate({ limit = 300, startTime, endTime } = {}) {
              ELSE NULL END AS rate_c_per_min
       FROM (
         SELECT r.*, LAG(r.heater_on) OVER (ORDER BY r.c_time ASC, r.id ASC) AS prev_heater_on
-        FROM ( ${baseRowsSql(abnormalMax, tw)} ) AS r
+        FROM ( ${base.sql} ) AS r
       ) AS with_prev
     ) AS calculated
     GROUP BY bucket
@@ -154,7 +211,7 @@ async function queryHeatingRate({ limit = 300, startTime, endTime } = {}) {
     ORDER BY c_time ASC
     LIMIT ?
   `
-  const [rows] = await promisePool.query(sql, [bucketSeconds, ...tw.params, safeLimit])
+  const [rows] = await promisePool.query(sql, [bucketSeconds, ...base.params, safeLimit])
   return rows
 }
 

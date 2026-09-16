@@ -15,14 +15,16 @@
  *                   读数达到或超过配置中心 SAFETY_INTERLOCK.abnormalMax（掉线/短路
  *                   哨兵值）时视为无效（NULL），不参与后续计算，避免掉线期间的
  *                   9999 之类异常值污染累计结果。
- *   ② with_state — 用 LAG() 算出每行与上一行的真实时间间隔 dt_sec；用相关子查询
- *                   （correlated subquery）取"这一刻或之前最近一条"t_behavior_data
- *                   的加热开关状态——这是关键设计：项目支持两种上报模式（单主题
- *                   合并上报 / 传感器与行为分开两个主题上报，见 mqtt/index.js 的
- *                   registerRoutes），两张表的 c_time 不保证能精确对上号，用"取
- *                   最近一次已知状态"而不是用 c_time 精确 JOIN，两种模式下都不会
- *                   查空。取不到任何历史行为记录时按"未通电"处理（COALESCE 0），
- *                   保守、不会把未知状态当成通电去累加耗电量。
+ *   ② with_state — 用 LAG() 算出每行与上一行的真实时间间隔 dt_sec；取"这一刻或之前
+ *                   最近一条"t_behavior_data 的加热开关状态——这是关键设计：项目支持
+ *                   两种上报模式（单主题合并上报 / 传感器与行为分开两个主题上报，见
+ *                   mqtt/index.js 的 registerRoutes），两张表的 c_time 不保证能精确
+ *                   对上号，用"取最近一次已知状态"而不是用 c_time 精确 JOIN，两种模式
+ *                   下都不会查空。取不到任何历史行为记录时按"未通电"处理（seed 行兜底
+ *                   给 0），保守、不会把未知状态当成通电去累加耗电量。
+ *                   取状态的实现是"事件流 + 前向填充"（events/grouped/filled 三层），
+ *                   不是每行一次相关子查询——后者的边界依赖外层列，进不了索引 range，
+ *                   是 O(传感器行数 × 行为行数) 的平方级开销，24h 范围实测要 170 秒以上。
  *   ③ with_power — 算每一行的瞬时功率、以及这一行相对上一行贡献的电能/热能/流量
  *                   增量（乘以 dt_sec，超过 MAX_GAP_SEC 的间隔视为离线间隙不计入，
  *                   跟 switchDurationService.js/cumulativeService.js on_duration
@@ -89,10 +91,39 @@ async function queryHeaterEnergy(options = {}) {
   if (endTime) { conditions.push('c_time <= ?'); whereParams.push(endTime) }
   const whereExtra = conditions.length ? `AND ${conditions.join(' AND ')}` : ''
 
-  // 相关子查询（取加热开关最近状态）单独绑定一次 d_no——跟主查询的 d_no 过滤是
-  //两个独立的 "?"，物理位置在主查询 WHERE 之前（with_state 的 SELECT 列表文本上
-  // 先于它 FROM 的子查询 s 展开），下面 params 数组的顺序必须跟这个物理顺序对齐。
-  const behaviorDNoCond = d_no ? 'AND b.d_no = ?' : ''
+  // 加热开关状态用"事件流 + 前向填充"取，不用"每行一次相关子查询"：相关子查询的边界
+  // （b.c_time <= s.c_time）依赖外层列，MySQL 没法把它下推成索引扫描的起点，只能从索引
+  // 最大端反向扫描再逐行过滤，每个传感器行都要重来一次，复杂度 O(传感器行数 × 行为行数)。
+  // 做法：把窗口内的行为记录（带状态）和传感器行（状态留空）UNION 成一条按时间排序的事件流，
+  // 用窗口函数把状态向后填充到每个传感器行，一次扫描算完。
+  const behaviorConditions = []
+  const behaviorParams = []
+  if (d_no) { behaviorConditions.push('d_no = ?'); behaviorParams.push(d_no) }
+  if (startTime) { behaviorConditions.push('c_time >= ?'); behaviorParams.push(startTime) }
+  if (endTime) { behaviorConditions.push('c_time <= ?'); behaviorParams.push(endTime) }
+  const behaviorWhere = behaviorConditions.length ? `AND ${behaviorConditions.join(' AND ')}` : ''
+
+  // 窗口起点之前的状态由一条 seed 行代表：它排在事件流最前面，负责给"第一条行为记录
+  // 之前的那些传感器行"兜底。这条子查询的边界是常量（不依赖外层），能正常走索引
+  // range + LIMIT 1，整个查询只执行一次。
+  // 不限时间范围时整段数据都在窗口内，seed 退化成"最早时刻 + 未通电"，跟原来取不到
+  // 历史状态就 COALESCE(..., 0) 的保守口径一致。
+  const seedParams = []
+  let seedTimeSql = `CAST('1000-01-01 00:00:00' AS DATETIME)`
+  let seedStateSql = '0'
+  if (startTime) {
+    seedTimeSql = 'CAST(? AS DATETIME)'
+    seedParams.push(startTime)
+    seedStateSql = `COALESCE((
+                    SELECT CASE WHEN TRIM(b.field2) = '1' THEN 1 ELSE 0 END
+                    FROM t_behavior_data b
+                    WHERE b.c_time < ? ${d_no ? 'AND b.d_no = ?' : ''}
+                    ORDER BY b.c_time DESC, b.id DESC
+                    LIMIT 1
+                  ), 0)`
+    seedParams.push(startTime)
+    if (d_no) seedParams.push(d_no)
+  }
 
   const bucketSeconds = startTime ? calcBucketSeconds({ startTime, endTime, pointLimit: safeLimit }) : 1
 
@@ -121,24 +152,50 @@ async function queryHeaterEnergy(options = {}) {
           heater_on * LEAST(COALESCE(dt_sec, 0), ${MAX_GAP_SEC}) * COALESCE(flow / 60, 0) AS flow_l_delta
         FROM (
           SELECT
-            s.id, s.c_time, s.temp1, s.temp2, s.flow,
-            TIMESTAMPDIFF(SECOND, LAG(s.c_time) OVER (ORDER BY s.c_time ASC, s.id ASC), s.c_time) AS dt_sec,
-            COALESCE((
-              SELECT CASE WHEN TRIM(b.field2) = '1' THEN 1 ELSE 0 END
-              FROM t_behavior_data b
-              WHERE b.c_time <= s.c_time ${behaviorDNoCond}
-              ORDER BY b.c_time DESC, b.id DESC
-              LIMIT 1
-            ), 0) AS heater_on
+            id, c_time, temp1, temp2, flow, heater_on,
+            TIMESTAMPDIFF(SECOND, LAG(c_time) OVER (ORDER BY c_time ASC, id ASC), c_time) AS dt_sec
           FROM (
             SELECT
-              id, c_time,
-              CASE WHEN CAST(NULLIF(field1, '') AS DECIMAL(20,6)) >= ${abnormalMax} THEN NULL ELSE CAST(NULLIF(field1, '') AS DECIMAL(20,6)) END AS temp1,
-              CASE WHEN CAST(NULLIF(field2, '') AS DECIMAL(20,6)) >= ${abnormalMax} THEN NULL ELSE CAST(NULLIF(field2, '') AS DECIMAL(20,6)) END AS temp2,
-              CASE WHEN CAST(NULLIF(field3, '') AS DECIMAL(20,6)) >= ${abnormalMax} THEN NULL ELSE CAST(NULLIF(field3, '') AS DECIMAL(20,6)) END AS flow
-            FROM t_sensor_data
-            WHERE 1=1 ${whereExtra}
-          ) AS s
+              kind, id, c_time, temp1, temp2, flow,
+              -- 一个 grp 里只有开头那行（行为记录或 seed）带状态，MAX 取到的就是这组的状态
+              MAX(st) OVER (PARTITION BY grp) AS heater_on
+            FROM (
+              SELECT
+                kind, id, c_time, temp1, temp2, flow, st,
+                -- 每遇到一条带状态的行就开一个新组，后面的传感器行都归进这一组
+                SUM(CASE WHEN st IS NOT NULL THEN 1 ELSE 0 END)
+                  OVER (ORDER BY c_time ASC, pri ASC, id ASC ROWS UNBOUNDED PRECEDING) AS grp
+              FROM (
+                -- pri 让同一时刻的行为记录排在传感器行之前，等价于原来 b.c_time <= s.c_time 的"含等于"
+                SELECT
+                  'seed' AS kind, -1 AS pri, 0 AS id, ${seedTimeSql} AS c_time,
+                  CAST(NULL AS DECIMAL(20,6)) AS temp1,
+                  CAST(NULL AS DECIMAL(20,6)) AS temp2,
+                  CAST(NULL AS DECIMAL(20,6)) AS flow,
+                  ${seedStateSql} AS st
+                UNION ALL
+                SELECT
+                  'b', 0, id, c_time,
+                  CAST(NULL AS DECIMAL(20,6)), CAST(NULL AS DECIMAL(20,6)), CAST(NULL AS DECIMAL(20,6)),
+                  CASE WHEN TRIM(field2) = '1' THEN 1 ELSE 0 END
+                FROM t_behavior_data
+                WHERE 1=1 ${behaviorWhere}
+                UNION ALL
+                SELECT 's', 1, id, c_time, temp1, temp2, flow, NULL
+                FROM (
+                  SELECT
+                    id, c_time,
+                    CASE WHEN CAST(NULLIF(field1, '') AS DECIMAL(20,6)) >= ${abnormalMax} THEN NULL ELSE CAST(NULLIF(field1, '') AS DECIMAL(20,6)) END AS temp1,
+                    CASE WHEN CAST(NULLIF(field2, '') AS DECIMAL(20,6)) >= ${abnormalMax} THEN NULL ELSE CAST(NULLIF(field2, '') AS DECIMAL(20,6)) END AS temp2,
+                    CASE WHEN CAST(NULLIF(field3, '') AS DECIMAL(20,6)) >= ${abnormalMax} THEN NULL ELSE CAST(NULLIF(field3, '') AS DECIMAL(20,6)) END AS flow
+                  FROM t_sensor_data
+                  WHERE 1=1 ${whereExtra}
+                ) AS s
+              ) AS events
+            ) AS grouped
+          ) AS filled
+          -- WHERE 先于窗口函数求值，所以上面的 dt_sec 只在传感器行之间算，跟原来一致
+          WHERE kind = 's'
         ) AS with_state
       ) AS with_power
     ) AS calculated
@@ -146,9 +203,11 @@ async function queryHeaterEnergy(options = {}) {
     ORDER BY c_time ASC
     LIMIT ?
   `
+  // 顺序必须跟 "?" 在 SQL 文本里出现的先后一致：分桶宽度 → seed 行 → 行为记录分支 → 传感器分支 → LIMIT
   const params = [
     bucketSeconds,
-    ...(d_no ? [d_no] : []),   // behaviorDNoCond 的绑定值（物理位置在 whereExtra 之前）
+    ...seedParams,
+    ...behaviorParams,
     ...whereParams,
     safeLimit,
   ]
