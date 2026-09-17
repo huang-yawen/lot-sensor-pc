@@ -30,11 +30,14 @@ import {
   MarkLineComponent,
 } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
+// 轴断开（ECharts 6）：LineBarCharts 把传感器图 y 轴上没有数据的空白段折叠掉，见 utils/chartAxis.js 的 buildAxisBreaks
+import { AxisBreak } from 'echarts/features'
 
 echarts.use([
   LineChart, BarChart, ScatterChart, PieChart, GaugeChart,
   TitleComponent, TooltipComponent, GridComponent, LegendComponent, ToolboxComponent, MarkLineComponent,
   CanvasRenderer,
+  AxisBreak,
 ])
 
 export * from 'echarts/core'

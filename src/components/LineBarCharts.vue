@@ -16,7 +16,7 @@
 import { ref, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
 import * as echarts from '@/utils/echarts'
 import { useDisplayStore } from '@/stores/useDisplayStore'
-import { pickRightAxisNames, pickFlatAxisNames, canScale } from '@/utils/chartAxis'
+import { buildAxisBreaks, canScale } from '@/utils/chartAxis'
 
 /**
  * @description ECharts 实例引用
@@ -173,6 +173,13 @@ const updateChart = (source) => {
       })
     }})
 
+    // tooltip 里显示接口返回的原始文字，而不是画图用的数字：汇总页的值带单位（"35.3 ℃"），
+    // 行为页是"开/关/手动/自动"，比 0/1 直观。原始值为空时显示 "-"。
+    const rawText = (dataIndex, field) => {
+      const raw = json[dataIndex]?.[field]
+      return raw == null || raw === '' ? '-' : raw
+    }
+
     // 决定每个字段走左轴还是右轴。
     // 配置中心显式配成 right 的一律以配置为准；其余字段（含配成 left 的——y_axis 字段
     // 在库里默认就是 'left'，不能当成用户特意选过左轴）继续走自动分轴，不像以前那样
@@ -186,9 +193,10 @@ const updateChart = (source) => {
       // 这些字段跟着 0/1 一起锁在 0~1 的轴上会被顶出量程，挪到右轴各自缩放。
       autoRight = new Set(autoSeries.filter(item => !isBinarySeries(item)).map(item => item.name))
     } else {
-      // 先看数量级断层；同一量级、但波动被别的曲线量程压平的，再按波动幅度拆一次
-      autoRight = pickRightAxisNames(autoSeries)
-      if (autoRight.size === 0) autoRight = pickFlatAxisNames(autoSeries)
+      // 传感器数据：所有变量留在同一根左轴上，不再自动拆到右轴。温度≈35、压力≈10、流量≈3.5
+      // 这种量级不同、波动又都很小的情况，左右两根轴总有几条会被压平；改成在这根轴上把
+      // 没有数据的空白段折叠掉（见下面 axisConfig 里的 buildAxisBreaks），每条线的波动都能看清。
+      autoRight = new Set()
     }
 
     const rightFields = new Set([...explicitRight, ...autoRight])
@@ -208,7 +216,14 @@ const updateChart = (source) => {
       const max = configured.find(setting => setting.max != null)?.max
       // 只有整根轴都是 0/1 开关量时才锁死 0~1 刻度；混了真数值的那根轴照常按数据缩放
       const binaryAxis = props.binary && axisSeries.length > 0 && axisSeries.every(isBinarySeries)
-      return {
+      // 传感器数据的左轴：按各变量的数据区间折叠空白段（刻度只标在有数据的几段里，不再平均分）。
+      // 三种情况不折叠：①行为数据；②这根轴上有柱状图（柱长要正比于数值，折叠会失真，canScale 为 false）；
+      // ③公式指标配置里给这根轴的字段显式配了 min/max——以配置为准。
+      const breakInfo = !props.binary && !isRight && canScale(axisSeries) && min == null && max == null
+        ? buildAxisBreaks(axisSeries)
+        : null
+      const hasBreaks = !!breakInfo && breakInfo.breaks.length > 0
+      const axis = {
         type: 'value',
         name: units.join('/'),
         position: side,
@@ -220,10 +235,25 @@ const updateChart = (source) => {
         // 之间走，轴要是从 0 起，这 0.3℃ 只占图高 1%，320px 的图上不到 4 个像素，
         // 看上去就是一条直线；贴着数据画才能把波动撑开看清。
         scale: binaryAxis ? false : canScale(axisSeries),
-        min: binaryAxis ? 0 : (min ?? undefined),
-        max: binaryAxis ? 1 : (max ?? undefined),
+        min: binaryAxis ? 0 : (min ?? breakInfo?.min ?? undefined),
+        max: binaryAxis ? 1 : (max ?? breakInfo?.max ?? undefined),
         interval: binaryAxis ? 1 : undefined,
       }
+      // ⚠ 下面几项只在需要时才往配置里加，不能写成 `axisLabel: 条件 ? {...} : undefined`：
+      // 实测 ECharts 6 遇到显式的 axisLabel: undefined 会把默认刻度文字整个覆盖掉，y 轴数字全部不显示。
+      if (hasBreaks) {
+        // 折叠掉的空白段。zigzagAmplitude: 0 把默认的锯齿波浪线拉平，断口两侧画成平直的线。
+        // expandOnClick 关掉：实时页每秒重建一次图表，点开的断口下一秒又会被收回去，反而让人困惑
+        axis.breaks = breakInfo.breaks
+        axis.breakArea = { expandOnClick: false, zigzagAmplitude: 0 }
+        // 刻度间隔是按"去掉断口后剩下的总跨度"统一算的，分得细一点，每一小段里才会有刻度
+        axis.splitNumber = 10
+      }
+      if (binaryAxis) {
+        // 开关量轴刻度直接写 关/开，不显示 0/1
+        axis.axisLabel = { formatter: (value) => (value === 1 ? '开' : value === 0 ? '关' : '') }
+      }
+      return axis
     }
 
     // 设置图表配置项（使用 notMerge: true 完全替换配置，确保 restore 正常工作）
@@ -236,7 +266,7 @@ const updateChart = (source) => {
             result += `
               <div style="display:flex;justify-content:space-between;min-width:120px;">
                 <span>${item.marker}${item.seriesName}</span>
-                <span style="margin-left:15px;">${item.value}</span>
+                <span style="margin-left:15px;">${rawText(item.dataIndex, item.seriesName)}</span>
               </div>
             `
           })

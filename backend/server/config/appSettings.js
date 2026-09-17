@@ -71,6 +71,7 @@ module.exports = {
     showPumpVelocityTrackingChart: true, // 恒流速跟踪对比（目标流速参考线 + 平均流速实际值）
     showDeviceStateChart: true,          // 设备状态时间线（水泵/加热开关阶梯图）
     showPidHeatingCycleChart: true,      // PID 周期加热开关（按 PWM 周期边界复原的阶梯图）
+    showPidDutyChart: true,              // PID 占空比（每个 PWM 周期的占空比 %，跟上一张图共用同一份数据）
     showHeaterEnergyChart: true,         // 加热能耗分析（需 config/metrics.js 的 heaterRatedPower 为正）
     showHeatingAnalysisChart: true,      // 加热效率与加热速度
     showDerivedMetricCharts: true,       // "公式与图表"里勾了"历史图表"的自定义指标

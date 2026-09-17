@@ -3,7 +3,8 @@
  * pickRightAxisNames 看数量级断层（温度几十 vs 累计流量几万），
  * pickFlatAxisNames 看波动幅度（量级接近，但其中一条的起伏被另一条的量程压平）。
  * 小的那条被压成直线看不出变化，分到右轴各自缩放才能都看清。
- * 【谁在用】组件 LineBarCharts；页面 HistoryCharts（累计换热量图 / 开关时长图）。
+ * 另外 buildAxisBreaks 走另一条路：不拆轴，而是在同一根轴上把没有数据的空白区间折叠掉。
+ * 【谁在用】组件 LineBarCharts（buildAxisBreaks / canScale）；页面 HistoryCharts（累计换热量图 / 开关时长图）。
  * 【配置中心关联】无。
  */
 
@@ -96,4 +97,91 @@ export function canScale(seriesList) {
   return Array.isArray(seriesList)
     && seriesList.length > 0
     && seriesList.every((item) => item.type !== 'bar')
+}
+
+// 每个变量的数据区间上下各留多少余量：取"自身波动幅度的 30%"和"数值本身的 0.5%"里大的那个，
+// 再保底 0.01。只按波动留余量的话，一个完全不变的量（比如压力一直 10.3）余量是 0，
+// 线会贴着轴边画、看不清；按数值比例保底，就能在线的上下留出一点空间。
+const BAND_PAD_RATIO = 0.3
+const BAND_PAD_VALUE_RATIO = 0.005
+const BAND_PAD_MIN = 0.01
+
+/**
+ * @description 算出一根 y 轴上该折叠掉的空白区间（ECharts 6 的 yAxis.breaks），让量级相差很大的
+ * 几个变量画在同一根轴上、各自的波动都能看清。
+ *
+ * 为什么需要：温度≈35.3、压力≈10.3、流量≈3.5 画在同一根普通数值轴上，轴要从 3 覆盖到 36，
+ * 刻度被平均分成 0/10/20/30/40，温度 0.3℃ 的波动只占图高 1%，三条线都是平的。实际上
+ * 3.6~10.1、10.4~35.0 这两大段根本没有数据，把它们折叠成锯齿断口，剩下的轴高度全部
+ * 留给有数据的三小段，刻度也只标在这三段里（3.3/3.4… 10.2/10.3… 35.2/35.4…）。
+ *
+ * 算法：
+ *   1. 每个变量取 [最小值, 最大值]，上下加余量（见上面三个常量），边界取整到整齐的步长
+ *      （0.1、0.2、0.5、1…），刻度文字才不会是 35.67725 这种长小数；变量本身都 >= 0 时，
+ *      下边界不会被余量推到负数。
+ *   2. 按下边界排序，把有重叠的区间合并——进水、出水温度都在 35 左右，合成一段。
+ *   3. 相邻两段之间的空白，比这两段自身高度加起来还大，才折叠；空白不大就并成一段，
+ *      不值得打一个断口（断口多了反而难读）。
+ *
+ * 用法（LineBarCharts 里）：
+ *   const info = buildAxisBreaks(axisSeries)
+ *   yAxis: { type: 'value', scale: true, min: info.min, max: info.max, breaks: info.breaks }
+ *   同时要在 utils/echarts.js 里 echarts.use(AxisBreak)，否则 breaks 配置不生效。
+ *
+ * ⚠ 只适合折线/散点。柱状图的柱长要跟数值成正比，折叠会让柱子高度失真，调用方要先用
+ *   canScale 判断，柱状图不要调用。
+ *
+ * @param {Array<{name: string, data: Array}>} seriesList - 挂在这根轴上的 series
+ * @returns {{min: number, max: number, breaks: Array<{start: number, end: number, gap: string}>}|null}
+ *   min/max 是整根轴的范围；breaks 为空数组表示所有变量挤在一段里、不需要折叠（但 min/max 仍然贴合数据）；
+ *   没有任何有效数值、或所有点都是同一个值时返回 null，调用方按普通数值轴处理
+ */
+export function buildAxisBreaks(seriesList) {
+  if (!Array.isArray(seriesList)) return null
+
+  // 所有变量的所有点都是同一个值（典型是设备离线、读数全被当成 0）：没有波动可贴合，
+  // 硬算会得到 0~0.01、刻度 0.002/0.004 这种没意义的轴，直接交给 ECharts 默认处理
+  const allNums = seriesList.flatMap((item) => (item.data || []).map(Number).filter((num) => Number.isFinite(num)))
+  if (allNums.length === 0 || Math.min(...allNums) === Math.max(...allNums)) return null
+
+  const bands = seriesList
+    .map((item) => {
+      const nums = (item.data || []).map(Number).filter((num) => Number.isFinite(num))
+      if (nums.length === 0) return null
+      const min = Math.min(...nums)
+      const max = Math.max(...nums)
+      const pad = Math.max((max - min) * BAND_PAD_RATIO, Math.abs((max + min) / 2) * BAND_PAD_VALUE_RATIO, BAND_PAD_MIN)
+      // 取整步长：大约把这一段分成 3 格，再往上取成 1/2/5 × 10^n 这种整齐的数
+      const rough = (max - min + pad * 2) / 3
+      const magnitude = Math.pow(10, Math.floor(Math.log10(rough)))
+      const step = [1, 2, 5, 10].map((k) => k * magnitude).find((value) => value >= rough)
+      // 用步长的小数位数把结果修正一下，避免 10.100000000000001 这种浮点误差出现在刻度上
+      const decimals = Math.max(0, -Math.floor(Math.log10(step)))
+      const round = (value) => Number(value.toFixed(decimals))
+      let lo = round(Math.floor((min - pad) / step) * step)
+      const hi = round(Math.ceil((max + pad) / step) * step)
+      if (min >= 0 && lo < 0) lo = 0
+      return { lo, hi }
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.lo - b.lo)
+  if (bands.length === 0) return null
+
+  const merged = [{ ...bands[0] }]
+  for (const band of bands.slice(1)) {
+    const current = merged[merged.length - 1]
+    const gap = band.lo - current.hi
+    if (gap <= (current.hi - current.lo) + (band.hi - band.lo)) {
+      current.hi = Math.max(current.hi, band.hi)
+    } else {
+      merged.push({ ...band })
+    }
+  }
+
+  const breaks = []
+  for (let i = 0; i < merged.length - 1; i++) {
+    // gap 是断口在图上占的高度（占轴长的比例）。太小断口两侧的刻度文字会叠在一起
+    breaks.push({ start: merged[i].hi, end: merged[i + 1].lo, gap: '10%' })
+  }
+  return { min: merged[0].lo, max: merged[merged.length - 1].hi, breaks }
 }

@@ -159,6 +159,14 @@
       </div>
     </section>
 
+    <!-- ==================== PID占空比（每个PWM周期算出的占空比 %，阶梯线） ==================== -->
+    <section v-if="showPidDutyChart" class="chart-section">
+      <h2 class="section-title">PID占空比</h2>
+      <div class="chart-card chart-card-wide">
+        <div ref="pidDutyChartRef" class="chart-el chart-el-tall"></div>
+      </div>
+    </section>
+
     <!-- ==================== 累计流量（从累计统计里单独摘出来，自己一张图） ==================== -->
     <section v-if="cumulativeFlowEntry" class="chart-section">
       <h2 class="section-title">累计流量</h2>
@@ -232,6 +240,7 @@ const historyChartsConfig = computed(() => ({
   showPidTrackingChart: true,
   showDeviceStateChart: true,
   showPidHeatingCycleChart: true,
+  showPidDutyChart: true,
   showHeaterEnergyChart: true,
   showHeatingAnalysisChart: true,
   showDerivedMetricCharts: true,
@@ -1271,6 +1280,121 @@ watch([pidCyclePoints, pidCycleChartRef], () => {
   })
 })
 
+// ==================== PID占空比（每个PWM周期算出的占空比 %，阶梯线） ====================
+// 数据跟上面"PID周期加热开关"是同一份：/api/pid-heating-cycles 返回的 pidCycleRows，
+// 每行就是 pidHeating.js 一个 PWM 周期落库的记录，duty 字段就是这个周期的占空比（%）。
+// 不用额外请求后端。
+// 两张图的区别：上面那张画的是"加热开/关"的方波，要自己数每一格开了多宽才知道占空比；
+// 这张直接把占空比数值画出来，看 PID 输出是怎么随温度误差变大变小、有没有长时间顶在
+// 100%（积分饱和/加热功率不够）或者来回大幅震荡（Kp/Ki 太大）更直观。
+const showPidDutyChart = computed(() => {
+  if (historyChartsConfig.value.showPidDutyChart === false) return false
+  return pidCycleRows.value.length > 0
+})
+
+// 每个周期的占空比在整个周期内是恒定的，所以画成阶梯线：周期起始时刻取这个周期的 duty，
+// 一直保持到下一个周期开始。
+// 断档处理：pidHeating.js 只有 PID 真正在跑时才落库，PID 被关掉、切手动、故障锁定、后端
+// 重启的那段时间没有记录。如果下一条记录的起始时间比"本周期结束时间"晚（留 500ms 余量），
+// 就在本周期结束处补一个点收尾，再插一个 null 把线断开——否则阶梯线会把上一个占空比一直
+// 横着拖到下一段，看起来像 PID 那段时间一直在按这个占空比加热。
+const pidDutyPoints = computed(() => {
+  const points = []
+  const rows = pidCycleRows.value
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i]
+    const start = new Date(row.window_start).getTime()
+    const end = start + Number(row.window_ms)
+    const duty = Number(row.duty)
+    const extra = { windowMs: Number(row.window_ms), onDurationMs: Number(row.on_duration_ms) }
+    points.push({ time: start, value: duty, ...extra })
+    const next = rows[i + 1]
+    const nextStart = next ? new Date(next.window_start).getTime() : null
+    if (next == null || nextStart > end + 500) {
+      points.push({ time: end, value: duty, ...extra })
+      if (next != null) points.push({ time: end, value: null })
+    }
+  }
+  return points
+})
+
+const pidDutyChartRef = ref(null)
+let pidDutyChartInstance = null
+
+function renderPidDutyChart() {
+  const points = pidDutyPoints.value
+  const el = pidDutyChartRef.value
+  if (!points.length || !el || el.offsetWidth === 0) {
+    if (el) setTimeout(renderPidDutyChart, 50)
+    return
+  }
+  if (pidDutyChartInstance) pidDutyChartInstance.dispose()
+  const chart = echarts.init(el)
+  pidDutyChartInstance = chart
+
+  const pad2 = (n) => String(n).padStart(2, '0')
+  chart.setOption({
+    tooltip: {
+      trigger: 'axis',
+      formatter: (params) => {
+        const p = Array.isArray(params) ? params[0] : params
+        if (!p || p.value[1] == null) return ''
+        const d = new Date(p.value[0])
+        const point = points[p.dataIndex]
+        return `${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`
+          + `<br/>占空比：${p.value[1]}%`
+          + `<br/>本周期加热 ${(point.onDurationMs / 1000).toFixed(1)}s / 周期 ${(point.windowMs / 1000).toFixed(1)}s`
+      },
+    },
+    legend: { data: ['占空比'], top: 0 },
+    toolbox: {
+      feature: { saveAsImage: { title: '下载图片' } },
+      right: 10,
+      top: 0,
+    },
+    grid: { left: 50, right: 30, top: 50, bottom: 50 },
+    // 时间轴原因同"PID周期加热开关"：每段宽度要按真实时长画，category 轴会等距排开。
+    xAxis: {
+      type: 'time',
+      axisLabel: {
+        rotate: 15,
+        fontSize: 10,
+        formatter: (val) => {
+          const d = new Date(val)
+          return `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`
+        },
+      },
+    },
+    // 占空比固定 0~100%，不随数据自动缩放：固定刻度才能一眼看出"顶满了"还是"只开了一点"。
+    yAxis: {
+      type: 'value',
+      name: '%',
+      min: 0,
+      max: 100,
+      interval: 20,
+    },
+    series: [
+      {
+        name: '占空比',
+        type: 'line',
+        step: 'end',
+        showSymbol: false,
+        connectNulls: false,
+        data: points.map((p) => [p.time, p.value]),
+        itemStyle: { color: '#f97316' },
+        lineStyle: { color: '#f97316', width: 2 },
+        areaStyle: { color: 'rgba(249, 115, 22, 0.12)' },
+      },
+    ],
+  }, true)
+}
+
+watch([pidDutyPoints, pidDutyChartRef], () => {
+  nextTick(() => {
+    if (pidDutyChartRef.value) queueRender(renderPidDutyChart)
+  })
+})
+
 // ==================== 累计流量（从累计统计里单独摘出来，自己一张图） ====================
 const cumulativeFlowEntry = computed(() => {
   if (historyChartsConfig.value.showCumulative === false) return null
@@ -1500,6 +1624,8 @@ function disposeAllCharts() {
   deviceStateChartInstance = null
   pidCycleChartInstance?.dispose()
   pidCycleChartInstance = null
+  pidDutyChartInstance?.dispose()
+  pidDutyChartInstance = null
   cumulativeFlowChartInstance?.dispose()
   cumulativeFlowChartInstance = null
   switchDurationChartInstance?.dispose()
