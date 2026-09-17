@@ -47,19 +47,14 @@ const SAFETY_TRIGGER_NAMES = {
  * 规则告警——这类记录不属于前三类里任何一个固定 type，见下面 buildWhere 里
  * 对 alarm 类别的处理（排除掉这里列出的固定 type，不是再列一张新清单）。 */
 const CATEGORY_TYPES = {
-  fault: ['故障保护'],
-  safety: ['安全联锁', '安全告警'],
-  linkage: ['联动控制'],
-  spike: ['数据质量'],
+  system: ['system'],
+  intelligent: ['intelligent'],
 }
 
 /** 类别 -> "全部"视图里"类别"列和饼图显示的中文名，跟前端下拉框的选项文字一致。 */
 const CATEGORY_LABELS = {
-  alarm: '安全告警',
-  safety: '安全联锁',
-  fault: '故障状态',
-  spike: '数据质量',
-  linkage: '联动控制',
+  system: '系统检测',
+  intelligent: '智能判定',
 }
 
 /**
@@ -84,11 +79,10 @@ function hiddenCategories() {
 
 function resolveCategory(query) {
   if (query?.category === 'all') return 'all'
-  if (query?.category === 'safety') return 'safety'
-  if (query?.category === 'linkage') return 'linkage'
-  if (query?.category === 'spike') return 'spike'
-  if (query?.category === 'alarm') return 'alarm'
-  return 'fault'
+  if (query?.category === 'system') return 'system'
+  if (query?.category === 'intelligent') return 'intelligent'
+  if (query?.category === 'fault' || query?.category === 'safety' || query?.category === 'linkage' || query?.category === 'spike' || query?.category === 'alarm') return 'system'
+  return 'system'
 }
 
 /** e_no 命中不了名称表时（比如历史脏数据），退回原始 type，不让记录丢分类。 */
@@ -131,23 +125,14 @@ const buildWhere = (query = {}) => {
     const conditions = []
     const params = []
     if (category === 'all') {
-        // 全部类别一起查，只排除配置里隐藏掉的类别（它们都是固定 type，直接 NOT IN）。
-        const hiddenTypes = hiddenCategories().flatMap(key => CATEGORY_TYPES[key])
-        if (hiddenTypes.length) {
-            conditions.push(`type NOT IN (${hiddenTypes.map(() => '?').join(',')})`)
-            params.push(...hiddenTypes)
-        }
-    } else if (category === 'alarm') {
-        // 场景配置 ALARM_RULES 触发的规则告警，type 是规则自己的显示名，各不相同、
-        // 没法像另外三类那样列一张固定清单去 IN 匹配——改成排除掉那三类已知的固定
-        // type，覆盖现在及以后任何新增的规则名，不用每加一条规则就来改这里。
-        const knownTypes = Object.values(CATEGORY_TYPES).flat()
-        conditions.push(`type NOT IN (${knownTypes.map(() => '?').join(',')})`)
-        params.push(...knownTypes)
+        // 全部类别一起查，只保留系统检测与智能判定两类来源；旧的安全联锁/故障状态等
+        // 统一按 source 字段映射成 system，不再按 type 大类筛选。
+    } else if (category === 'system' || category === 'intelligent') {
+        conditions.push('source = ?')
+        params.push(category)
     } else {
-        const types = CATEGORY_TYPES[category]
-        conditions.push(`type IN (${types.map(() => '?').join(',')})`)
-        params.push(...types)
+        conditions.push('source = ?')
+        params.push('system')
     }
 
     if (startTime && !isValidDateTime(startTime)) {
@@ -188,7 +173,12 @@ async function getErrorHistory(query) {
     const { whereClause, params } = buildWhere(query)
 
     const [rows] = await promisePool.query(
-        `SELECT id, d_no AS '设备编号', e_msg AS '记录信息', c_time AS '报警时间', type AS '类型', e_no
+        `SELECT id,
+                d_no AS '设备编号',
+                CASE WHEN source = 'intelligent' THEN '智能判定' ELSE '系统检测' END AS '信息来源',
+                COALESCE(error_type, type, '未知类型') AS '类型',
+                e_msg AS '记录信息',
+                c_time AS '报警时间'
          FROM t_error_msg
          ${whereClause}
          ORDER BY id DESC
@@ -196,25 +186,15 @@ async function getErrorHistory(query) {
         [...params, pageSize, offset]
     )
 
-    // "类型"列原本只有"故障保护"/"安全联锁"/"安全告警"这种笼统大类，这里按 e_no 换成
-    // 具体的故障/触发条件名称（比如"干烧""未开水泵却开启加热"），e_no 之外的字段不变。
-    const list = rows.map((row) => {
-        const { e_no, ...rest } = row
-        if (category === 'all') {
-            // "全部"视图多一列"类别"，并按每行自己的类别换具体类型名；列顺序决定前端表头顺序。
-            const rowCategory = categoryOfType(rest['类型'])
-            return {
-                id: rest.id,
-                '设备编号': rest['设备编号'],
-                '类别': CATEGORY_LABELS[rowCategory],
-                '类型': friendlyName(rowCategory, e_no, rest['类型']),
-                '记录信息': rest['记录信息'],
-                '报警时间': rest['报警时间'],
-            }
-        }
-        rest['类型'] = friendlyName(category, e_no, rest['类型'])
-        return rest
-    })
+    const list = rows.map((row) => ({
+        id: row.id,
+        '设备编号': row['设备编号'],
+        '信息来源': row['信息来源'],
+        '类别': row['信息来源'],
+        '类型': row['类型'],
+        '记录信息': row['记录信息'],
+        '报警时间': row['报警时间'],
+    }))
 
     const countSql = `
         SELECT COUNT(*) AS total
@@ -244,22 +224,22 @@ async function getErrorTypeStats(query) {
   const { whereClause, params } = buildWhere(query)
 
   const [rows] = await promisePool.query(
-    `SELECT e_no, type, COUNT(*) AS count
+    `SELECT source,
+            e_no,
+            COALESCE(error_type, type, '未知类型') AS type,
+            COUNT(*) AS count
      FROM t_error_msg
      ${whereClause}
-     GROUP BY e_no, type`,
+     GROUP BY source, e_no, error_type, type`,
     params
   )
 
-  // 按友好名称二次合并（同一个 e_no 理论上只对应一个名称，这里防的是 e_no 为空时
-  // 多行落到同一个 fallback 名称上需要相加）。
   const merged = new Map()
   for (const row of rows) {
-    // "全部"视图的饼图按类别分（最多 5 块）；按具体类型分会有三十来块，饼图没法看。
-    const name = category === 'all'
-      ? CATEGORY_LABELS[categoryOfType(row.type)]
-      : friendlyName(category, row.e_no, row.type)
-    merged.set(name, (merged.get(name) || 0) + row.count)
+    const typeName = row.type || '未知类型'
+    const sourceName = row.source === 'intelligent' ? '智能判定' : '系统检测'
+    const groupName = category === 'all' ? sourceName : typeName
+    merged.set(groupName, (merged.get(groupName) || 0) + Number(row.count))
   }
 
   const data = [...merged.entries()]

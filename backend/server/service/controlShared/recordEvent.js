@@ -28,10 +28,13 @@
 const promisePool = require('../../config/dbPool')
 const { nowLocalDateTime } = require('../../utils/helper')
 
-async function recordEvent({ deviceNo, message, code, type, time }) {
+async function recordEvent({ deviceNo, message, code, type, time, source = 'system', errorType = null }) {
+  const finalSource = source === 'intelligent' ? 'intelligent' : 'system'
+  const finalErrorType = errorType ?? type ?? '未知类型'
+
   await promisePool.execute(
-    'INSERT INTO t_error_msg (d_no, c_time, e_msg, e_no, type) VALUES (?, ?, ?, ?, ?)',
-    [deviceNo || null, time || nowLocalDateTime(), message, code ?? null, type]
+    'INSERT INTO t_error_msg (d_no, c_time, e_msg, e_no, type, source, error_type) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    [deviceNo || null, time || nowLocalDateTime(), message, code ?? null, type, finalSource, finalErrorType]
   )
 }
 

@@ -193,6 +193,8 @@ async function recordAlarm(deviceNo, trigger, failedPrefixes = new Set()) {
     ].filter(Boolean).join('｜'),
     code: trigger.id,
     type: '故障保护',
+    source: 'system',
+    errorType: trigger.name,
   })
 }
 

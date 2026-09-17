@@ -154,6 +154,8 @@ async function recordLinkageAlarm(deviceNo, ruleKey, deviceLabel, action, sensor
     message: `${ruleLabel}｜开关：${formatSwitchChange(deviceLabel, beforeValue, action)}｜${detail}`,
     code: ruleKey,
     type: '联动控制',
+    source: 'system',
+    errorType: ruleLabel,
   })
 }
 

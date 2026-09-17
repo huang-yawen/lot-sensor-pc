@@ -6,9 +6,8 @@
  * -->
 <template>
   <div class="error-info-page">
-    <!-- 顶部搜索框，同时驱动下面故障记录/安全联锁记录/联动控制记录/安全告警记录/数据质量记录五个表格。
-         最左边的"记录类别"下拉框决定显示什么：选"全部"时五类记录合在下面第一块的一张表格 + 一个按类别分的饼图里；
-         选某一类时只显示那一类自己的表格 + 饼图，也只请求那一类数据。 -->
+    <!-- 顶部搜索框：最左边的"信息来源"下拉框按系统检测 / 智能判定 / 全部筛选，
+         下面统一走"全部记录"列表和按来源统计的饼图。 -->
     <div class="search-form">
       <div class="search-form-inner">
         <el-select v-model="category" style="width: 140px; flex-shrink: 0;" @change="handleCategoryChange">
@@ -29,7 +28,7 @@
       </div>
     </div>
 
-    <div class="error-info-container" v-if="category === 'all'">
+    <div class="error-info-container" v-if="category === 'all' || category === 'system' || category === 'intelligent'">
       <h3 class="section-title">全部记录</h3>
       <div class="table-wrapper">
         <el-table
@@ -351,19 +350,14 @@ const showSpikeLog = computed(() => systemStore.config.DATA_QUALITY?.showOnError
 const spikeCurrentPage = ref(1);
 const spikePageSize = ref(5);
 
-// 记录类别下拉框。value 跟后端 /api/errData 的 category 参数、store 里各 fetchXxx 一一对应：
-//   alarm=安全告警记录  safety=安全联锁记录  fault=故障记录  spike=数据质量记录  linkage=联动控制记录
-// 配置中心把某块关掉（showOnErrorPage=false）时，下拉框里也不出现这一项，免得选了看到空白页。
+// 记录来源下拉框：只按"信息来源"筛选，不再继续用安全联锁/故障状态等旧类别。
 const category = ref("all");
 const categoryOptions = computed(() => [
-  { value: "alarm", label: "安全告警" },
-  { value: "safety", label: "安全联锁", hidden: !showSafetyLog.value },
-  { value: "fault", label: "故障状态" },
-  { value: "spike", label: "数据质量", hidden: !showSpikeLog.value },
-  { value: "linkage", label: "联动控制" },
   { value: "all", label: "全部" },
-].filter((opt) => !opt.hidden));
-/** 按类别分开的五块，只有下拉框正好选中它时才显示/请求；"全部"走上面单独的合并视图。 */
+  { value: "system", label: "系统检测" },
+  { value: "intelligent", label: "智能判定" },
+]);
+/** 当前保留的旧分块逻辑不再作为筛选入口；"全部/系统检测/智能判定"统一走合并视图。 */
 const isShown = (key) => category.value === key;
 const allCurrentPage = ref(1);
 const allPageSize = ref(5);
@@ -482,11 +476,16 @@ const handleSearch = async (page = 1, showLoading = true) => {
     // "当前页"范围直接用表格数据聚合，不占请求。
     // 下拉框没选中的块不显示，也就不发请求。选"全部"时只拉合并视图那一组，page 就是它的页码。
     const tasks = [];
-    if (category.value === "all") {
+    if (category.value === "all" || category.value === "system" || category.value === "intelligent") {
       allCurrentPage.value = page;
-      tasks.push(store.fetchAllData({ ...params, currentPage: page, pageSize: allPageSize.value }));
-      tasks.push(store.fetchAllTypeStats(params));
-      tasks.push(store.fetchAllTypeStats({}, "all"));
+      tasks.push(store.fetchAllData({
+        ...params,
+        category: category.value,
+        currentPage: page,
+        pageSize: allPageSize.value,
+      }));
+      tasks.push(store.fetchAllTypeStats({ ...params, category: category.value }));
+      tasks.push(store.fetchAllTypeStats({ category: category.value }, "all"));
     }
     if (isShown("fault")) {
       tasks.push(store.fetchErrData({ ...params, currentPage: page, pageSize: pageSize.value }));
@@ -521,13 +520,23 @@ const handleSearch = async (page = 1, showLoading = true) => {
 
 const handleAllPageChange = (page) => {
   allCurrentPage.value = page;
-  store.fetchAllData({ ...getSearchParams(), currentPage: page, pageSize: allPageSize.value });
+  store.fetchAllData({
+    ...getSearchParams(),
+    category: category.value,
+    currentPage: page,
+    pageSize: allPageSize.value,
+  });
 };
 
 const handleAllPageSizeChange = (size) => {
   allPageSize.value = size;
   allCurrentPage.value = 1;
-  store.fetchAllData({ ...getSearchParams(), currentPage: 1, pageSize: size });
+  store.fetchAllData({
+    ...getSearchParams(),
+    category: category.value,
+    currentPage: 1,
+    pageSize: size,
+  });
 };
 
 // 切换记录类别：沿用顶部的设备编号和时间筛选，各块回到第 1 页重新查。

@@ -381,8 +381,8 @@ async function fire(trigger, deviceNo, state) {
   // state.c_time 为设备上报时间（已本地格式化）；若为空则使用本地服务器时间，避免 UTC 时差
   const recordTime = formatLocalDateTime(state.c_time) || formatLocalDateTime(new Date())
   await promisePool.execute(
-    'INSERT INTO t_error_msg (d_no, c_time, e_msg, e_no, type) VALUES (?, ?, ?, ?, ?)',
-    [deviceNo === 'default' ? null : deviceNo, recordTime, trigger.message, trigger.id, trigger.name]
+    'INSERT INTO t_error_msg (d_no, c_time, e_msg, e_no, type, source, error_type) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    [deviceNo === 'default' ? null : deviceNo, recordTime, trigger.message, trigger.id, trigger.name, 'system', trigger.name]
   )
 
   // interlock：没打算下发（autoInterlockEnabled 关着 / actions 为空）是 null；

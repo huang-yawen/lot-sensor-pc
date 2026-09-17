@@ -354,7 +354,7 @@ export const useErrorStore = defineStore('errorStore', () => {
     try {
       const response = await api.get("/api/errData", {
         params: {
-          category: "all",
+          category: params.category || "all",
           page: params.currentPage || 1,
           keyword: params.keyword || "",
           pageSize: params.pageSize || 5,
@@ -384,8 +384,9 @@ export const useErrorStore = defineStore('errorStore', () => {
   // 故障状态/数据质量/联动控制）汇总，不按具体类型。
   const fetchAllTypeStats = async (params = {}, scope = "filtered") => {
     try {
-      const query = scope === "all" ? { category: "all" } : {
-        category: "all",
+      const categoryValue = params.category || "all";
+      const query = scope === "all" ? { category: categoryValue } : {
+        category: categoryValue,
         keyword: params.keyword || "",
         startTime: formatDateTime(params.startTime),
         endTime: formatDateTime(params.endTime),
