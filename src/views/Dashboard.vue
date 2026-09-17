@@ -151,6 +151,8 @@ const switchDurationEnabled = computed(() => config.value.SWITCH_DURATION_DISPLA
 let unsubscribeStatus = null
 let unsubscribeSensor = null
 let unsubscribeError = null
+let wsRefreshTimer = null
+let wsRefreshPending = false
 
 const rows = computed(() => dashboard.value.processedData || [])
 const latestSensor = computed(() => rows.value[0] || null)
@@ -372,6 +374,27 @@ async function loadDashboard(showLoading = true) {
   }
 }
 
+// WebSocket 推送触发的静默刷新要节流：设备大约每秒上报一条，而 loadDashboard 一次要打
+// 5~6 个接口，不节流就是每秒 5~6 个请求压在后端和数据库上（连接池只有 10 个连接）。
+// 这里是"首次立即刷新 + 窗口内合并"：第一条推送马上刷新，窗口期内再来的推送只记一个
+// 待刷新标记，窗口结束时补刷一次，保证最后一条推送的数据不会被丢掉。
+const WS_REFRESH_INTERVAL_MS = 2000
+
+function scheduleWsRefresh() {
+  if (wsRefreshTimer) {
+    wsRefreshPending = true
+    return
+  }
+  loadDashboard(false)
+  wsRefreshTimer = setTimeout(() => {
+    wsRefreshTimer = null
+    if (wsRefreshPending) {
+      wsRefreshPending = false
+      scheduleWsRefresh()
+    }
+  }, WS_REFRESH_INTERVAL_MS)
+}
+
 onMounted(async () => {
   await systemStore.load()
   loadDashboard()
@@ -379,14 +402,18 @@ onMounted(async () => {
   unsubscribeStatus = wsOn('device_status', (payload) => {
     if (Array.isArray(payload)) deviceStatuses.value = payload
   })
-  unsubscribeSensor = wsOn('sensor_data', () => loadDashboard(false))
-  unsubscribeError = wsOn('error_data', () => loadDashboard(false))
+  unsubscribeSensor = wsOn('sensor_data', () => scheduleWsRefresh())
+  unsubscribeError = wsOn('error_data', () => scheduleWsRefresh())
 })
 
 onUnmounted(() => {
   unsubscribeStatus?.()
   unsubscribeSensor?.()
   unsubscribeError?.()
+  if (wsRefreshTimer) {
+    clearTimeout(wsRefreshTimer)
+    wsRefreshTimer = null
+  }
 })
 </script>
 

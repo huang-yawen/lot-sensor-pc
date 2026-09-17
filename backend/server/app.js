@@ -371,8 +371,8 @@ setInterval(() => {
 // ==================== MQTT 重连诊断 ====================
 // 监听 MQTT 重连失败事件，优雅降级
 mqttClient.on('reconnect_failed', () => {
-    console.warn('⚠️  MQTT 重连失败，已停止重连。WebSocket 仍可正常提供 API 服务。');
-    console.warn('⚠️  当 MQTT Broker (Mosquitto) 启动后，可调用 /api/system-config 或重启后端恢复连接。');
+    console.warn('⚠️  MQTT 快重试次数已用完，转为每 30 秒慢重试（不会停止）。WebSocket 仍可正常提供 API 服务。');
+    console.warn('⚠️  MQTT Broker (Mosquitto) 恢复后会自动重连，无需人工干预；长时间连不上请检查 Broker 和网络。');
 });
 
 // 检查 MQTT 初始连接状态

@@ -468,11 +468,14 @@ async function refreshFromDB() {
   const pumpState = behaviorLatest ? behaviorLatest.field1 : null
   const heatState = behaviorLatest ? behaviorLatest.field2 : null
 
-  const [sensorRows] = await promisePool.query(
-    "SELECT d_no, field1, field2, field3, field4, c_time FROM t_sensor_data WHERE COALESCE(online, '') <> ? ORDER BY id ASC",
+  // 只回放最近 120 条：用 ORDER BY id DESC + LIMIT 让数据库只返回这 120 行，再在内存里
+  // 翻回时间正序喂给 compute()。以前是把整张表查出来再 slice(-120)，表涨到几万行时等于
+  // 每次启动都把全表读进 Node 内存，白白耗内存和时间。
+  const [sensorRowsDesc] = await promisePool.query(
+    "SELECT d_no, field1, field2, field3, field4, c_time FROM t_sensor_data WHERE COALESCE(online, '') <> ? ORDER BY id DESC LIMIT 120",
     [BACKFILL_LABEL]
   )
-  const recent = sensorRows.slice(-120)
+  const recent = sensorRowsDesc.reverse()
 
   for (const row of recent) {
     const info = { d_no: row.d_no }

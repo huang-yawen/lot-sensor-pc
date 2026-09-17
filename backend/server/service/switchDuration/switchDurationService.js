@@ -43,9 +43,11 @@ async function queryTotalOnMinutes(table, field, d_no) {
 
 /**
  * “本次已运行时长”（分钟）：判断当前是否开启，若开启则找最近一次“非开启”记录的时间作为
- * 本次开启的起点参照，用最新记录时间（而非服务器当前时间）作为终点——避免设备离线时
- * 用服务器时间继续累加导致数字失真。不走缓存，因为只是两条 ORDER BY ... LIMIT 1，
- * 无 c_time 索引下实测约 20~40ms，可接受。
+ * 本次开启的起点参照（没有则用该设备第一条记录的时间）。起点到最新记录之间不再直接做
+ * 首尾时间差，而是跟 queryTotalOnMinutes 同一套窗口函数逐行按 MAX_GAP_SEC 裁剪求和——
+ * 避免本次开启期间设备离线（超过 MAX_GAP_SEC 无上报）时，把离线的这段时间也当成"已运行"
+ * 算进去，导致跟"累计运行时长"的口径对不上（该问题由离线间隙没有被排除引起）。
+ * 不走缓存，因为只是几条 ORDER BY ... LIMIT 1 加一次窗口函数查询，可接受。
  */
 async function queryCurrentSession(table, field, d_no) {
   const conditions = []
@@ -76,8 +78,23 @@ async function queryCurrentSession(table, field, d_no) {
   }
   if (!startTime) return { isOn: true, currentSessionMinutes: 0 }
 
-  const minutes = (new Date(latest.c_time.replace(' ', 'T')) - new Date(startTime.replace(' ', 'T'))) / 60000
-  return { isOn: true, currentSessionMinutes: Math.max(0, minutes) }
+  // 从起点（含，即上一次"关"的那一行，or 该设备第一条记录）到最新记录之间，逐行算
+  // 相邻时间差、裁剪到 MAX_GAP_SEC 上限、只在 is_on 的行上累加——跟 queryTotalOnMinutes
+  // 完全同一套算法，只是把范围限定在本次开启区间，保证两个数字口径一致。
+  const sessionConditions = [...conditions, 'c_time >= ?']
+  const sessionParams = [...params, startTime]
+  const [[session]] = await promisePool.query(`
+    SELECT SUM(COALESCE(is_on * LEAST(dt_sec, ${MAX_GAP_SEC}), 0)) / 60 AS minutes
+    FROM (
+      SELECT
+        CASE WHEN TRIM(\`${field}\`) = '1' THEN 1 ELSE 0 END AS is_on,
+        TIMESTAMPDIFF(SECOND, LAG(c_time) OVER (ORDER BY c_time ASC, id ASC), c_time) AS dt_sec
+      FROM ${table}
+      WHERE ${sessionConditions.join(' AND ')}
+    ) AS with_dt
+  `, sessionParams)
+
+  return { isOn: true, currentSessionMinutes: Math.max(0, Number(session.minutes) || 0) }
 }
 
 /** 从 t_behavior_field_mapper 查 db_name 对应的中文字段名，供前端匹配"运行状态"区块里的字段。 */

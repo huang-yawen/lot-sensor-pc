@@ -10,7 +10,7 @@
  * 2. 提供消息发布功能
  * 3. 提供主题订阅功能
  * 4. 接收消息并交给路由器分发
- * 5. 重连次数超限后优雅停止，不再无限重连
+ * 5. 重连次数超限后转为固定间隔慢重试，网络恢复即自愈，不会彻底放弃
  * 
  * 使用方式：
  *   const mqttClient = require('./mqtt')
@@ -21,13 +21,17 @@
 const mqtt = require('mqtt')
 const EventEmitter = require('events')
 
+/** 快重试次数用完后转入的固定重试间隔（毫秒）。网络恢复后靠它自愈，不再需要人工介入。 */
+const SLOW_RETRY_MS = 30000
+
 /**
  * 继承 EventEmitter，对外会发出这几种事件：
  *   'connected'        - 连接成功（含首次连接和每次重连成功）
  *   'message'          - 收到一条 MQTT 消息，参数 (topic, payload)，交给
  *                        messageRouter 按主题分发给具体的业务处理器
- *   'reconnect_failed' - 重连次数用完了，彻底放弃，等人工介入（比如手动
- *                        调用 reconnect() 或者检查 Broker 是不是没启动）
+ *   'reconnect_failed' - 快重试次数用完了，已转入慢重试（每 30 秒一次，会一直重试
+ *                        下去）。发出这个事件是为了提醒排查 Broker，不代表停止重连；
+ *                        每次断连只发一次，连接恢复后重置
  */
 class MqttClient extends EventEmitter {
   /**
@@ -35,7 +39,7 @@ class MqttClient extends EventEmitter {
    * @param {string} config.url - Broker 地址，如 'mqtt://localhost:1883'
    * @param {Object} config.options - MQTT 连接选项
    * @param {Array} config.subscribeTopics - 要订阅的主题列表 [{ topic, qos }]
-   * @param {number} [config.maxReconnectAttempts=5] - 最大重连次数，超过后停止重连
+   * @param {number} [config.maxReconnectAttempts=5] - 快重试（指数退避）次数，超过后转慢重试
    */
   constructor(config) {
     super()
@@ -45,6 +49,7 @@ class MqttClient extends EventEmitter {
     this._reconnectCount = 0
     this._maxReconnectAttempts = config.maxReconnectAttempts || 5
     this._reconnectStopped = false
+    this._slowRetryNotified = false
     this._connect()
   }
 
@@ -58,14 +63,15 @@ class MqttClient extends EventEmitter {
     this.client = mqtt.connect(this.config.url, {
       ...this.config.options,
       // reconnectPeriod: 0 关掉 mqtt.js 自带的固定间隔无限重连，改由下面的
-      // _scheduleReconnect 接管：按指数退避安排重连时间，尝试次数超过上限后
-      // 停止重连，等人工介入。
+      // _scheduleReconnect 接管：先按指数退避快重试，次数超过上限后转成固定
+      // 间隔慢重试，一直重试下去。
       reconnectPeriod: 0
     })
 
     this.client.on('connect', () => {
       this.isConnected = true
       this._reconnectCount = 0
+      this._slowRetryNotified = false
       console.log('[MQTT] 已连接')
       this._subscribeAll()
       this.emit('connected')
@@ -109,32 +115,35 @@ class MqttClient extends EventEmitter {
     if (this._reconnectStopped) return
 
     this._reconnectCount++
-    console.log(`[MQTT] 正在重连... (第 ${this._reconnectCount}/${this._maxReconnectAttempts} 次)`)
-
-    if (this._reconnectCount > this._maxReconnectAttempts) {
-      this._stopReconnecting()
-      return
+    // 超过 maxReconnectAttempts 不再放弃，只是从"指数退避快重试"转成"固定间隔慢重试"：
+    // 现场断网/Broker 重启/AP 切换都可能超过快重试那几十秒，一旦彻底停掉重连，后端就
+    // 永久收不到数据了，页面还显示着旧值不报错，只能人工重启——这是设备现场最不能接受的
+    // 失败方式。慢重试一直挂着，网络恢复后能自愈。
+    const exceeded = this._reconnectCount > this._maxReconnectAttempts
+    if (exceeded) {
+      // reconnect_failed 只在刚跨过阈值时发一次，让上层（app.js）能记录、页面能展示，
+      // 不会因为慢重试每 30 秒刷一条。连接成功后重置，下次断连仍会重新提醒。
+      if (!this._slowRetryNotified) {
+        this._slowRetryNotified = true
+        console.warn(`[MQTT] 快重试已达 ${this._maxReconnectAttempts} 次，转为每 ${SLOW_RETRY_MS / 1000} 秒慢重试`)
+        console.warn('[MQTT] 请检查 MQTT Broker (Mosquitto) 是否已启动')
+        this.emit('reconnect_failed')
+      }
+      console.log(`[MQTT] 慢重试中... (累计第 ${this._reconnectCount} 次)`)
+    } else {
+      console.log(`[MQTT] 正在重连... (第 ${this._reconnectCount}/${this._maxReconnectAttempts} 次)`)
     }
 
-    // 指数退避：重连间隔依次是 1s, 2s, 4s, 8s, 16s...，封顶 30 秒，每次失败后
-    // 下次等待时间翻倍。
-    const delay = Math.min(1000 * Math.pow(2, this._reconnectCount - 1), 30000)
+    // 快重试阶段指数退避：1s, 2s, 4s, 8s, 16s，封顶 30 秒；之后固定 SLOW_RETRY_MS。
+    const delay = exceeded
+      ? SLOW_RETRY_MS
+      : Math.min(1000 * Math.pow(2, this._reconnectCount - 1), 30000)
     setTimeout(() => {
       if (this._reconnectStopped) return
       if (this.client && !this.client.connected) {
         this.client.reconnect()
       }
     }, delay)
-  }
-
-  /** 停止所有重连尝试 */
-  _stopReconnecting() {
-    if (this._reconnectStopped) return
-    this._reconnectStopped = true
-    console.warn(`[MQTT] 已达到最大重连次数 (${this._maxReconnectAttempts})，停止重连`)
-    console.warn('[MQTT] 请检查 MQTT Broker (Mosquitto) 是否已启动')
-    this.isConnected = false
-    this.emit('reconnect_failed')
   }
 
   /** 手动触发重新连接（例如在用户启动 MQTT Broker 后可调用） */
