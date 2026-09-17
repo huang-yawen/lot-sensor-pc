@@ -12,6 +12,7 @@
  */
 module.exports = {
   enabled: false,                    // 联动总开关
+  alarmCooldownMs: 30000,            // 同一个设备+执行器在冷却期内只触发一次（毫秒）
 
   // 下面各条规则的开关：只有写 true 才开；写 false、整行注释掉、删掉都算关
   pumpAlwaysOn: false,             // 水泵常开：无故障、读数没顶到异常哨兵就保持运行

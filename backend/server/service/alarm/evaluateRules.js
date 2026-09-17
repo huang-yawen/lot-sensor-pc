@@ -91,6 +91,37 @@ const events = new EventEmitter()
  *  跟故障状态机、安全联锁是同一个做法，但各记各的——三个模块各自收消息，共用一份内存状态会互相清零。 */
 const pumpStartStateMap = new Map()
 
+async function hasRecentAlarmRecord(deviceNo, triggerId, cooldownMs) {
+  const effectiveDeviceNo = deviceNo === 'default' || deviceNo == null ? null : deviceNo
+  const seconds = Math.max(1, Math.ceil((cooldownMs || 30000) / 1000))
+
+  if (effectiveDeviceNo == null) {
+    const [rows] = await promisePool.query(
+      `SELECT 1
+       FROM t_error_msg
+       WHERE e_no = ?
+         AND source = 'system'
+         AND d_no IS NULL
+         AND c_time >= DATE_SUB(NOW(), INTERVAL ? SECOND)
+       LIMIT 1`,
+      [triggerId, seconds]
+    )
+    return rows.length > 0
+  }
+
+  const [rows] = await promisePool.query(
+    `SELECT 1
+     FROM t_error_msg
+     WHERE e_no = ?
+       AND source = 'system'
+       AND d_no = ?
+       AND c_time >= DATE_SUB(NOW(), INTERVAL ? SECOND)
+     LIMIT 1`,
+    [triggerId, effectiveDeviceNo, seconds]
+  )
+  return rows.length > 0
+}
+
 /**
  * 返回水泵已连续开启的时长（毫秒）；没开时返回 null。水泵每次从关变开时记一个起始时间戳，
  * 之后每次调用返回"现在 - 起始时间"；水泵一关就把起始时间清掉，下次再开重新计时。
@@ -376,6 +407,13 @@ async function fire(trigger, deviceNo, state) {
   const cooldownKey = `${deviceNo}:${trigger.id}`
   const cooldownMs = Number(CONFIG.cooldownMs) || 30000
   if (Date.now() - (lastTriggered.get(cooldownKey) || 0) < cooldownMs) return null
+
+  const recent = await hasRecentAlarmRecord(deviceNo, trigger.id, cooldownMs)
+  if (recent) {
+    lastTriggered.set(cooldownKey, Date.now())
+    return null
+  }
+
   lastTriggered.set(cooldownKey, Date.now())
 
   // state.c_time 为设备上报时间（已本地格式化）；若为空则使用本地服务器时间，避免 UTC 时差

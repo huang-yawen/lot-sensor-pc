@@ -190,7 +190,7 @@ async function getErrorHistory(query) {
         id: row.id,
         '设备编号': row['设备编号'],
         '信息来源': row['信息来源'],
-        '类别': row['信息来源'],
+        '类别': row['类型'],
         '类型': row['类型'],
         '记录信息': row['记录信息'],
         '报警时间': row['报警时间'],

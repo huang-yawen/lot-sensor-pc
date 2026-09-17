@@ -393,7 +393,7 @@ const pickChartData = (scope, allStats, filteredStats, pageRows, column) => {
 const sumCount = (stats) => (stats || []).reduce((sum, item) => sum + (Number(item.count) || 0), 0);
 
 const allChartData = computed(() =>
-  pickChartData(allChartScope.value, store.allTypeStatsAll, store.allTypeStats, store.allData, "类别")
+  pickChartData(allChartScope.value, store.allTypeStatsAll, store.allTypeStats, store.allData, "类型")
 );
 const errChartData = computed(() =>
   pickChartData(errChartScope.value, store.errTypeStatsAll, store.errTypeStats, store.errData)
@@ -427,7 +427,9 @@ const spikeChartHint = computed(() => `共 ${sumCount(spikeChartData.value)} 条
 
 const allHeaders = computed(() => {
   const data = store.allData;
-  return data.length ? Object.keys(data[0]).filter(displayStore.isFieldVisible) : [];
+  return data.length
+    ? Object.keys(data[0]).filter((key) => key !== '类别' && displayStore.isFieldVisible(key))
+    : [];
 });
 
 // 故障记录是手写表格，也统一过滤 id/编号列。

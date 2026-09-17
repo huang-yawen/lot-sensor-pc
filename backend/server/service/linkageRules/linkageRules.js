@@ -56,6 +56,7 @@ const CONFIG = require('./config')
 const EventEmitter = require('events')
 const { SINGLE_DEVICE_MODE, DEFAULT_TARGET_TEMP } = require('../../config/appSettings')
 const { getCurrentMode } = require('../directData/getControlMode')
+const { createCooldown } = require('../controlShared/cooldown')
 const { recordEvent } = require('../controlShared/recordEvent')
 const { isPidEnabled, readSwitchOn } = require('../pidHeating/pidHeating')
 const { isPumpVelocityControlEnabled } = require('../pumpVelocityControl/pumpVelocityControl')
@@ -86,6 +87,8 @@ const events = new EventEmitter()
 
 /** 上次该条件动作，用于日志与最小化重复下发。 */
 const lastActions = new Map()
+/** 联动动作冷却：同一个设备+执行器+目标状态在冷却期内只处理一次。 */
+const cooldown = createCooldown()
 /** 记录每个设备上一次的观测温度读数（观测点见 TEMP_SOURCES.tempPressureTrend），
  * 供"加热温度持续上升"判断趋势（规则9 温度+压力融合第一段用）。 */
 const lastTemp = new Map()
@@ -635,12 +638,18 @@ async function evaluateLinkageRules(info) {
   // 拦住（canAct 保证同一个开关短时间内不会被反复切换）。五个条件缺一不可。
   if (pumpDesired && !pumpVelocityEnabled
     && states.pumpOn !== undefined && states.pumpOn !== (pumpDesired === 'on') && canAct(deviceNo, 'pump')) {
-    const pumpResult = await setSwitch('pump', '水泵', pumpDesired, deviceNo, 'linkage_rules')
-    // setSwitch 返回 false = 指令页面上找不到 preffix=pump 的开关，报文根本没发出去。
-    // 这时不能记"联动控制记录"、不能弹提示、也不算进本轮动作，否则页面上看到"水泵 关→开"
-    // 但设备实际没动，赛场排查会被带偏。
-    if (pumpResult) {
-      actions.push({ device: 'pump', action: pumpDesired })
+    const cooldownKey = `${deviceNo || 'global'}:pump:${pumpDesired}`
+    const cooldownMs = Number(CONFIG.alarmCooldownMs) >= 0 ? Number(CONFIG.alarmCooldownMs) : 30000
+    if (cooldown.withinCooldown(cooldownKey, cooldownMs)) {
+      console.log(`[LinkageRules] 设备 ${deviceNo || '全局'} 水泵 ${pumpDesired} 在冷却期内，跳过重复联动动作`)
+    } else {
+      cooldown.markFired(cooldownKey)
+      const pumpResult = await setSwitch('pump', '水泵', pumpDesired, deviceNo, 'linkage_rules')
+      // setSwitch 返回 false = 指令页面上找不到 preffix=pump 的开关，报文根本没发出去。
+      // 这时不能记"联动控制记录"、不能弹提示、也不算进本轮动作，否则页面上看到"水泵 关→开"
+      // 但设备实际没动，赛场排查会被带偏。
+      if (pumpResult) {
+        actions.push({ device: 'pump', action: pumpDesired })
       // 找出这次真的贡献了"该开/该关"这个结论的规则（候选值跟最终结论一致才算贡献，
       // 只是没表态的 null 不算），贡献规则各写一条联动控制记录，供"告警记录"页面
       // 精确统计到具体是哪条规则触发的。
@@ -648,9 +657,10 @@ async function evaluateLinkageRules(info) {
       for (const rule of pumpRules) {
         await recordLinkageAlarm(deviceNo, rule.key, '水泵', pumpDesired, sensors, pumpResult.oldValue)
       }
-      emitLinkage(deviceNo, '水泵', pumpDesired, pumpRules, sensors)
-    } else {
-      console.warn(`[LinkageRules] 水泵 -> ${pumpDesired} 未下发：指令页面找不到 preffix=pump 的开关，设备 ${deviceNo || '全局'}`)
+        emitLinkage(deviceNo, '水泵', pumpDesired, pumpRules, sensors)
+      } else {
+        console.warn(`[LinkageRules] 水泵 -> ${pumpDesired} 未下发：指令页面找不到 preffix=pump 的开关，设备 ${deviceNo || '全局'}`)
+      }
     }
   }
 
@@ -658,17 +668,24 @@ async function evaluateLinkageRules(info) {
   // 避免两边抢控制权（pidEnabled 已经在上面算过一次，这里不用重复查）。
   if (heaterDesired && !pidEnabled
     && states.heatOn !== undefined && states.heatOn !== (heaterDesired === 'on') && canAct(deviceNo, 'heater')) {
-    const heaterResult = await setSwitch('heater', '加热', heaterDesired, deviceNo, 'linkage_rules')
-    // 同上：没真正下发就不记录、不提示、不算动作。
-    if (heaterResult) {
-      actions.push({ device: 'heater', action: heaterDesired })
-      const heaterRules = ruleResults.filter(r => r.heater === heaterDesired)
-      for (const rule of heaterRules) {
-        await recordLinkageAlarm(deviceNo, rule.key, '加热', heaterDesired, sensors, heaterResult.oldValue)
-      }
-      emitLinkage(deviceNo, '加热', heaterDesired, heaterRules, sensors)
+    const cooldownKey = `${deviceNo || 'global'}:heater:${heaterDesired}`
+    const cooldownMs = Number(CONFIG.alarmCooldownMs) >= 0 ? Number(CONFIG.alarmCooldownMs) : 30000
+    if (cooldown.withinCooldown(cooldownKey, cooldownMs)) {
+      console.log(`[LinkageRules] 设备 ${deviceNo || '全局'} 加热 ${heaterDesired} 在冷却期内，跳过重复联动动作`)
     } else {
-      console.warn(`[LinkageRules] 加热 -> ${heaterDesired} 未下发：指令页面找不到 preffix=heater 的开关，设备 ${deviceNo || '全局'}`)
+      cooldown.markFired(cooldownKey)
+      const heaterResult = await setSwitch('heater', '加热', heaterDesired, deviceNo, 'linkage_rules')
+      // 同上：没真正下发就不记录、不提示、不算动作。
+      if (heaterResult) {
+        actions.push({ device: 'heater', action: heaterDesired })
+        const heaterRules = ruleResults.filter(r => r.heater === heaterDesired)
+        for (const rule of heaterRules) {
+          await recordLinkageAlarm(deviceNo, rule.key, '加热', heaterDesired, sensors, heaterResult.oldValue)
+        }
+        emitLinkage(deviceNo, '加热', heaterDesired, heaterRules, sensors)
+      } else {
+        console.warn(`[LinkageRules] 加热 -> ${heaterDesired} 未下发：指令页面找不到 preffix=heater 的开关，设备 ${deviceNo || '全局'}`)
+      }
     }
   }
 
