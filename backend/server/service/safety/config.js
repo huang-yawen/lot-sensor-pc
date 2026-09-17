@@ -9,7 +9,7 @@
  *   controlHelpers / pidHeating / scheduleService / updateDirectConfigAndPublish 读取。
  */
 module.exports = {
-  enabled: true, // 安全联锁总开关；关掉后下面所有条件都不判（requirePumpBeforeHeater 除外）
+  enabled: false, // 安全联锁总开关；关掉后下面所有条件都不判（requirePumpBeforeHeater 除外）
 
   // 命中规则后是否执行 checkRules 里 actions 写的开关动作（下发 MQTT 给底层 + 改指令页面开关值）。
   // 只有写 true 才下发；写 false、注释掉、删掉都算关：条件照常判、照常写记录和弹提示，

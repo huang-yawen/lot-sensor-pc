@@ -11,7 +11,7 @@
  * 当前状态：总开关开着（enabled=true），dualTemp、tempPressure 两条规则生效。
  */
 module.exports = {
-  enabled: true,                    // 联动总开关
+  enabled: false,                    // 联动总开关
 
   // 下面各条规则的开关：只有写 true 才开；写 false、整行注释掉、删掉都算关
   pumpAlwaysOn: false,             // 水泵常开：无故障、读数没顶到异常哨兵就保持运行

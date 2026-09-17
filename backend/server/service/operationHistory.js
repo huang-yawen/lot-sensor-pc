@@ -66,6 +66,53 @@ function ensureOperationHistoryTable() {
   return ensureTablePromise
 }
 
+function normalizeHistoryValue(value) {
+  if (value === null || value === undefined) return null
+  if (typeof value === 'string') return value.trim()
+  return String(value)
+}
+
+async function shouldSkipDuplicateHistory({ d_no, config_id, old_value, new_value }) {
+  const normalizedNewValue = normalizeHistoryValue(new_value)
+  const normalizedOldValue = normalizeHistoryValue(old_value)
+
+  // 真实没有任何状态变化时，不记重复历史（例如“已关 -> 继续关”）。
+  if (normalizedOldValue !== null && normalizedNewValue !== null && normalizedOldValue === normalizedNewValue) {
+    return true
+  }
+
+  if (!d_no || config_id === null || config_id === undefined || normalizedNewValue === null) {
+    return false
+  }
+
+  const finalDNo = normalizeDeviceNo(d_no)
+  if (!finalDNo) {
+    return false
+  }
+
+  try {
+    await ensureOperationHistoryTable()
+    const [rows] = await promisePool.query(
+      `SELECT new_value
+       FROM t_operation_history
+       WHERE d_no = ? AND config_id = ?
+       ORDER BY c_time DESC, id DESC
+       LIMIT 1`,
+      [finalDNo, Number(config_id)]
+    )
+
+    if (!rows || rows.length === 0) {
+      return false
+    }
+
+    const latestValue = normalizeHistoryValue(rows[0].new_value)
+    return latestValue !== null && latestValue === normalizedNewValue
+  } catch (error) {
+    console.warn('[OperationHistory] 去重判断失败，继续写入历史:', error.message)
+    return false
+  }
+}
+
 async function saveOperationHistory({ d_no, config_id, old_value = null, new_value, source = 'manual', c_time }) {
   if (!shouldRecord(source)) {
     return { success: true, skipped: true, reason: 'disabled_by_config' }
@@ -85,10 +132,26 @@ async function saveOperationHistory({ d_no, config_id, old_value = null, new_val
 
   try {
     await ensureOperationHistoryTable()
+
+    const shouldSkip = await shouldSkipDuplicateHistory({
+      d_no: finalDNo,
+      config_id,
+      old_value,
+      new_value
+    })
+
+    if (shouldSkip) {
+      console.log('[OperationHistory] 跳过重复状态记录:', { d_no: finalDNo, config_id, old_value, new_value, source })
+      return { success: true, skipped: true, reason: 'duplicate_state' }
+    }
+
+    const safeOldValue = old_value == null ? null : String(old_value)
+    const safeNewValue = new_value == null ? null : String(new_value)
+
     const [result] = await promisePool.execute(
       `INSERT INTO t_operation_history (d_no, config_id, old_value, new_value, source, c_time)
        VALUES (?, ?, ?, ?, ?, ?)`,
-      [finalDNo, config_id ?? null, old_value == null ? null : String(old_value), new_value == null ? null : String(new_value), source, time]
+      [finalDNo, config_id ?? null, safeOldValue, safeNewValue, source, time]
     )
     console.log('[OperationHistory] 保存成功:', { d_no: finalDNo, config_id, old_value, new_value, source, c_time: time, id: result.insertId })
     return { success: true, insertId: result.insertId }

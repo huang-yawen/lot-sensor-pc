@@ -24,9 +24,9 @@
  * 与安全联锁相互独立、都全程生效。
  * 注：压力上下限、流量上下限、目标温度等阈值仍只从指令中心 t_direct 实时读取。
  * 当前状态：总开关开着（enabled=true），②⑤⑥三条生效，④未启用。
- */
+ */     
 module.exports = {
-  enabled: true,            // 故障状态总开关
+  enabled: false,            // 故障状态总开关
 
   // 六种故障各自的开关：只有写 true 才开；写 false、整行注释掉、删掉都算关
   pipeBlockage: true,       // 故障①：进水口/管道堵塞

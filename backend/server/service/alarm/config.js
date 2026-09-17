@@ -40,7 +40,7 @@
  * 告警文案里会写明是哪一路，不用为两路各配一套阈值。
  */
 module.exports = {
-  enabled: false,
+  enabled: true,
   autoInterlockEnabled: true,
 
   // ==================== 各规则开关（赛场临时停掉某一条用，只在本文件） ====================
