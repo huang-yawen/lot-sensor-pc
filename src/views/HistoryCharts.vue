@@ -1617,6 +1617,41 @@ watch(derivedMetricEntries, () => {
 })
 
 // 计算指标历史明细表（顶部）：把各类时间序列计算数据整理成 {key,label,columns,rows} 供顶部 el-tabs 渲染，随时间范围刷新。
+
+/** 单个时间格式化（formatTimes 的单值版本）。 */
+function formatOneTime(cTime) {
+  if (!cTime) return ''
+  const d = new Date(cTime)
+  if (Number.isNaN(d.getTime())) return ''
+  return d.toLocaleString('zh-CN', {
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+  })
+}
+
+/**
+ * 把多条时间序列按“基准时间轴”合并成表格行。
+ * 各指标来自不同数据表（累计流量在 t_sensor_data、运行时长在 t_behavior_data），采样/分桶后的
+ * 时间点不一定一一对应，所以不能按数组下标对齐，而是对每个基准时刻取“时间不晚于它的最近一条”，
+ * 保证同一行里的各列确实是同一时刻的值。
+ * @param {Array<Object>} baseRows 基准序列（取数据点最多的一条），提供行数与时间轴
+ * @param {Array<{prop:string, rows:Array, pick:Function}>} seriesList 其余各列
+ */
+function mergeSeriesByTime(baseRows, seriesList) {
+  const cursors = seriesList.map(() => -1)
+  return baseRows.map((baseRow) => {
+    const row = { '时间': formatOneTime(baseRow.c_time) }
+    const baseTime = String(baseRow.c_time || '')
+    seriesList.forEach((s, si) => {
+      let ci = cursors[si]
+      while (ci + 1 < s.rows.length && String(s.rows[ci + 1].c_time || '') <= baseTime) ci++
+      cursors[si] = ci
+      row[s.prop] = ci >= 0 ? s.pick(s.rows[ci]) : null
+    })
+    return row
+  })
+}
+
 const activeDetailTab = ref('')
 
 const detailTables = computed(() => {
@@ -1627,13 +1662,9 @@ const detailTables = computed(() => {
   const cumKeys = Object.keys(cumulativeData.value).filter((k) => Array.isArray(cumulativeData.value[k]) && cumulativeData.value[k].length > 0 && cumConfigs[k])
   if (cumKeys.length) {
     const baseKey = cumKeys.reduce((a, b) => (cumulativeData.value[b].length > cumulativeData.value[a].length ? b : a))
-    const times = formatTimes(cumulativeData.value[baseKey])
     const columns = [{ prop: '时间', label: '时间' }, ...cumKeys.map((k) => ({ prop: k, label: `${cumConfigs[k].metric_name}(${cumConfigs[k].unit || ''})` }))]
-    const rows = times.map((t, i) => {
-      const row = { '时间': t }
-      for (const k of cumKeys) { const r = cumulativeData.value[k][i]; row[k] = r ? r.cumulative : null }
-      return row
-    })
+    const series = cumKeys.map((k) => ({ prop: k, rows: cumulativeData.value[k], pick: (r) => r.cumulative }))
+    const rows = mergeSeriesByTime(cumulativeData.value[baseKey], series)
     tables.push({ key: 'cumulative', label: '累计指标', columns, rows })
   }
 
@@ -1642,13 +1673,9 @@ const detailTables = computed(() => {
   const twKeys = Object.keys(timeWindowData.value).filter((k) => Array.isArray(timeWindowData.value[k]) && timeWindowData.value[k].length > 0 && twConfigs[k])
   if (twKeys.length) {
     const baseKey = twKeys.reduce((a, b) => (timeWindowData.value[b].length > timeWindowData.value[a].length ? b : a))
-    const times = formatTimes(timeWindowData.value[baseKey])
     const columns = [{ prop: '时间', label: '时间' }, ...twKeys.map((k) => ({ prop: k, label: `${twConfigs[k].metric_name}(${twConfigs[k].unit || ''})` }))]
-    const rows = times.map((t, i) => {
-      const row = { '时间': t }
-      for (const k of twKeys) { const r = timeWindowData.value[k][i]; row[k] = r ? r.value : null }
-      return row
-    })
+    const series = twKeys.map((k) => ({ prop: k, rows: timeWindowData.value[k], pick: (r) => r.value }))
+    const rows = mergeSeriesByTime(timeWindowData.value[baseKey], series)
     tables.push({ key: 'timeWindow', label: '滑动窗口', columns, rows })
   }
 
@@ -1665,14 +1692,16 @@ const detailTables = computed(() => {
   // 加热效率/速度
   if (heatingEfficiencyRows.value.length || heatingRateRows.value.length) {
     const base = heatingEfficiencyRows.value.length >= heatingRateRows.value.length ? heatingEfficiencyRows.value : heatingRateRows.value
-    const times = formatTimes(base)
+    const series = [
+      { prop: 'actualRiseC', rows: heatingEfficiencyRows.value, pick: (r) => r.actualRiseC },
+      { prop: 'theoreticalRiseC', rows: heatingEfficiencyRows.value, pick: (r) => r.theoreticalRiseC },
+      { prop: 'efficiencyPct', rows: heatingEfficiencyRows.value, pick: (r) => r.efficiencyPct },
+      { prop: 'heatingRate', rows: heatingRateRows.value, pick: (r) => r.heatingRate },
+    ]
     tables.push({
       key: 'heatingAnalysis', label: '加热效率/速度',
       columns: [{ prop: '时间', label: '时间' }, { prop: 'actualRiseC', label: '实际升温(℃)' }, { prop: 'theoreticalRiseC', label: '理论升温(℃)' }, { prop: 'efficiencyPct', label: '加热效率(%)' }, { prop: 'heatingRate', label: '加热速度(℃/min)' }],
-      rows: times.map((t, i) => {
-        const e = heatingEfficiencyRows.value[i]; const r = heatingRateRows.value[i]
-        return { '时间': t, actualRiseC: e ? e.actualRiseC : null, theoreticalRiseC: e ? e.theoreticalRiseC : null, efficiencyPct: e ? e.efficiencyPct : null, heatingRate: r ? r.heatingRate : null }
-      }),
+      rows: mergeSeriesByTime(base, series),
     })
   }
 
@@ -1710,13 +1739,9 @@ const detailTables = computed(() => {
   const derivedKeys = Object.keys(derivedMetricData.value).filter((k) => derivedMetricData.value[k].rows && derivedMetricData.value[k].rows.length > 0)
   if (derivedKeys.length) {
     const baseKey = derivedKeys[0]
-    const times = formatTimes(derivedMetricData.value[baseKey].rows)
     const columns = [{ prop: '时间', label: '时间' }, ...derivedKeys.map((k) => ({ prop: k, label: `${derivedMetricData.value[k].config.metric_name}(${derivedMetricData.value[k].config.unit || ''})` }))]
-    const rows = times.map((t, i) => {
-      const row = { '时间': t }
-      for (const k of derivedKeys) { const r = derivedMetricData.value[k].rows[i]; row[k] = r ? r.value : null }
-      return row
-    })
+    const series = derivedKeys.map((k) => ({ prop: k, rows: derivedMetricData.value[k].rows, pick: (r) => r.value }))
+    const rows = mergeSeriesByTime(derivedMetricData.value[baseKey].rows, series)
     tables.push({ key: 'derived', label: '自定义公式', columns, rows })
   }
 

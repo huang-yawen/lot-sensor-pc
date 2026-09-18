@@ -1,0 +1,27 @@
+
+===== ① 判定服务没启动 / 地址写错（连接被拒） =====
+[后端日志] [AutoJudgment] 本轮判定失败: fetch failed
+[数据库 t_judgment_record] status='failed'  error_message='fetch failed'  conclusion=NULL  confidence=NULL  source_ids='1201,1202,1203'
+[前端“自动判定”页] 判定时间=2026/9/18 12:33:59  状态=失败(红色标签)  判定结论=—  置信度=—  错误信息=fetch failed
+
+===== ② 判定服务响应超时（timeoutMs=500） =====
+[后端日志] [AutoJudgment] 本轮判定失败: This operation was aborted
+[数据库 t_judgment_record] status='failed'  error_message='This operation was aborted'  conclusion=NULL  confidence=NULL  source_ids='1201,1202,1203'
+[前端“自动判定”页] 判定时间=2026/9/18 12:33:59  状态=失败(红色标签)  判定结论=—  置信度=—  错误信息=This operation was aborted
+
+===== ③ 判定服务内部报错（HTTP 500） =====
+[后端日志] [AutoJudgment] 本轮判定失败: 判定服务返回 HTTP 500: Internal Server Error: model not loaded
+[数据库 t_judgment_record] status='failed'  error_message='判定服务返回 HTTP 500: Internal Server Error: model not loaded'  conclusion=NULL  confidence=NULL  source_ids='1201,1202,1203'
+[前端“自动判定”页] 判定时间=2026/9/18 12:34:00  状态=失败(红色标签)  判定结论=—  置信度=—  错误信息=判定服务返回 HTTP 500: Internal Server Error: model not loaded
+
+===== ④ 响应不是 JSON（返回了 HTML 错误页） =====
+[后端日志] [AutoJudgment] 本轮判定失败: 判定服务响应不是合法 JSON: <html><body>502 Bad Gateway (nginx)</body></html>
+[数据库 t_judgment_record] status='failed'  error_message='判定服务响应不是合法 JSON: <html><body>502 Bad Gateway (nginx)</body></html>'  conclusion=NULL  confidence=NULL  source_ids='1201,1202,1203'
+[前端“自动判定”页] 判定时间=2026/9/18 12:34:00  状态=失败(红色标签)  判定结论=—  置信度=—  错误信息=判定服务响应不是合法 JSON: <html><body>502 Bad Gateway (nginx)</body></html>
+
+===== ⑤ 判定服务未启用且禁止占位判定 =====
+[后端日志] [AutoJudgment] 本轮判定失败: 智能判定服务尚未启用
+[数据库 t_judgment_record] status='failed'  error_message='智能判定服务尚未启用'  conclusion=NULL  confidence=NULL  source_ids='1201,1202,1203'
+[前端“自动判定”页] 判定时间=2026/9/18 12:34:00  状态=失败(红色标签)  判定结论=—  置信度=—  错误信息=智能判定服务尚未启用
+
+（演示结束。以上错误文案与后端真实运行时一致。）

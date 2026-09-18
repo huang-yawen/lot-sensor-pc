@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<title>智能判定联动弹窗 · 预览</title>
+<link rel="stylesheet" href="../node_modules/element-plus/dist/index.css" />
+<style>
+  body { margin: 0; background: #f1f5f9; font-family: system-ui, -apple-system, "Microsoft YaHei", sans-serif; }
+  .demo-toolbar {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 9999;
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    padding: 10px 16px; background: #fff; border-bottom: 1px solid #e2e8f0;
+    box-shadow: 0 1px 3px rgba(0,0,0,.06); font-size: 13px; color: #475569;
+  }
+  .demo-toolbar button { padding: 5px 12px; border: 1px solid #cbd5e1; background: #fff; border-radius: 6px; cursor: pointer; font-size: 13px; }
+  .demo-toolbar button:hover { border-color: #374270; color: #374270; }
+  .demo-toolbar label { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
+  .demo-note { max-width: 720px; margin: 80px auto 40px; padding: 18px 20px; background: #fff; border: 1px solid #e2e8f0; border-radius: 10px; color: #475569; font-size: 13px; line-height: 1.9; }
+  .demo-note h3 { margin: 0 0 10px; font-size: 15px; color: #0f172a; }
+  .demo-note code { background: #f4f4f5; padding: 1px 5px; border-radius: 4px; color: #374270; }
+
+  /* ↓↓↓ 以下样式与 src/components/JudgmentActionAlertDialog.vue 完全一致 ↓↓↓ */
+  .dialog-head { display: flex; align-items: center; gap: 8px; }
+  .status-dot { width: 7px; height: 7px; border-radius: 50%; background: #f59e0b; flex-shrink: 0; }
+  .dialog-title { font-size: 14px; font-weight: 500; color: #71717a; }
+  .action-body { padding: 2px 0 4px; }
+  .action-name-row { display: flex; align-items: baseline; gap: 8px; margin-bottom: 10px; }
+  .action-name { font-size: 18px; font-weight: 600; color: #18181b; letter-spacing: -0.01em; }
+  .action-code { font-size: 12px; color: #a1a1aa; background: #f4f4f5; border-radius: 4px; padding: 1px 6px; }
+  .action-detail { font-size: 13px; line-height: 1.6; color: #52525b; margin: 0 0 14px; }
+  .action-meta { display: flex; gap: 12px; font-size: 12px; color: #a1a1aa; padding-top: 12px; border-top: 1px solid #f4f4f5; }
+  .confirm-btn { border-radius: 6px; padding: 8px 20px; background-color: #374270; border-color: #374270; color: #fff; }
+  .confirm-btn:hover { background-color: #4a5a91; border-color: #4a5a91; }
+  .judgment-action-dialog { border-radius: 8px; overflow: hidden; box-shadow: 0 1px 2px rgba(0,0,0,.04), 0 12px 28px rgba(0,0,0,.1); }
+  .judgment-action-dialog .el-dialog__header { padding: 18px 20px 14px; margin: 0; border-bottom: 1px solid #f4f4f5; }
+  .judgment-action-dialog .el-dialog__body { padding: 18px 20px; }
+  .judgment-action-dialog .el-dialog__footer { padding: 0 20px 18px; display: flex; justify-content: flex-end; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="demo-toolbar">
+    <strong>触发场景：</strong>
+    <button v-for="s in scenarios" :key="s.id" @click="trigger(s)">{{ s.name }}</button>
+    <span style="margin-left:12px">底部按钮：</span>
+    <label><input type="radio" :value="false" v-model="requireReset" /> 知道了</label>
+    <label><input type="radio" :value="true" v-model="requireReset" /> 复位</label>
+  </div>
+
+  <div class="demo-note">
+    <h3>这是「智能判定触发联动」弹窗（JudgmentActionAlertDialog.vue）</h3>
+    触发链路：智能判定服务返回结论文字 → <code>judgmentAction.js</code> 按关键词匹配 RULES →
+    命中就关泵/关加热 + 写故障记录 → 广播 <code>judgment_action_triggered</code> → 前端弹这个窗。<br />
+    点上面的按钮即可看不同规则的弹窗；「复位 / 知道了」由 <code>judgmentAction/config.js</code> 的
+    <code>requireReset</code> 决定（当前项目是 <code>false</code> → 显示「知道了」）。<br />
+    ⚠️ 注意：结论为「正常」时<strong>不会弹窗</strong>（关键词没命中任何规则）；且
+    <code>JUDGMENT_ACTION.enabled</code> 目前是 <code>false</code>，要真触发得先改成 <code>true</code>。
+  </div>
+
+  <el-dialog v-model="visible" width="380px" :close-on-click-modal="false" class="judgment-action-dialog" @close="onClose">
+    <template #header>
+      <div class="dialog-head">
+        <span class="status-dot"></span>
+        <span class="dialog-title">智能判定触发联动</span>
+      </div>
+    </template>
+    <div class="action-body" v-if="current">
+      <div class="action-name-row">
+        <span class="action-name">{{ current.name }}</span>
+        <span class="action-code">{{ current.id }}</span>
+      </div>
+      <p class="action-detail">{{ current.detail }}</p>
+      <div class="action-meta">
+        <span>{{ time }}</span>
+        <span v-if="current.deviceNo">设备 {{ current.deviceNo }}</span>
+      </div>
+    </div>
+    <template #footer>
+      <el-button v-if="requireReset" class="confirm-btn" @click="close">复位</el-button>
+      <el-button v-else class="confirm-btn" @click="close">知道了</el-button>
+    </template>
+  </el-dialog>
+</div>
+
+<script src="../node_modules/vue/dist/vue.global.js"></script>
+<script src="../node_modules/element-plus/dist/index.full.js"></script>
+<script>
+const { createApp, ref } = Vue
+createApp({
+  setup() {
+    // 与 backend/server/service/judgmentAction/judgmentAction.js 的 fire() 广播结构一致：
+    // { id, name, detail, interlocked, locked, deviceNo }
+    const scenarios = [
+      { id: 'dry_burn', name: '干烧', detail: '判定结论：干烧', deviceNo: '2021' },
+      { id: 'pipe_leak', name: '管道漏水', detail: '判定结论：管道漏水', deviceNo: '2021' },
+      { id: 'pipe_blockage', name: '管道堵塞', detail: '判定结论：管道堵塞', deviceNo: '2021' },
+    ]
+    const visible = ref(false)
+    const current = ref(null)
+    const requireReset = ref(false)
+    const time = ref('')
+
+    function now() {
+      const d = new Date(); const p = (n) => String(n).padStart(2, '0')
+      return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
+    }
+    function trigger(s) {
+      current.value = s
+      time.value = now()
+      visible.value = true
+    }
+    function close() { visible.value = false }
+    function onClose() { current.value = null }
+
+    // 打开页面先自动弹一次「干烧」，方便直接看到效果
+    trigger(scenarios[0])
+    return { scenarios, visible, current, requireReset, time, trigger, close, onClose }
+  },
+}).use(ElementPlus).mount('#app')
+</script>
+</body>
+</html>

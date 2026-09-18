@@ -22,6 +22,7 @@ const { resolveDeviceNo, resolveFieldAliases } = require('../../utils/mappedData
 const { firstValue } = require('../../utils/protocol')
 const { calcBucketSeconds } = require('../../utils/timeRange')
 const { formatLocalDateTime } = require('../../utils/helper')
+const SNAPSHOT_CONFIG = require('./config')
 
 const MAX_GAP_SEC = 10
 const SNAPSHOT_TABLE = 't_cumulative_snapshot'
@@ -93,25 +94,36 @@ function restoreState() {
  * @param {number} params.cTimeMs 本条采集时间（毫秒）
  */
 async function appendSnapshots({ d_no, info, cTimeMs }) {
+  if (!SNAPSHOT_CONFIG.enabled) return
   if (!Number.isFinite(cTimeMs)) return
   const deviceNo = d_no || await resolveDeviceNo(info)
   if (!deviceNo) return
   await ensureTable()
   await restoreState()
+  ensureCleanupTimer()
 
   const metrics = (CUMULATIVE_METRICS || []).filter(
     m => m.enabled && (m.aggregation === 'on_duration' || m.aggregation === 'flow_integral')
   )
   if (!metrics.length) return
 
-  const cTime = info?.c_time || formatLocalDateTime(new Date(cTimeMs))
-  const inserts = []
-
+  // 先把各指标要读的字段别名取出来（缓存后基本零开销）。这一步有 await，先做完；
+  // 后面“读 state → 算增量 → 写 state”是一整段同步代码，不会被并发的其它消息在中间
+  // 交错打断（MQTT 消息是并发处理的，若在中间 await 会丢失增量）。
+  const prepared = []
   for (const metric of metrics) {
     const aliases = await getAliases(metric.source_table, metric.source_field)
     const raw = firstValue(info, aliases)
     if (raw == null) continue
+    prepared.push({ metric, raw })
+  }
+  if (!prepared.length) return
 
+  const cTime = info?.c_time || formatLocalDateTime(new Date(cTimeMs))
+  const inserts = []
+
+  // ↓↓↓ 同步块：读 state → 算增量 → 写 state，中间不得出现 await ↓↓↓
+  for (const { metric, raw } of prepared) {
     const key = `${deviceNo}|${metric.metric_key}`
     const prev = state.get(key)
     const lastValue = prev ? prev.value : 0
@@ -132,9 +144,18 @@ async function appendSnapshots({ d_no, info, cTimeMs }) {
     }
 
     const value = lastValue + delta
-    state.set(key, { value, cTimeMs })
-    inserts.push([deviceNo, metric.metric_key, cTime, Number(value.toFixed(6))])
+    // 写库节流：距上次落库不足 minWriteIntervalMs 就只更新内存值、不落新行，控制快照表行数
+    // （内存值仍每条精确累加，首页取“此刻”累计值直接用内存值）。
+    const lastWriteMs = prev ? prev.lastWriteMs : NaN
+    const shouldWrite = !SNAPSHOT_CONFIG.minWriteIntervalMs
+      || !Number.isFinite(lastWriteMs)
+      || (cTimeMs - lastWriteMs) >= SNAPSHOT_CONFIG.minWriteIntervalMs
+    state.set(key, { value, cTimeMs, lastWriteMs: shouldWrite ? cTimeMs : lastWriteMs })
+    if (shouldWrite) {
+      inserts.push([deviceNo, metric.metric_key, cTime, Number(value.toFixed(6))])
+    }
   }
+  // ↑↑↑ 同步块结束 ↑↑↑
 
   if (inserts.length) {
     await promisePool.query(
@@ -151,6 +172,7 @@ async function appendSnapshots({ d_no, info, cTimeMs }) {
  * @returns {Array<{c_time, value, cumulative}>}
  */
 async function querySnapshotSeries({ metric_key, d_no = null, limit = 300, startTime, endTime } = {}) {
+  if (!SNAPSHOT_CONFIG.enabled) return []
   await ensureTable()
   const safeLimit = Math.min(2000, Math.max(1, Number.parseInt(limit, 10) || 300))
   const conditions = ['metric_key = ?']
@@ -178,11 +200,28 @@ async function querySnapshotSeries({ metric_key, d_no = null, limit = 300, start
   return rows
 }
 
+/** 从内存运行态里取某指标最新累计值（写库是节流的，内存值比表里最后一行更新）。 */
+function readLatestFromState(metric_key, d_no) {
+  if (d_no) {
+    const st = state.get(`${d_no}|${metric_key}`)
+    return st ? Number(st.value.toFixed(6)) : null
+  }
+  // 没传设备号（单设备模式）：取该指标任意一个设备的内存值
+  for (const [key, st] of state.entries()) {
+    if (key.endsWith(`|${metric_key}`)) return Number(st.value.toFixed(6))
+  }
+  return null
+}
+
 /**
  * 只取某个累计指标的最新快照值（首页「累计运行时长」用，避免全表扫描）。
- * @returns {number|null} 没有快照时返回 null，调用方回退到全表计算
+ * 优先用内存里的最新累计值，其次读表（表里的最后一行可能比内存值旧最多一个节流间隔）。
+ * @returns {number|null} 完全没有数据时返回 null，调用方回退到全表计算
  */
 async function querySnapshotLatest({ metric_key, d_no = null } = {}) {
+  if (!SNAPSHOT_CONFIG.enabled) return null
+  const fromMemory = readLatestFromState(metric_key, d_no)
+  if (fromMemory != null) return fromMemory
   await ensureTable()
   const conditions = ['metric_key = ?']
   const params = [metric_key]
@@ -194,6 +233,37 @@ async function querySnapshotLatest({ metric_key, d_no = null } = {}) {
   return row ? Number(row.cumulative_value) : null
 }
 
+/** 清理定时器：懒启动（第一次写快照时启动），只启动一次；unref 让它不阻止进程退出。 */
+let cleanupTimer = null
+function ensureCleanupTimer() {
+  if (cleanupTimer) return
+  if (!SNAPSHOT_CONFIG.enabled) return
+  if (!(SNAPSHOT_CONFIG.retentionDays > 0)) return
+  cleanupTimer = setInterval(() => {
+    cleanupExpired().catch(err => console.error('[CumulativeSnapshot] 清理过期快照失败:', err.message))
+  }, SNAPSHOT_CONFIG.cleanupIntervalMs)
+  if (cleanupTimer.unref) cleanupTimer.unref()
+}
+
+/** 分批删除超过保留期的快照行（避免长事务锁表）。返回删除行数。 */
+async function cleanupExpired() {
+  const days = Math.floor(SNAPSHOT_CONFIG.retentionDays)
+  if (!(days > 0)) return 0
+  await ensureTable()
+  const batch = Math.max(100, Number(SNAPSHOT_CONFIG.cleanupBatchSize) || 5000)
+  let deleted = 0
+  for (;;) {
+    const [res] = await promisePool.query(
+      `DELETE FROM ${SNAPSHOT_TABLE} WHERE c_time < DATE_SUB(NOW(), INTERVAL ${days} DAY) LIMIT ${batch}`
+    )
+    if (!res.affectedRows) break
+    deleted += res.affectedRows
+    if (res.affectedRows < batch) break
+  }
+  if (deleted) console.log(`[CumulativeSnapshot] 已清理 ${deleted} 行超过 ${days} 天的快照`)
+  return deleted
+}
+
 /** 清空快照表（回填前调用，避免重复累加）。 */
 async function truncateSnapshots() {
   await ensureTable()
@@ -202,5 +272,5 @@ async function truncateSnapshots() {
   restorePromise = null
 }
 
-module.exports = { SNAPSHOT_TABLE, ensureTable, appendSnapshots, querySnapshotSeries, querySnapshotLatest, truncateSnapshots }
+module.exports = { SNAPSHOT_TABLE, ensureTable, appendSnapshots, querySnapshotSeries, querySnapshotLatest, truncateSnapshots, cleanupExpired }
 

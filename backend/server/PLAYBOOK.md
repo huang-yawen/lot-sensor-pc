@@ -601,6 +601,14 @@ node backend/server/init/backfill_cumulative_snapshot.js
 ⚠️ 回填完请**重启后端**，让内存累计态重新从快照表恢复，避免新旧值不连续。
 快照表为空时 `cumulativeService` 会自动回退到原来的实时计算，页面不会空白（只是慢）。
 
+**写入节流与保留策略**在 `service/cumulative/config.js`（改完重启后端生效）：
+- `minWriteIntervalMs`（默认 5000）：同一设备同一指标最多每 5 秒落一行快照，把行数从“数据条数”
+  降到“时长 ÷ 间隔”。注意内存里的累计值仍然**每条上报都精确累加**，首页取“此刻”累计值
+  直接用内存值，所以节流只影响落库的快照点密度。
+- `retentionDays`（默认 30）+ `cleanupIntervalMs`（默认 6 小时）：定期分批删除超过保留期的快照行，
+  避免表无限增长。
+- `enabled`：设 `false` 可临时停用快照，查询自动回退实时计算（表里已有数据保留不动）。
+
 ---
 
 ## 附录 A · 关键文件地图
