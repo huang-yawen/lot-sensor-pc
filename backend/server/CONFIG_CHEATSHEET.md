@@ -2,9 +2,9 @@
 
 > 赛场调参先查这里，找到键名再去 `config/systemConfig.js` 看该键的详细注释（文件已按编号分区，见文件顶部目录）。
 >
-> **改配置的正确姿势**：前端「场景配置」页 → 导出 → 改 JSON → 校验并应用。落盘在 `data/system-config.json`，覆盖代码里的默认值。
+> **改配置的正确姿势**：配置现在都是代码常量，改对应 `config/*.js` / `service/*/config.js`，改完重启后端生效（不再是 JSON 落盘）。
 >
-> **热更新**：除标注「需重启」外，保存后由 `systemConfig.onChange` 立即生效，无需重启后端。
+> **热更新**：配置已改为代码常量，均需重启后端生效；只有指令中心 `t_direct`（页面上改）和数据库字段映射表 `t_*_field_mapper` 能即时生效。
 >
 > **一条贯穿约定**：凡是「现场要能调的阈值 / 开关」，程序先查指令中心 `t_direct`（按 `preffix`），查不到才用这里的默认值。所以下面很多项写着「兜底」——指令中心配了就不看这里。
 
@@ -74,8 +74,9 @@
 
 | 键 | 作用 | 读取方 |
 |---|---|---|
-| `INTELLIGENT_JUDGMENT` | 对接现场判定服务的全部参数，共 13 个键：`enabled` / `mockWhenDisabled`、`url` / `method` / `timeoutMs` / `headers`、请求体字段名 `requestField`、结论解析 `resultPath` / `conclusionPath` / `confidencePath`、显示开关 `showOnSensorPage` / `showOnBehaviorPage` / `showHistoryMenu`。**手动和自动两种模式共用这一份** | `service/intelligentJudgment/judgeClient.js` |
-| `AUTO_JUDGMENT` | 自动判定模式的节奏：`enabled`（定时器总开关，跟上面那个 `enabled` 不是一回事）、`intervalMs`（多久提交一次）、`recentCount`（每次取最新几条）、`bufferSize`（内存留几条给图表）、`showMenu` | `service/autoJudgment/autoJudgment.js` |
+| `INTELLIGENT_JUDGMENT` | 对接现场判定服务的全部参数，共 13 个键：`enabled` / `mockWhenDisabled`、`url` / `method` / `timeoutMs` / `headers`、请求体字段名 `requestField`、结论解析 `resultPath` / `conclusionPath` / `confidencePath`、显示开关 `showOnSensorPage` / `showOnBehaviorPage` / `showHistoryMenu`。**手动 / 自动 / 消息实时三种模式共用这一份** | `service/intelligent/intelligentJudgment.js` |
+| `AUTO_JUDGMENT` | 自动判定模式的节奏：`enabled`（定时器总开关，跟上面那个 `enabled` 不是一回事）、`intervalMs`（多久提交一次）、`recentCount`（每次取最新几条）、`bufferSize`（内存留几条给图表）、`showMenu` | `service/intelligent/intelligentJudgment.js` |
+| `REALTIME_JUDGMENT` | 消息即触发判定开关：`enabled`（true=每条 MQTT 消息到达都异步判定一次，判定服务压力最大） | `mqtt/combinedRealtime/combinedRealtimeHandler.js` |
 
 ---
 

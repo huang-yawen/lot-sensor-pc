@@ -24,7 +24,7 @@ const getDirectConfigRender = require('../controllers/direct/directConfigRender'
 // ==================== 智能判定控制器 ====================
 const intelligentRecognize = require('../controllers/intelligent/recognize')
 const judgmentRecords = require('../controllers/intelligent/records')
-const { getRecent: getAutoJudgmentRecent } = require('../service/autoJudgment/autoJudgment')
+const { getAutoJudgmentRecent } = require('../service/intelligent/intelligentJudgment')
 
 // ==================== 操作历史控制器 ====================
 const operationHistoryController = require('../controllers/operationHistory')
@@ -71,6 +71,8 @@ const mqttClient = require('../mqtt/index')
 const { SINGLE_DEVICE_MODE } = require('../config/appSettings')
 const { CUMULATIVE_METRICS, COMPUTED_METRICS } = require('../config/metrics')
 const FAULT_CONFIG = require('../service/faultStatus/config')
+const JUDGMENT_ACTION_CONFIG = require('../service/judgmentAction/config')
+const { resetJudgmentAction, getJudgmentActionState, isAnyJudgmentActionLocked } = require('../service/judgmentAction/judgmentAction')
 
 /* ============================================================
  * 业务 API 路由
@@ -309,6 +311,46 @@ router.post('/api/faultStatus/reset', async (req, res) => {
   } catch (err) {
     console.error('[FaultStatus/reset] 复位失败:', err)
     return res.status(500).json({ success: false, message: err.message || '复位失败' })
+  }
+})
+
+/* ============================================================
+ * 智能判定联动接口（配合 service/judgmentAction 的复位功能）
+ * ============================================================ */
+// GET /api/judgmentAction/state
+//   查询智能判定联动当前锁定状态（前端弹窗/轮询用）。
+//   返回：{ success, enabled, requireReset, data: 锁定详情或 null, anyLocked }
+router.get('/api/judgmentAction/state', (req, res) => {
+  try {
+    const dNoRaw = req.query.d_no
+    const dNo = (dNoRaw != null && dNoRaw !== '' && dNoRaw !== 'null' && dNoRaw !== 'undefined')
+      ? String(dNoRaw).trim() : null
+    res.json({
+      success: true,
+      enabled: JUDGMENT_ACTION_CONFIG.enabled === true,
+      requireReset: JUDGMENT_ACTION_CONFIG.requireReset === true,
+      data: getJudgmentActionState(dNo),
+      anyLocked: isAnyJudgmentActionLocked(),
+    })
+  } catch (err) {
+    console.error('[JudgmentAction/state] 查询失败:', err)
+    res.status(500).json({ success: false, message: err.message || '查询失败' })
+  }
+})
+
+// POST /api/judgmentAction/reset
+//   手动复位：用户人工确认处理完后点"复位"，解除智能判定联动的锁定。
+//   Body: { d_no?: string|null }
+router.post('/api/judgmentAction/reset', (req, res) => {
+  try {
+    const dNoRaw = req.body?.d_no
+    const dNo = (dNoRaw != null && dNoRaw !== '' && dNoRaw !== 'null' && dNoRaw !== 'undefined')
+      ? String(dNoRaw).trim() : null
+    const result = resetJudgmentAction(dNo)
+    res.json({ success: result.success, message: result.message, data: { status: 'reset', ...result } })
+  } catch (err) {
+    console.error('[JudgmentAction/reset] 复位失败:', err)
+    res.status(500).json({ success: false, message: err.message || '复位失败' })
   }
 })
 

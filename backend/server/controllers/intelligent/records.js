@@ -13,10 +13,10 @@
  *                                  total, page, pageSize } }
  * 出错 500：{ success:false, message }
  *
- * 直接读 t_judgment_record（每次判定不管成败都会往里落一条，见 recognize.js）。
+ * 直接读 t_judgment_record（判定记录在 service/intelligent/intelligentJudgment.js 里写入）。
  */
 const promisePool = require('../../config/dbPool')
-const { ensureTable } = require('./recognize')
+const { ensureTable } = require('../../service/intelligent/intelligentJudgment')
 const { DEFAULT_PAGE_SIZE } = require('../../config/appSettings')
 
 module.exports = async (req, res) => {

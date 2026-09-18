@@ -2,7 +2,13 @@
  * 【配置】当 MQTT_TOPICS.sensor 与 MQTT_TOPICS.behavior 配置为同一个主题时，
  * mqtt/index.js 会用本处理器替代分开的 sensorRealtimeHandler/behaviorRealtimeHandler，
  * 两张表各自按自己的字段映射表（t_sensor_field_mapper/t_behavior_field_mapper）从同一条
- * 消息中挑出需要的字段落库，不需要设备分两条消息上报。 */
+ * 消息中挑出需要的字段落库，不需要设备分两条消息上报。
+ * 
+ * 【智能判定（方式③ 消息即触发）】本处理器在每条消息处理末尾调用
+ * triggerRealtimeJudgment()（见文件底部），把原始报文映射成 field1..field4 后交给
+ * service/intelligent/intelligentJudgment.js 的 runRealtimeJudgment 异步判定，
+ * 复用手动/自动同一条 judgeAndSave 链路。开关在 config.js 的 REALTIME_JUDGMENT.enabled。
+ */
 const { saveSensorData } = require('../sensorRealtime/sensorRealtimeRepository')
 const { saveBehaviorData } = require('../behaviorRealtime/behaviorRealtimeRepository')
 const { getReportedTime } = require('../../utils/protocol')
@@ -19,6 +25,9 @@ const { evaluateSpikeFilter } = require('../../service/dataQuality/spikeFilter')
 const { evaluateRelayStuck } = require('../../service/dataQuality/relayStuck')
 const { evaluateSensorInverted } = require('../../service/dataQuality/sensorInverted')
 const { runStep } = require('../runStep')
+const { buildMappedRecord } = require('../../utils/mappedData')
+const { runRealtimeJudgment } = require('../../service/intelligent/intelligentJudgment')
+const { REALTIME_JUDGMENT } = require('../../service/intelligent/config')
 
 const TAG = '[CombinedRealtime]'
 
@@ -140,7 +149,35 @@ async function handleMessage(topic, payload) {
     if (tempResult) info._tempShutdown = tempResult
     // “需要计算的数据”实时派生指标。
     await runStep(TAG, '派生指标计算', () => computeMetrics(info, flowTimestampMs), null)
+    // 方式③：消息即触发智能判定——每条消息都异步判定一次（复用手动/自动同一条 judgeAndSave 链路），
+    // 不等回复、不阻塞上面的本地规则与存库。只有 REALTIME_JUDGMENT.enabled=true 时才真正发请求。
+    // triggerRealtimeJudgment(info)
     return info
+}
+
+/**
+ * 方式③：消息即触发智能判定（fire-and-forget，每条 MQTT 消息都触发一次）。
+ * 用 buildMappedRecord 把原始报文映射成 field1..field4 语义槽位（跟手动/自动查库拿到的
+ * 整行结构一致），再交给 intelligentJudgment.js 的 runRealtimeJudgment——判定服务地址/请求
+ * 格式/mock 兜底全部走同一份 config.js。
+ * 失败只打日志，不影响消息主流程。
+ */
+function triggerRealtimeJudgment(info) {
+    if (!REALTIME_JUDGMENT.enabled) return
+    ;(async () => {
+        try {
+            const { record, skipped } = await buildMappedRecord({
+                table: 't_sensor_data',
+                mapperTable: 't_sensor_field_mapper',
+                info,
+                dateTime: info.c_time ?? null,
+            })
+            if (skipped || !record) return
+            await runRealtimeJudgment({ type: 'sensor', record })
+        } catch (err) {
+            console.error('[CombinedRealtime] 消息实时判定失败:', err.message)
+        }
+    })()
 }
 
 module.exports = {

@@ -1,5 +1,13 @@
 /** 【文件职责】传感器 MQTT 消息处理器。
- * 【配置】DEVICE_ID_FIELDS、TIME_FIELDS 等协议项在每条消息处理时读取。 */
+ * 【配置】DEVICE_ID_FIELDS、TIME_FIELDS 等协议项在每条消息处理时读取。
+ * 
+ * ⚠️  【注意】这个处理器只在设备【分开上报】传感器和行为数据时被调用。
+ * 
+ * 如果你的设备是一条消息里同时发送传感器 + 行为数据，那用的是：
+ *   mqtt/combinedRealtime/combinedRealtimeHandler.js  ← 【改这个】
+ * 
+ * 详见 combinedRealtimeHandler.js 文件头的【MQTT 实时判定】说明。
+ */
 const { saveSensorData } = require('./sensorRealtimeRepository')
 const { getReportedTime, getTopic } = require('../../utils/protocol')
 const { evaluateRules } = require('../../service/alarm/evaluateRules')

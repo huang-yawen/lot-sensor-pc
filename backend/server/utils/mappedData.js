@@ -130,11 +130,17 @@ async function resolveFieldAliases(sourceTable, sourceField) {
  * @param {string} [dataLabel] - 直接指定写进 online 列的标签值。不传时按上报数据里的
  *   online 字段走 getOnlineLabel 判断（现有实时链路都不传）。补传数据传"补传数据"。
  */
-async function saveMappedData({ table, mapperTable, info, dateTime, dataLabel }) {
+/**
+ * 只做「原始报文 → field1..field10 语义槽位记录」的映射，不写库。
+ * 抽出这个函数是为了让「保存数据」和「消息即触发智能判定」共用同一套字段映射逻辑，
+ * 避免判定服务拿到的字段名和存库的字段名不一致（手动/自动判定发的是库里的整行，即
+ * field1~field10；消息实时判定也发这个结构，三种方式对外契约一致）。
+ */
+async function buildMappedRecord({ table, mapperTable, info, dateTime, dataLabel }) {
   const deviceNo = await resolveDeviceNo(info)
   if (!deviceNo) {
-    console.warn(`[MappedData] 上报数据的设备编号未匹配已注册设备，跳过保存（${table}）`)
-    return { deviceNo: null, mappedFieldCount: 0, skipped: true }
+    console.warn(`[MappedData] 上报数据的设备编号未匹配已注册设备，跳过（${table}）`)
+    return { deviceNo: null, record: null, mappedFieldCount: 0, skipped: true }
   }
 
   const [mappers] = await promisePool.query(
@@ -146,35 +152,42 @@ async function saveMappedData({ table, mapperTable, info, dateTime, dataLabel })
     incoming.set(String(key).toLowerCase(), value)
   }
 
-  const columns = ['d_no']
-  const values = [deviceNo]
+  const record = { d_no: deviceNo }
 
   for (const mapper of mappers) {
     const dbName = String(mapper.db_name || '').trim()
     const physicalNames = aliases(mapper.p_name).map(name => name.toLowerCase())
     const matchedName = physicalNames.find(name => incoming.has(name))
     // dbName 不在 ALLOWED_DATA_FIELDS（field1~field10）里，或者报文里没有任何候选名
-    // 能匹配上，这一条 mapper 直接跳过，不写入 columns/values。
+    // 能匹配上，这一条 mapper 直接跳过，不写入 record。
     if (!ALLOWED_DATA_FIELDS.has(dbName) || !matchedName) {
       continue
     }
-    columns.push(dbName)
-    values.push(incoming.get(matchedName))
+    record[dbName] = incoming.get(matchedName)
   }
 
-  columns.push('c_time', 'online')
+  record.c_time = dateTime
   // dataLabel 由调用方显式指定 online 列的值，目前只有补传数据用（写"补传数据"，
   // 见 mqtt/offlineData/offlineDataHandler.js）；不传就按上报数据里的 online 字段判断。
-  values.push(dateTime, dataLabel ?? getOnlineLabel(info?.online))
+  record.online = dataLabel ?? getOnlineLabel(info?.online)
 
+  return { deviceNo, record, mappedFieldCount: Object.keys(record).length - 3 }
+}
+
+async function saveMappedData(params) {
+  const { deviceNo, record, mappedFieldCount, skipped } = await buildMappedRecord(params)
+  if (skipped) return { deviceNo: null, mappedFieldCount: 0, skipped: true }
+
+  const columns = Object.keys(record)
+  const values = Object.values(record)
   const placeholders = columns.map(() => '?').join(', ')
   await promisePool.execute(
-    `INSERT INTO ${table} (${columns.join(', ')}) VALUES (${placeholders})`,
+    `INSERT INTO ${params.table} (${columns.join(', ')}) VALUES (${placeholders})`,
     values
   )
 
-  return { deviceNo: values[0], mappedFieldCount: columns.length - 3 }
+  return { deviceNo, mappedFieldCount }
 }
 
-module.exports = { saveMappedData, resolveDeviceNo, resolveDNoByNumber, resolveFieldAliases, getDefaultDeviceId, getAllDeviceIds }
+module.exports = { saveMappedData, buildMappedRecord, resolveDeviceNo, resolveDNoByNumber, resolveFieldAliases, getDefaultDeviceId, getAllDeviceIds }
 

@@ -15,8 +15,8 @@
 | 累计 / 滑动窗口 / 首页计算 指标定义 | `config/metrics.js` | 重启后端 |
 | 安全联锁 / 故障 / 联动 / PID / 恒流速 / 定量停机 的**开关和纯软件参数** | `service/<域>/config.js` | 重启后端 |
 | 温度/流量/压力**上下限、目标温度、各种阈值、Kp/Ki/Kd** | 前端「设备设置」页（写数据库 `t_direct`），**不用改代码** | 页面即时生效 |
-| 智能判定服务地址 / 请求体字段名 / 结论路径（手动+自动共用） | `controllers/intelligent/config.js`（13 个键） | 重启后端 |
-| 自动判定跑不跑 / 多久跑一次 / 每次取几条 | `service/autoJudgment/config.js` | 重启后端 |
+| 智能判定服务地址 / 请求体字段名 / 结论路径（手动+自动共用） | `service/intelligent/config.js` 的 `INTELLIGENT_JUDGMENT`（13 个键） | 重启后端 |
+| 自动判定跑不跑 / 多久跑一次 / 每次取几条 | `service/intelligent/config.js` 的 `AUTO_JUDGMENT` | 重启后端 |
 | 设备上报字段名和库里对不上 | 数据库 `t_sensor_field_mapper` / `t_behavior_field_mapper` 的 `p_name` | 立即生效（下一条消息） |
 | 历史图表页显示哪些图 | `config/appSettings.js` 的 `HISTORY_CHARTS`，或直接删前端 `HistoryCharts.vue` 里的组件 | 前端重新打包 |
 
@@ -313,14 +313,21 @@ tempPressure: false,    // 温度+压力融合
 
 ## 4. 智能判定（手动 / 自动两种模式）
 
+智能判定只有两个文件，都在 `service/intelligent/`：
+
+| 文件 | 管什么 |
+|---|---|
+| `intelligentJudgment.js` | 全部逻辑：第 1 部分存记录、第 2 部分发请求取结论、第 3 部分手动、第 4 部分自动 |
+| `config.js` | 全部参数：`INTELLIGENT_JUDGMENT`（判定服务，两种模式共用）+ `AUTO_JUDGMENT`（自动模式节奏） |
+
 | 模式 | 怎么触发 | 逻辑在哪 | 节奏配置 |
 |---|---|---|---|
-| 手动 | 用户在传感器/行为历史页勾选几条，点"智能判定"按钮 | `controllers/intelligent/recognize.js` | 无（点一次判一次） |
-| 自动 | 后端每隔几秒自己提交最新几条，结果推到"自动判定"页 | `service/autoJudgment/autoJudgment.js` | `service/autoJudgment/config.js` |
+| 手动 | 用户在传感器/行为历史页勾选几条，点"智能判定"按钮 | `intelligentJudgment.js` 第 3 部分 `runManualJudgment`（接口入口 `controllers/intelligent/recognize.js` 只做参数校验） | 无（点一次判一次） |
+| 自动 | 后端每隔几秒自己提交最新几条，结果推到"自动判定"页 | `intelligentJudgment.js` 第 4 部分 `runAutoOnce` | `config.js` 的 `AUTO_JUDGMENT` |
 
-两种模式共用 `service/intelligentJudgment/judgeClient.js` 发请求、解析响应、落库，
+两种模式共用第 2 部分发请求、解析响应、落库，
 所以**判定服务的地址 / 请求体字段名 / 结论路径只配一遍**，就是下面 4.1~4.3 那 13 个键
-（`controllers/intelligent/config.js`）；自动模式再额外配自己的节奏，见 4.7。
+（`config.js` 的 `INTELLIGENT_JUDGMENT`）；自动模式再额外配自己的节奏，见 4.7。
 
 落库都进 `t_judgment_record`，靠 `status` 区分来路：
 手动 `success` / `mock`，自动 `auto` / `auto_mock`，两种模式失败都是 `failed`。
@@ -364,8 +371,8 @@ mockWhenDisabled: true,  // 用本地占位判定，记录 status='mock'
 
 ### 4.5 现场接口不是这个形态怎么办
 异步先提交任务再轮询、要 multipart 表单、响应是一段中文文字而不是 JSON——
-**不要加配置项**，直接改 `service/intelligentJudgment/judgeClient.js` 里这两个函数
-（各自十几行，函数上方有说明）——改完手动和自动两种模式一起生效：
+**不要加配置项**，直接改 `service/intelligent/intelligentJudgment.js` 第 2 部分里这两个函数
+（各自十几行，`callService` 上方写好了 GET / 表单 / 纯文本响应的改法）——改完手动和自动两种模式一起生效：
 
 | 现场差异 | 改哪个函数 |
 |---|---|
@@ -388,9 +395,9 @@ curl -X POST http://127.0.0.1:3000/api/intelligent/judge \
 ```
 
 ### 4.7 自动判定模式（每隔几秒自动提交）
-判定服务本身怎么连（4.1~4.3）两种模式共用，这里只配"怎么跑"——`service/autoJudgment/config.js`：
+判定服务本身怎么连（4.1~4.3）两种模式共用，这里只配"怎么跑"——`service/intelligent/config.js` 的 `AUTO_JUDGMENT`：
 ```js
-enabled: false,        // 自动模式总开关；false 时后端不启动定时器，左侧菜单也不显示
+enabled: true,         // 自动模式总开关；false 时后端不启动定时器，左侧菜单也不显示
 intervalMs: 5000,      // 每隔多少毫秒提交一次；低于 1000 会被抬到 1000（防止打满判定服务）
 recentCount: 5,        // 每次提交最新多少条传感器数据（按 c_time 倒序取，提交时翻回时间正序）
 bufferSize: 50,        // 后端内存保留最近多少条结果，供"自动判定"页的图表渲染
@@ -399,17 +406,17 @@ showMenu: true,        // 左侧菜单是否显示"自动判定"页
 
 **两个 `enabled` 不要搞混**：
 
-| 配置文件 | `enabled` 的含义 |
+| 配置项 | `enabled` 的含义 |
 |---|---|
-| `controllers/intelligent/config.js` | 判定结果是真找现场服务要（true），还是用本地占位判定（false） |
-| `service/autoJudgment/config.js` | 要不要开"每隔几秒自动提交"这套定时逻辑 |
+| `INTELLIGENT_JUDGMENT.enabled` | 判定结果是真找现场服务要（true），还是用本地占位判定（false） |
+| `AUTO_JUDGMENT.enabled` | 要不要开"每隔几秒自动提交"这套定时逻辑 |
 
 两个都 true 才是"自动提交给真实服务"。赛前判定服务还没到位时，可以只开后者，
 用本地占位判定把"自动提交 → 表格 → 三张图"整条链路先演示通。
 
 自动模式固定只判 `t_sensor_data`（不判行为数据）。
 
-结果怎么到页面：`autoJudgment.js` 发事件 → `app.js` `broadcast('auto_judgment', ...)` →
+结果怎么到页面：`intelligentJudgment.js` 发事件 → `app.js` `broadcast('auto_judgment', ...)` →
 `src/views/AutoJudgment.vue` 订阅后追加一行表格、三张图各追加一个点。
 页面首次打开时先 `GET /api/intelligent/auto-recent` 把后端内存里已有的结果补上——
 WebSocket 只能推之后新产生的，不补的话刚进页面图是空的。
@@ -514,7 +521,7 @@ REALTIME_REFRESH_INTERVAL: 1000, // 实时页刷新间隔 ms；0=不自动刷
 ENABLE_CHARTS: true,             // 关掉后只留表格/卡片
 ```
 
-智能判定按钮 / 记录菜单的显隐在 `controllers/intelligent/config.js`：
+智能判定按钮 / 记录菜单的显隐在 `service/intelligent/config.js` 的 `INTELLIGENT_JUDGMENT`：
 `showOnSensorPage` / `showOnBehaviorPage` / `showHistoryMenu`。
 
 ---
@@ -594,10 +601,9 @@ backend/server/
 │  └─ dbPool.js ............ MySQL 连接池
 ├─ routes/sensorRoutes.js .. 38 条 /api 路由总表
 ├─ controllers/ ............ 薄控制器（解析请求→调 service→返 JSON）
-│  └─ intelligent/{recognize.js, config.js} ... 智能判定-手动（config.js 13 个键，两种模式共用）
+│  └─ intelligent/{recognize.js, records.js} .. 智能判定接口（只做参数校验和响应，逻辑全在 service/intelligent/）
 ├─ service/
-│  ├─ intelligentJudgment/judgeClient.js ...... 判定服务 HTTP 客户端（手动+自动共用）
-│  ├─ autoJudgment/{autoJudgment.js, config.js} 智能判定-自动（每隔几秒提交最新几条）
+│  ├─ intelligent/{intelligentJudgment.js, config.js} 智能判定（手动 + 自动）
 │  ├─ safety/{safetyInterlock.js, config.js} .. 安全联锁
 │  ├─ faultStatus/{faultStatus.js, config.js} . 六种硬故障
 │  ├─ linkageRules/{linkageRules.js, config.js} 正常工况联动（9 条规则）

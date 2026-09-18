@@ -12,6 +12,10 @@
         <el-option label="成功" value="success" />
         <el-option label="本地模拟" value="mock" />
         <el-option label="失败" value="failed" />
+        <el-option label="自动判定" value="auto" />
+        <el-option label="自动模拟" value="auto_mock" />
+        <el-option label="实时判定" value="realtime" />
+        <el-option label="实时模拟" value="realtime_mock" />
       </el-select>
       <el-date-picker
         v-model="dateRange"

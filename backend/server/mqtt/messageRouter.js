@@ -7,6 +7,42 @@
  * 
  * 职责：根据主题将收到的消息分发给对应的处理器
  * 
+ * 📍 【消息流向】
+ * ═════════════════════════════════════════════════════════════════════
+ *   MQTT Broker
+ *       ↓
+ *   mqttClient 连接 & 订阅
+ *       ↓
+ *   接收消息 (topic, payload)
+ *       ↓
+ *   MessageRouter.route()  ← 【仔细看这里】
+ *       ├─→ 按 topic 查找对应的 handler
+ *       ├─→ 执行 handler(topic, payload)
+ *       └─→ handler 返回处理结果
+ * 
+ * 
+ * 🔍 【现有的 handlers 有哪些】
+ * ═════════════════════════════════════════════════════════════════════
+ * 
+ *   topic                    handler 所在文件                  处理逻辑
+ *   ────────────────────────────────────────────────────────────
+ *   sensor_data              mqtt/sensorRealtime/            • 传感器数据存库
+ *                           sensorRealtimeHandler.js         • 本地告警规则
+ *                                                            • 安全联锁
+ *                                                            • PID 控制
+ *                                                            • 【MQTT 实时判定】
+ *
+ *   behavior_data            mqtt/behaviorRealtime/          • 行为数据存库
+ *                           behaviorRealtimeHandler.js       • 故障告警
+ * 
+ *   sensor_behavior_combined mqtt/combinedRealtime/          • 同时处理传感器+
+ *                           combinedRealtimeHandler.js       行为（单条消息）
+ * 
+ * 
+ * 💡 【判定逻辑不要加在这一层】
+ * 智能判定（方式③ 消息即触发）已经实现在 mqtt/combinedRealtime/combinedRealtimeHandler.js
+ * 的 triggerRealtimeJudgment() 里，不要在 route() 里再塞判定逻辑——这一层只做消息分发。
+ * 
  * 使用方式：
  *   const router = new MessageRouter()
  *   router.register('sensor_data', sensorHandler)

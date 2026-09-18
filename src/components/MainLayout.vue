@@ -29,6 +29,8 @@
         <AlarmNotifier />
         <!-- 正常状况联动下发开关时的实时提示（非阻塞、info 级），见 LinkageNotifier.vue 头部注释。 -->
         <LinkageNotifier />
+        <!-- 智能判定联动告警弹窗（可选复位），见 JudgmentActionAlertDialog.vue 头部注释。 -->
+        <JudgmentActionAlertDialog />
     </div>
 </template>
 
@@ -39,6 +41,7 @@ import FaultAlertDialog from '@/components/FaultAlertDialog.vue'
 import SafetyAlertNotifier from '@/components/SafetyAlertNotifier.vue'
 import AlarmNotifier from '@/components/AlarmNotifier.vue'
 import LinkageNotifier from '@/components/LinkageNotifier.vue'
+import JudgmentActionAlertDialog from '@/components/JudgmentActionAlertDialog.vue'
 import { useDisplayStore } from '@/stores/useDisplayStore'
 
 import { ref, onMounted } from 'vue'

@@ -31,7 +31,8 @@ const { onSensorInverted } = require('./service/dataQuality/sensorInverted');
 const { onHeaterBlocked } = require('./service/pidHeating/pidHeating');
 const { start: startSchedule } = require('./service/schedule/scheduleService');
 const { onDirectDataChanged } = require('./service/directData/saveDirectConfig');
-const { start: startAutoJudgment, onAutoJudgment } = require('./service/autoJudgment/autoJudgment');
+const { startAutoJudgment, onAutoJudgment, onRealtimeJudgment } = require('./service/intelligent/intelligentJudgment')
+const { onJudgmentAction } = require('./service/judgmentAction/judgmentAction');
 const mqttClient = require('./mqtt/index')
 
 const app = express();
@@ -311,6 +312,12 @@ onSafetyInterlock((trigger) => {
     broadcast('safety_triggered', trigger);
 });
 
+// 智能判定联动（判定服务返回"干烧/漏水"等结论后自动关泵/关加热）触发时立即广播。
+// 性质和安全联锁一样是"已动作、通知知悉"，前端用非阻塞通知展示。
+onJudgmentAction((trigger) => {
+    broadcast('judgment_action_triggered', trigger);
+});
+
 // 自定义阈值告警规则（ALARM_RULES）触发时立即广播（不走节流）——这些规则可能比
 // 硬故障触发得频繁得多，前端用非阻塞通知展示（AlarmNotifier.vue），不用像故障
 // 弹窗那样打断操作、要求用户复位。
@@ -355,10 +362,16 @@ onHeaterBlocked((info) => {
 });
 
 // 自动判定每跑完一轮就把结果推给"自动判定"页（表格追加一行、三个图表各追加一个点）。
-// 不走节流：节奏本来就由 service/autoJudgment/config.js 的 intervalMs 控制，
+// 不走节流：节奏本来就由 service/intelligent/config.js 的 AUTO_JUDGMENT.intervalMs 控制，
 // 最快也就 1 秒一条，再节流反而会把用户配的节奏改掉。
 onAutoJudgment((entry) => {
     broadcast('auto_judgment', entry);
+});
+
+// 消息即触发判定（方式③）：每条 MQTT 消息异步判定完就推给前端（供实时展示/记录页面刷新用）。
+// 不走节流：节奏由消息到达频率决定，判定结果本身是异步的，前端只按需订阅。
+onRealtimeJudgment((entry) => {
+    broadcast('realtime_judgment', entry);
 });
 
 // ==================== 设备在线状态定时广播 ====================
@@ -394,7 +407,7 @@ startSafetyMonitor();
 // 指令页上时间照样能设、能保存，但到点什么都不会发生，也不报任何错。
 startSchedule();
 
-// 启动自动判定定时器。service/autoJudgment/config.js 里 enabled=false 时这里只打一行
+// 启动自动判定定时器。service/intelligent/config.js 里 AUTO_JUDGMENT.enabled=false 时这里只打一行
 // 日志就返回，不占用任何资源；手动判定（历史页勾选后点按钮）不受它影响，始终可用。
 startAutoJudgment();
 
