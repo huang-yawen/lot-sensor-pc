@@ -28,11 +28,19 @@
 
     <!-- ==================== 计算指标历史明细表（顶部，随时间范围查询） ==================== -->
     <section v-if="detailTables.length > 0" class="chart-section">
-      <h2 class="section-title">计算指标历史明细</h2>
+      <div class="detail-head">
+        <h2 class="section-title">计算指标历史明细</h2>
+        <el-select v-model="detailRowLimit" size="small" style="width: 110px;">
+          <el-option v-for="opt in DETAIL_ROW_LIMIT_OPTIONS" :key="opt.value" :label="opt.label" :value="opt.value" />
+        </el-select>
+        <span v-if="activeDetailTable" class="detail-hint">
+          共 {{ activeDetailTable.total }} 行，当前显示 {{ activeDetailTable.rows.length }} 行
+        </span>
+      </div>
       <div class="chart-card chart-card-wide detail-table-card">
         <el-tabs v-model="activeDetailTab">
           <el-tab-pane v-for="t in detailTables" :key="t.key" :label="t.label" :name="t.key">
-            <el-table :data="t.rows" size="small" border stripe max-height="420" style="width: 100%;">
+            <el-table :key="`${t.key}-${detailRowLimit}-${t.rows.length}`" :data="t.rows" size="small" border stripe max-height="420" style="width: 100%;">
               <el-table-column
                 v-for="col in t.columns"
                 :key="col.prop"
@@ -247,7 +255,8 @@ const RANGE_OPTIONS = [
 
 const systemStore = useSystemConfigStore()
 const loading = ref(false)
-const rangeKey = ref('1h')
+// 默认显示最近 5 分钟（首次进页面即按这个范围 loadAll）。
+const rangeKey = ref('5m')
 const customRange = ref([])
 
 /** 历史图表页面显示控制（配置中心"累计与滑动统计"标签页维护），未加载完成前用默认值兜底。 */
@@ -1654,6 +1663,17 @@ function mergeSeriesByTime(baseRows, seriesList) {
 
 const activeDetailTab = ref('')
 
+/** 明细表每张表最多显示多少行（0 = 全部）。下拉框选择，只影响表格展示，不影响已查询的数据。 */
+const DETAIL_ROW_LIMIT_OPTIONS = [
+  { value: 10, label: '10 行' },
+  { value: 20, label: '20 行' },
+  { value: 50, label: '50 行' },
+  { value: 100, label: '100 行' },
+  { value: 200, label: '200 行' },
+  { value: 0, label: '全部' },
+]
+const detailRowLimit = ref(20)
+
 const detailTables = computed(() => {
   const tables = []
 
@@ -1745,8 +1765,18 @@ const detailTables = computed(() => {
     tables.push({ key: 'derived', label: '自定义公式', columns, rows })
   }
 
-  return tables
+  // 下拉框控制每张表显示多少行：取最新的 N 行并倒序（最新在最上，跟项目其它表格一致）；
+  // value=0 表示“全部”。只截取展示，不改动已查询到的数据。
+  const limit = Number(detailRowLimit.value) || 0
+  return tables.map((t) => {
+    const total = t.rows.length
+    const sliced = limit > 0 ? t.rows.slice(-limit) : t.rows
+    return { ...t, total, rows: [...sliced].reverse() }
+  })
 })
+
+/** 当前激活 tab 对应的表（用于显示“共 X 行，当前显示 Y 行”）。 */
+const activeDetailTable = computed(() => detailTables.value.find((t) => t.key === activeDetailTab.value) || null)
 
 watch(detailTables, (tables) => {
   if (tables.length && !tables.some((t) => t.key === activeDetailTab.value)) {
@@ -1820,6 +1850,9 @@ onUnmounted(() => {
 .chart-el-wrapper { min-height: 240px; }
 .chart-el { width: 100%; height: 240px; }
 .chart-card-wide { width: 100%; }
+.detail-head { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
+.detail-head .section-title { margin: 0; }
+.detail-hint { font-size: 12px; color: #94a3b8; }
 .chart-el-tall { height: 340px; }
 
 @media (max-width: 1050px) { .chart-grid { grid-template-columns: 1fr !important; } }
