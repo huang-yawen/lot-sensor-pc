@@ -20,6 +20,7 @@
 const { saveBehaviorData } = require('./behaviorRealtimeRepository')
 const { getReportedTime, getTopic } = require('../../utils/protocol')
 const { evaluateRules } = require('../../service/alarm/evaluateRules')
+const { appendSnapshots } = require('../../service/cumulative/cumulativeSnapshotService')
 const { runStep } = require('../runStep')
 
 const TAG = '[BehaviorRealtime]'
@@ -96,6 +97,10 @@ async function handleMessage(topic, payload) {
     // 两步各自用 runStep 包一层：存库失败不影响告警评估，见 mqtt/runStep.js。
     // 落库，供历史查询/图表展示，也是首页"最新行为数据"的来源。
     await runStep(TAG, '保存行为数据', () => saveBehaviorData(info), null)
+    // 累计指标快照：分开上报模式下，行为消息负责更新 on_duration 类累计（水泵/加热运行时长）；
+    // 报文里没有的指标（比如累计流量，来自传感器表）自动跳过，由传感器消息那边更新。
+    const cTimeMs = info.c_time ? new Date(String(info.c_time).replace(' ', 'T')).getTime() : Date.now()
+    await runStep(TAG, '累计快照', () => appendSnapshots({ info, cTimeMs: Number.isFinite(cTimeMs) ? cTimeMs : Date.now() }), null)
     // 告警规则：按配置中心 ALARM_RULES 逐条判断，触发时写记录、可选自动联锁。
     // 安全联锁/故障检测/联动规则等其它评估不在这里跑，见文件头部说明。
     const alarms = await runStep(TAG, '安全告警', () => evaluateRules(info), [])

@@ -215,4 +215,99 @@ async function queryHeatingRate({ limit = 300, startTime, endTime } = {}) {
   return rows
 }
 
-module.exports = { queryHeatingEfficiency, queryHeatingRate }
+/**
+ * 换热效率历史：η = (ρ·Cp·Q·max(0,出水−进水)) / P_额定 × 100%。
+ * 跟 heatingEfficiency（加热效率，有向 ΔT）的区别只在 ΔT 取 max(0, ΔT)（非负），
+ * 数值上当出水温度高于进水时两者相等；换热效率强调"水实际带走的热功率占比"。
+ * 只在加热开启 + 有流量 + 有进出水温度 + 额定功率>0 的行计算。每桶取换热功率(W)
+ * 与效率(%)的桶内平均。
+ * @returns {Array<{c_time, heatTransferredW, efficiencyPct}>}
+ */
+async function queryHeatExchangeEfficiency({ limit = 300, startTime, endTime } = {}) {
+  const safeLimit = Math.min(2000, Math.max(1, Number.parseInt(limit, 10) || 300))
+  const { heaterRatedPower, waterDensity, waterSpecificHeat, abnormalMax } = readParams()
+  const tw = timeWhere(startTime, endTime)
+  const bucketSeconds = startTime ? calcBucketSeconds({ startTime, endTime, pointLimit: safeLimit }) : 1
+
+  // 水每秒带走的热功率 ρ·Cp·Q·max(0,ΔT)，单位 W；效率 = 该功率 ÷ 额定功率 ×100%。
+  const heatTransferredW = `${waterDensity} * ${waterSpecificHeat} * (flow / 60 / 1000) * GREATEST(temp2 - temp1, 0)`
+  const canEff = `heater_on = 1 AND flow > 0 AND ${heaterRatedPower} > 0`
+  const base = baseRowsSql(abnormalMax, tw, startTime, endTime)
+
+  const sql = `
+    SELECT
+      MIN(c_time) AS c_time,
+      ROUND(AVG(heat_w), 2) AS heatTransferredW,
+      ROUND(AVG(eff_pct), 2) AS efficiencyPct
+    FROM (
+      SELECT
+        c_time,
+        FLOOR(UNIX_TIMESTAMP(c_time) / ?) AS bucket,
+        CASE WHEN ${canEff} AND temp1 IS NOT NULL AND temp2 IS NOT NULL
+             THEN ${heatTransferredW} ELSE NULL END AS heat_w,
+        CASE WHEN ${canEff} AND temp1 IS NOT NULL AND temp2 IS NOT NULL
+             THEN ${heatTransferredW} / ${heaterRatedPower} * 100 ELSE NULL END AS eff_pct
+      FROM ( ${base.sql} ) AS r
+    ) AS calculated
+    GROUP BY bucket
+    HAVING heatTransferredW IS NOT NULL OR efficiencyPct IS NOT NULL
+    ORDER BY c_time ASC
+    LIMIT ?
+  `
+  const [rows] = await promisePool.query(sql, [bucketSeconds, ...base.params, safeLimit])
+  return rows
+}
+
+/**
+ * 温度变化率历史：进水/出水温度各自的 dT/dt（℃/min），相邻两条读数之差 ÷ 时间差，
+ * 不依赖加热状态（每条读数都算）。Δt 上限 MAX_GAP_SEC，超出视为离线间隙不计入，
+ * 避免断线期间两条读数之间隔着几分钟却算出"巨大变化率"。每桶取进水/出水变化率的桶内平均。
+ * @returns {Array<{c_time, temp1Rate, temp2Rate}>}
+ */
+async function queryTempChangeRate({ limit = 300, startTime, endTime } = {}) {
+  const safeLimit = Math.min(2000, Math.max(1, Number.parseInt(limit, 10) || 300))
+  const { abnormalMax } = readParams()
+  const tw = timeWhere(startTime, endTime)
+  const bucketSeconds = startTime ? calcBucketSeconds({ startTime, endTime, pointLimit: safeLimit }) : 1
+  const num = (f) =>
+    `CASE WHEN CAST(NULLIF(\`${f}\`, '') AS DECIMAL(20,6)) >= ${abnormalMax} ` +
+    `THEN NULL ELSE CAST(NULLIF(\`${f}\`, '') AS DECIMAL(20,6)) END`
+
+  const sql = `
+    SELECT
+      MIN(c_time) AS c_time,
+      ROUND(AVG(temp1_rate), 3) AS temp1Rate,
+      ROUND(AVG(temp2_rate), 3) AS temp2Rate
+    FROM (
+      SELECT
+        c_time,
+        FLOOR(UNIX_TIMESTAMP(c_time) / ?) AS bucket,
+        CASE WHEN dt_sec IS NOT NULL AND dt_sec > 0 AND dt_sec <= ${MAX_GAP_SEC}
+                   AND temp1 IS NOT NULL AND prev_temp1 IS NOT NULL
+             THEN (temp1 - prev_temp1) / (dt_sec / 60) ELSE NULL END AS temp1_rate,
+        CASE WHEN dt_sec IS NOT NULL AND dt_sec > 0 AND dt_sec <= ${MAX_GAP_SEC}
+                   AND temp2 IS NOT NULL AND prev_temp2 IS NOT NULL
+             THEN (temp2 - prev_temp2) / (dt_sec / 60) ELSE NULL END AS temp2_rate
+      FROM (
+        SELECT
+          id, c_time, temp1, temp2,
+          TIMESTAMPDIFF(SECOND, LAG(c_time) OVER (ORDER BY c_time ASC, id ASC), c_time) AS dt_sec,
+          LAG(temp1) OVER (ORDER BY c_time ASC, id ASC) AS prev_temp1,
+          LAG(temp2) OVER (ORDER BY c_time ASC, id ASC) AS prev_temp2
+        FROM (
+          SELECT id, c_time, ${num('field1')} AS temp1, ${num('field2')} AS temp2
+          FROM t_sensor_data
+          WHERE 1=1 ${tw.clause}
+        ) AS s
+      ) AS with_prev
+    ) AS calculated
+    GROUP BY bucket
+    HAVING temp1Rate IS NOT NULL OR temp2Rate IS NOT NULL
+    ORDER BY c_time ASC
+    LIMIT ?
+  `
+  const [rows] = await promisePool.query(sql, [bucketSeconds, ...tw.params, safeLimit])
+  return rows
+}
+
+module.exports = { queryHeatingEfficiency, queryHeatingRate, queryHeatExchangeEfficiency, queryTempChangeRate }

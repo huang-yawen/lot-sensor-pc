@@ -70,7 +70,7 @@ const CUMULATIVE_METRICS = [
 //   aggregation - avg(滑动平均) | volatility(MAX-MIN 波动) | rate(相邻两点变化率)
 //   window_size - 滑动窗口行数（rate 类型固定为 2 行差值）
 //   其余字段含义同 CUMULATIVE_METRICS
-// 注：当前这 6 条都 enabled=false（不参与计算），保留定义方便赛场按需打开。
+// 注：当前这 6 条都 enabled=true（参与计算），保留定义方便赛场按需关闭。
 // ============================================================================
 const TIME_WINDOW_METRICS = [
   {

@@ -7,6 +7,7 @@
  */
 const promisePool = require('../../config/dbPool')
 const { CUMULATIVE_METRICS } = require('../../config/metrics')
+const { querySnapshotLatest } = require('../cumulative/cumulativeSnapshotService')
 
 const MAX_GAP_SEC = 10 // 单次采样间隔上限（秒），超出视为离线间隙，不计入累计时长
 const CACHE_TTL_MS = 60000 // “累计运行时长”全表扫描结果缓存 60 秒，避免高频轮询下反复全表计算
@@ -14,11 +15,24 @@ const CACHE_TTL_MS = 60000 // “累计运行时长”全表扫描结果缓存 6
 // key: `${table}.${field}:${d_no || ''}` -> { value, expireAt }
 const totalMinutesCache = new Map()
 
-/** “累计运行时长”（分钟）：全表扫描 + 60 秒内存缓存。 */
-async function queryTotalOnMinutes(table, field, d_no) {
+/** “累计运行时长”（分钟）：优先读累计快照表（预计算，走索引），没有快照再回退全表扫描；结果 60 秒内存缓存。 */
+async function queryTotalOnMinutes(table, field, d_no, metricKey) {
   const cacheKey = `${table}.${field}:${d_no || ''}`
   const cached = totalMinutesCache.get(cacheKey)
   if (cached && cached.expireAt > Date.now()) return cached.value
+
+  // 优先读累计快照表里该指标的最新累计值（就是全量累计时长，单位分钟），避免每次全表扫描。
+  if (metricKey) {
+    try {
+      const latest = await querySnapshotLatest({ metric_key: metricKey, d_no })
+      if (latest != null) {
+        totalMinutesCache.set(cacheKey, { value: latest, expireAt: Date.now() + CACHE_TTL_MS })
+        return latest
+      }
+    } catch (err) {
+      console.error(`[SwitchDuration] 读取 ${metricKey} 累计快照失败，回退全表计算:`, err.message)
+    }
+  }
 
   const conditions = []
   const params = []
@@ -114,7 +128,7 @@ async function querySwitchDuration(metricKey, d_no) {
 
   const { source_table: table, source_field: field, precision = 1 } = metric
   const [totalMinutes, session, fieldLabel] = await Promise.all([
-    queryTotalOnMinutes(table, field, d_no),
+    queryTotalOnMinutes(table, field, d_no, metric.metric_key),
     queryCurrentSession(table, field, d_no),
     getFieldLabel(field),
   ])

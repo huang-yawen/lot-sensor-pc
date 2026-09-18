@@ -28,7 +28,7 @@ const { queryAverageChart, getCurrentTargetTemp, getCurrentTargetVelocity } = re
 const { queryTempFlowScatter } = require('../service/computedMetrics/scatterChartQuery')
 const { queryDeviceStateTrend } = require('../service/computedMetrics/deviceStateQuery')
 const { queryHeaterEnergy } = require('../service/computedMetrics/heaterEnergyQuery')
-const { queryHeatingEfficiency, queryHeatingRate } = require('../service/computedMetrics/heatingAnalysisQuery')
+const { queryHeatingEfficiency, queryHeatingRate, queryHeatExchangeEfficiency, queryTempChangeRate } = require('../service/computedMetrics/heatingAnalysisQuery')
 
 // GET /api/average-chart —— 平均温度/平均流速时间线，附带当前目标温度、目标流速（给 PID/恒流速跟踪图当参考线）
 async function averageChart(req, res) {
@@ -111,16 +111,19 @@ async function heaterEnergy(req, res) {
   }
 }
 
-// GET /api/heating-analysis —— 加热效率 + 加热速度，一次请求返回两条数据画两张图
+// GET /api/heating-analysis —— 热分析统一接口：加热效率 / 加热速度 / 换热效率 / 温度变化率，
+//   一次请求返回四条历史序列，避免前端为每个热相关指标各打一个接口。
 async function heatingAnalysis(req, res) {
   try {
     const limit = req.query.limit
     const { startTime, endTime } = resolveTimeRange(req.query)
-    const [efficiency, rate] = await Promise.all([
+    const [efficiency, rate, heatExchangeEfficiency, tempChangeRate] = await Promise.all([
       queryHeatingEfficiency({ limit, startTime, endTime }),
       queryHeatingRate({ limit, startTime, endTime }),
+      queryHeatExchangeEfficiency({ limit, startTime, endTime }),
+      queryTempChangeRate({ limit, startTime, endTime }),
     ])
-    res.json({ success: true, data: { efficiency, rate } })
+    res.json({ success: true, data: { efficiency, rate, heatExchangeEfficiency, tempChangeRate } })
   } catch (err) {
     console.error('[HeatingAnalysisController] 查询失败:', err)
     res.status(500).json({ success: false, message: err.message })

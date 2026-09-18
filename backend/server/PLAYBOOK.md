@@ -576,6 +576,7 @@ TRUNCATE t_sensor_data;  TRUNCATE t_behavior_data;   -- 清历史读数
 TRUNCATE t_error_msg;                                -- 清告警/故障记录
 TRUNCATE t_operation_history;                        -- 清操作历史
 TRUNCATE t_judgment_record;                          -- 清判定记录
+TRUNCATE t_cumulative_snapshot;                       -- 清累计指标快照（清完要重跑回填脚本，见 8.4）
 -- t_device / t_direct / t_direct_config / t_*_field_mapper 一般保留（这是"配置"不是"数据"）
 ```
 清完重启后端（清掉内存里的累计值、故障态、心跳计时）。
@@ -583,6 +584,22 @@ TRUNCATE t_judgment_record;                          -- 清判定记录
 ### 8.3 累计流量重启归零 vs 不归零
 `config/metrics.js` 的 `COMPUTED_METRICS.cumulativeFlowMode`：
 `'all'`（默认，从全表第一条起算，后端重启不归零）/ `'session'`（本次启动以来的内存累加，重启归零）。
+
+### 8.4 累计查询加速（累计快照表 t_cumulative_snapshot）
+累计流量 / 累计运行时长（`flow_integral` / `on_duration`）不再每次在原始大表上跑窗口函数
+（数据量大时等于全表扫描，很慢），改成“预计算 + 直接读”：
+- **落库时**：`service/cumulative/cumulativeSnapshotService.js` 按真实时间差算出本条增量、
+  累加到该（设备,指标）的累计值，写入 `t_cumulative_snapshot`（一行 = 该时刻的全量累计值）。
+- **查询时**：`service/cumulative/cumulativeService.js` 直接读快照表（走 `(metric_key, c_time)`
+  索引），返回的每个点都是“全量累计值在该时刻的读数”（单调递增），历史图表页 /
+  计算指标明细表因此很快。
+
+部署 / 重建后快照表是空的，需要一次性回填历史数据（会先 TRUNCATE 再重算）：
+```bash
+node backend/server/init/backfill_cumulative_snapshot.js
+```
+⚠️ 回填完请**重启后端**，让内存累计态重新从快照表恢复，避免新旧值不连续。
+快照表为空时 `cumulativeService` 会自动回退到原来的实时计算，页面不会空白（只是慢）。
 
 ---
 

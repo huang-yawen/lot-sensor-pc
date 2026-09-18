@@ -21,6 +21,7 @@ const { evaluatePumpVelocityControl } = require('../../service/pumpVelocityContr
 const { evaluateQuantityShutdown } = require('../../service/quantityShutdown/quantityShutdown')
 const { evaluateTempShutdown } = require('../../service/tempShutdown/tempShutdown')
 const { compute: computeMetrics } = require('../../service/computedMetrics/computedMetrics')
+const { appendSnapshots } = require('../../service/cumulative/cumulativeSnapshotService')
 const { evaluateSpikeFilter } = require('../../service/dataQuality/spikeFilter')
 const { evaluateRelayStuck } = require('../../service/dataQuality/relayStuck')
 const { evaluateSensorInverted } = require('../../service/dataQuality/sensorInverted')
@@ -149,6 +150,9 @@ async function handleMessage(topic, payload) {
     if (tempResult) info._tempShutdown = tempResult
     // “需要计算的数据”实时派生指标。
     await runStep(TAG, '派生指标计算', () => computeMetrics(info, flowTimestampMs), null)
+    // 累计指标快照：把各累计值（累计流量 / 累计运行时长…）按真实时间差增量累加后写入
+    // t_cumulative_snapshot，历史图表页/明细表直接读快照，不再每次全表窗口函数扫原始大表。
+    await runStep(TAG, '累计快照', () => appendSnapshots({ info, cTimeMs: flowTimestampMs }), null)
     // 方式③：消息即触发智能判定——每条消息都异步判定一次（复用手动/自动同一条 judgeAndSave 链路），
     // 不等回复、不阻塞上面的本地规则与存库。只有 REALTIME_JUDGMENT.enabled=true 时才真正发请求。
     // triggerRealtimeJudgment(info)

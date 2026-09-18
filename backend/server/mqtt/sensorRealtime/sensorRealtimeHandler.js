@@ -19,6 +19,7 @@ const { evaluatePumpVelocityControl } = require('../../service/pumpVelocityContr
 const { evaluateQuantityShutdown } = require('../../service/quantityShutdown/quantityShutdown')
 const { evaluateTempShutdown } = require('../../service/tempShutdown/tempShutdown')
 const { compute: computeMetrics } = require('../../service/computedMetrics/computedMetrics')
+const { appendSnapshots } = require('../../service/cumulative/cumulativeSnapshotService')
 const { evaluateSpikeFilter } = require('../../service/dataQuality/spikeFilter')
 const { evaluateRelayStuck } = require('../../service/dataQuality/relayStuck')
 const { evaluateSensorInverted } = require('../../service/dataQuality/sensorInverted')
@@ -162,6 +163,9 @@ async function handleMessage(topic, payload) {
     if (tempResult) info._tempShutdown = tempResult
     // "需要计算的数据"实时派生指标，仅用于展示，不参与硬件控制。
     await runStep(TAG, '派生指标计算', () => computeMetrics(info, flowTimestampMs), null)
+    // 累计指标快照：把各累计值增量累加后写入 t_cumulative_snapshot，历史图表页/明细表直接读
+    // 快照，不再每次全表窗口函数扫原始大表。行为字段不在本报文里时该指标自动跳过。
+    await runStep(TAG, '累计快照', () => appendSnapshots({ info, cTimeMs: flowTimestampMs }), null)
     return info
 }
 

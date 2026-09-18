@@ -26,6 +26,27 @@
       <el-button type="primary" :loading="loading" @click="loadAll">刷新</el-button>
     </section>
 
+    <!-- ==================== 计算指标历史明细表（顶部，随时间范围查询） ==================== -->
+    <section v-if="detailTables.length > 0" class="chart-section">
+      <h2 class="section-title">计算指标历史明细</h2>
+      <div class="chart-card chart-card-wide detail-table-card">
+        <el-tabs v-model="activeDetailTab">
+          <el-tab-pane v-for="t in detailTables" :key="t.key" :label="t.label" :name="t.key">
+            <el-table :data="t.rows" size="small" border stripe max-height="420" style="width: 100%;">
+              <el-table-column
+                v-for="col in t.columns"
+                :key="col.prop"
+                :prop="col.prop"
+                :label="col.label"
+                align="center"
+                show-overflow-tooltip
+              />
+            </el-table>
+          </el-tab-pane>
+        </el-tabs>
+      </div>
+    </section>
+
     <!-- ==================== 累计统计（合并成一张图，可切换柱状/折线） ==================== -->
     <section v-if="cumulativeEntries.length > 0" class="chart-section">
       <h2 class="section-title">累计统计</h2>
@@ -260,6 +281,8 @@ const derivedMetricData = ref({})
 const heaterEnergyRows = ref([])
 const heatingEfficiencyRows = ref([])
 const heatingRateRows = ref([])
+const heatExchangeEfficiencyRows = ref([])
+const tempChangeRateRows = ref([])
 
 /** 统一的时间轴格式化，十几张图共用。按 rows 数组引用缓存结果——loadAll() 每次拉数据
  * 都是整体换一个新数组，缓存会随新数据自然失效；同一批数据被多张图复用时直接命中缓存，
@@ -339,6 +362,8 @@ async function loadAll() {
     heaterEnergyRows.value = energyRes.status === 'fulfilled' ? (energyRes.value.data?.data?.rows || []) : []
     heatingEfficiencyRows.value = heatingRes.status === 'fulfilled' ? (heatingRes.value.data?.data?.efficiency || []) : []
     heatingRateRows.value = heatingRes.status === 'fulfilled' ? (heatingRes.value.data?.data?.rate || []) : []
+    heatExchangeEfficiencyRows.value = heatingRes.status === 'fulfilled' ? (heatingRes.value.data?.data?.heatExchangeEfficiency || []) : []
+    tempChangeRateRows.value = heatingRes.status === 'fulfilled' ? (heatingRes.value.data?.data?.tempChangeRate || []) : []
   } finally {
     loading.value = false
   }
@@ -1590,6 +1615,119 @@ watch(derivedMetricEntries, () => {
     })
   })
 })
+
+// 计算指标历史明细表（顶部）：把各类时间序列计算数据整理成 {key,label,columns,rows} 供顶部 el-tabs 渲染，随时间范围刷新。
+const activeDetailTab = ref('')
+
+const detailTables = computed(() => {
+  const tables = []
+
+  // 累计指标
+  const cumConfigs = cumulativeMetricConfigs.value
+  const cumKeys = Object.keys(cumulativeData.value).filter((k) => Array.isArray(cumulativeData.value[k]) && cumulativeData.value[k].length > 0 && cumConfigs[k])
+  if (cumKeys.length) {
+    const baseKey = cumKeys.reduce((a, b) => (cumulativeData.value[b].length > cumulativeData.value[a].length ? b : a))
+    const times = formatTimes(cumulativeData.value[baseKey])
+    const columns = [{ prop: '时间', label: '时间' }, ...cumKeys.map((k) => ({ prop: k, label: `${cumConfigs[k].metric_name}(${cumConfigs[k].unit || ''})` }))]
+    const rows = times.map((t, i) => {
+      const row = { '时间': t }
+      for (const k of cumKeys) { const r = cumulativeData.value[k][i]; row[k] = r ? r.cumulative : null }
+      return row
+    })
+    tables.push({ key: 'cumulative', label: '累计指标', columns, rows })
+  }
+
+  // 滑动窗口
+  const twConfigs = timeWindowMetricConfigs.value
+  const twKeys = Object.keys(timeWindowData.value).filter((k) => Array.isArray(timeWindowData.value[k]) && timeWindowData.value[k].length > 0 && twConfigs[k])
+  if (twKeys.length) {
+    const baseKey = twKeys.reduce((a, b) => (timeWindowData.value[b].length > timeWindowData.value[a].length ? b : a))
+    const times = formatTimes(timeWindowData.value[baseKey])
+    const columns = [{ prop: '时间', label: '时间' }, ...twKeys.map((k) => ({ prop: k, label: `${twConfigs[k].metric_name}(${twConfigs[k].unit || ''})` }))]
+    const rows = times.map((t, i) => {
+      const row = { '时间': t }
+      for (const k of twKeys) { const r = timeWindowData.value[k][i]; row[k] = r ? r.value : null }
+      return row
+    })
+    tables.push({ key: 'timeWindow', label: '滑动窗口', columns, rows })
+  }
+
+  // 平均温度/流速
+  if (averageChartRows.value.length) {
+    const times = formatTimes(averageChartRows.value)
+    tables.push({
+      key: 'average', label: '平均温度/流速',
+      columns: [{ prop: '时间', label: '时间' }, { prop: 'averageTemp', label: '平均温度(℃)' }, { prop: 'averageVelocity', label: '平均流速(m/s)' }],
+      rows: times.map((t, i) => ({ '时间': t, averageTemp: averageChartRows.value[i].averageTemp, averageVelocity: averageChartRows.value[i].averageVelocity })),
+    })
+  }
+
+  // 加热效率/速度
+  if (heatingEfficiencyRows.value.length || heatingRateRows.value.length) {
+    const base = heatingEfficiencyRows.value.length >= heatingRateRows.value.length ? heatingEfficiencyRows.value : heatingRateRows.value
+    const times = formatTimes(base)
+    tables.push({
+      key: 'heatingAnalysis', label: '加热效率/速度',
+      columns: [{ prop: '时间', label: '时间' }, { prop: 'actualRiseC', label: '实际升温(℃)' }, { prop: 'theoreticalRiseC', label: '理论升温(℃)' }, { prop: 'efficiencyPct', label: '加热效率(%)' }, { prop: 'heatingRate', label: '加热速度(℃/min)' }],
+      rows: times.map((t, i) => {
+        const e = heatingEfficiencyRows.value[i]; const r = heatingRateRows.value[i]
+        return { '时间': t, actualRiseC: e ? e.actualRiseC : null, theoreticalRiseC: e ? e.theoreticalRiseC : null, efficiencyPct: e ? e.efficiencyPct : null, heatingRate: r ? r.heatingRate : null }
+      }),
+    })
+  }
+
+  // 换热效率
+  if (heatExchangeEfficiencyRows.value.length) {
+    const times = formatTimes(heatExchangeEfficiencyRows.value)
+    tables.push({
+      key: 'heatExchangeEfficiency', label: '换热效率',
+      columns: [{ prop: '时间', label: '时间' }, { prop: 'heatTransferredW', label: '换热功率(W)' }, { prop: 'efficiencyPct', label: '换热效率(%)' }],
+      rows: times.map((t, i) => ({ '时间': t, heatTransferredW: heatExchangeEfficiencyRows.value[i].heatTransferredW, efficiencyPct: heatExchangeEfficiencyRows.value[i].efficiencyPct })),
+    })
+  }
+
+  // 温度变化率
+  if (tempChangeRateRows.value.length) {
+    const times = formatTimes(tempChangeRateRows.value)
+    tables.push({
+      key: 'tempChangeRate', label: '温度变化率',
+      columns: [{ prop: '时间', label: '时间' }, { prop: 'temp1Rate', label: '进水变化率(℃/min)' }, { prop: 'temp2Rate', label: '出水变化率(℃/min)' }],
+      rows: times.map((t, i) => ({ '时间': t, temp1Rate: tempChangeRateRows.value[i].temp1Rate, temp2Rate: tempChangeRateRows.value[i].temp2Rate })),
+    })
+  }
+
+  // 加热能耗
+  if (heaterEnergyRows.value.length) {
+    const times = formatTimes(heaterEnergyRows.value)
+    tables.push({
+      key: 'heaterEnergy', label: '加热能耗',
+      columns: [{ prop: '时间', label: '时间' }, { prop: 'actualPower', label: '瞬时功率(W)' }, { prop: 'cumulativeElectric', label: '累计耗电(Wh)' }, { prop: 'cumulativeHeatEnergy', label: '累计热量(Wh)' }, { prop: 'sec', label: '比能耗(Wh/L)' }],
+      rows: times.map((t, i) => ({ '时间': t, actualPower: heaterEnergyRows.value[i].actualPower, cumulativeElectric: heaterEnergyRows.value[i].cumulativeElectric, cumulativeHeatEnergy: heaterEnergyRows.value[i].cumulativeHeatEnergy, sec: heaterEnergyRows.value[i].sec })),
+    })
+  }
+
+  // 自定义公式
+  const derivedKeys = Object.keys(derivedMetricData.value).filter((k) => derivedMetricData.value[k].rows && derivedMetricData.value[k].rows.length > 0)
+  if (derivedKeys.length) {
+    const baseKey = derivedKeys[0]
+    const times = formatTimes(derivedMetricData.value[baseKey].rows)
+    const columns = [{ prop: '时间', label: '时间' }, ...derivedKeys.map((k) => ({ prop: k, label: `${derivedMetricData.value[k].config.metric_name}(${derivedMetricData.value[k].config.unit || ''})` }))]
+    const rows = times.map((t, i) => {
+      const row = { '时间': t }
+      for (const k of derivedKeys) { const r = derivedMetricData.value[k].rows[i]; row[k] = r ? r.value : null }
+      return row
+    })
+    tables.push({ key: 'derived', label: '自定义公式', columns, rows })
+  }
+
+  return tables
+})
+
+watch(detailTables, (tables) => {
+  if (tables.length && !tables.some((t) => t.key === activeDetailTab.value)) {
+    activeDetailTab.value = tables[0].key
+  }
+}, { immediate: true })
 
 function disposeAllCharts() {
   if (_renderRaf) { cancelAnimationFrame(_renderRaf); _renderRaf = 0 }

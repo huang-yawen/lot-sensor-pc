@@ -231,6 +231,24 @@ CREATE TABLE `t_derived_metric` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
 
 -- ----------------------------
+-- Table structure for t_cumulative_snapshot
+-- 累计指标快照表：每条上报落库时把“全量累计值”（累计流量 / 累计运行时长…）增量累加后写一行，
+-- 历史图表页 / 计算指标明细表直接读这里，避免每次在 t_sensor_data / t_behavior_data 上跑
+-- 窗口函数全表扫描。历史数据用 backend/server/init/backfill_cumulative_snapshot.js 一次性回填。
+-- ----------------------------
+DROP TABLE IF EXISTS `t_cumulative_snapshot`;
+CREATE TABLE `t_cumulative_snapshot` (
+  `id` bigint(20) NOT NULL AUTO_INCREMENT,
+  `d_no` varchar(64) DEFAULT NULL COMMENT '设备编号',
+  `metric_key` varchar(64) NOT NULL COMMENT '累计指标标识，对应 CUMULATIVE_METRICS.metric_key',
+  `c_time` datetime NOT NULL COMMENT '该条采集时间',
+  `cumulative_value` decimal(20,6) NOT NULL COMMENT '该时刻的全量累计值',
+  PRIMARY KEY (`id`),
+  KEY `idx_metric_time` (`metric_key`, `c_time`),
+  KEY `idx_dno_metric_time` (`d_no`, `metric_key`, `c_time`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+
+-- ----------------------------
 -- Table structure for t_error_msg
 -- ----------------------------
 DROP TABLE IF EXISTS `t_error_msg`;

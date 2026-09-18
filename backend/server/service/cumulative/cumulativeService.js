@@ -16,6 +16,7 @@
 const promisePool = require('../../config/dbPool')
 const { CUMULATIVE_METRICS } = require('../../config/metrics')
 const { calcBucketSeconds } = require('../../utils/timeRange')
+const { querySnapshotSeries } = require('./cumulativeSnapshotService')
 
 // 相邻两条读数的秒差上限：超过视为设备离线间隙，积分时只按上限计，避免离线期间
 // 被当成一直在流。跟 querySingleOnDurationCumulative 的 MAX_GAP_SEC、首页
@@ -54,11 +55,19 @@ function aggregationSql(metric) {
  * @returns {Array<{c_time, value, cumulative}>}
  */
 async function querySingleCumulative(metric, options = {}) {
-  if (metric.aggregation === 'on_duration') {
-    return querySingleOnDurationCumulative(metric, options)
-  }
-  if (metric.aggregation === 'flow_integral') {
-    return querySingleFlowIntegralCumulative(metric, options)
+  // on_duration / flow_integral 两类优先读累计快照表（预计算，避免每次在原始大表上跑窗口函数
+  // 全表扫描）；快照还没数据（未回填 / 刚部署）时回退到下面的实时计算，页面不会空白。
+  if (metric.aggregation === 'on_duration' || metric.aggregation === 'flow_integral') {
+    const { d_no, limit, startTime, endTime } = options
+    try {
+      const snapshot = await querySnapshotSeries({ metric_key: metric.metric_key, d_no, limit, startTime, endTime })
+      if (snapshot.length) return snapshot
+    } catch (err) {
+      console.error(`[CumulativeService] 读取 ${metric.metric_key} 累计快照失败，回退实时计算:`, err.message)
+    }
+    return metric.aggregation === 'on_duration'
+      ? querySingleOnDurationCumulative(metric, options)
+      : querySingleFlowIntegralCumulative(metric, options)
   }
 
   const { d_no, limit = 300, startTime, endTime } = options
