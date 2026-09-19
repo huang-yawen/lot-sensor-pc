@@ -12,6 +12,9 @@
  *
  * 【配置】记录模式常量 CONFIG.OPERATION_HISTORY_MODE 就在下面。改完重启后端生效。
  * GET /api/system-config 也会读这里导出的 OPERATION_HISTORY_MODE。
+ * 【值含义】查询时把 old_value/new_value 按 t_direct_config.f_value 转成「关/开」这类文案——
+ * 设备上报路径存的是原始编码 0/1，软件下发路径存的是 on/off，不转的话同一列会混着两种写法。
+ * 实现见下方"值含义映射"，同时兼容把 0/1 别名到同一侧文案。
  */
 const promisePool = require('../config/dbPool')
 const { nowLocalDateTime, formatLocalDateTime } = require('../utils/helper')
@@ -161,8 +164,80 @@ async function saveOperationHistory({ d_no, config_id, old_value = null, new_val
   }
 }
 
+// ==================== 值含义映射 ====================
+// t_operation_history 存的是原始值：软件下发路径（manual / interlock / pid_heating …）存的是
+// t_direct 里的规范值 'on'/'off'；而设备上报路径（source='auto'，见
+// mqtt/behaviorRealtime/behaviorRealtimeRepository.js）存的是设备自己报的原始编码 '0'/'1'。
+// 同一列因此混着 on/off 和 0/1，直接展示很不直观。
+// 值含义来自 t_direct_config.f_value（格式 '文案:值|文案:值'，如 '关:off|开:on'），
+// 这正是 operationHistory.sql 注释里说的"关联 t_direct_config 获取操作名称和值含义"那一步。
+const SWITCH_F_TYPE = '1'
+// 跟 behaviorRealtimeRepository.js / controlHelpers.js 同一套宽松识别：这些值算"开"。
+const ON_TOKENS = new Set(['on', 'open', '1', 'true'])
+
+function isOnToken(value) {
+  return ON_TOKENS.has(String(value ?? '').trim().toLowerCase())
+}
+
+/**
+ * 把一条指令项的 f_value 解析成 { 原始值: 展示文案 }。
+ * 只处理开关类（f_type='1'）：其它类型的 f_value 不是值含义表——输入框/滑动条不配；
+ * 时间框存的是 'pump:on' 这种"目标preffix:目标值"绑定（见 service/schedule），
+ * 误当映射会把值显示成 preffix。开关类额外补 '0'/'1' 两个别名指向"关/开"那一侧的文案，
+ * 兼容设备上报路径存的原始编码。
+ * @param {string} fType - t_direct_config.f_type
+ * @param {string} fValue - t_direct_config.f_value
+ * @returns {Object|null} 形如 { off: '关', on: '开', 0: '关', 1: '开' }；解析不出返回 null
+ */
+function parseDirectValueLabels(fType, fValue) {
+  if (String(fType ?? '').trim() !== SWITCH_F_TYPE) return null
+  const text = String(fValue ?? '').trim()
+  if (!text) return null
+
+  const labels = {}
+  let onLabel = null
+  let offLabel = null
+  for (const part of text.split('|')) {
+    const idx = part.indexOf(':')
+    if (idx === -1) continue
+    const label = part.slice(0, idx).trim()
+    const value = part.slice(idx + 1).trim()
+    if (!label || !value) continue
+    labels[value] = label
+    if (isOnToken(value)) onLabel = label
+    else offLabel = label
+  }
+  if (Object.keys(labels).length === 0) return null
+
+  if (offLabel !== null && labels['0'] === undefined) labels['0'] = offLabel
+  if (onLabel !== null && labels['1'] === undefined) labels['1'] = onLabel
+  return labels
+}
+
+/** 拉取所有开关类指令项，构建 { config_id: { 原始值: 文案 } }。表很小，直接全量取。 */
+async function loadDirectValueLabelMap() {
+  const [rows] = await promisePool.query(
+    'SELECT id, f_type, f_value FROM t_direct_config WHERE f_type = ?',
+    [SWITCH_F_TYPE]
+  )
+  const map = {}
+  for (const row of rows) {
+    const labels = parseDirectValueLabels(row.f_type, row.f_value)
+    if (labels) map[Number(row.id)] = labels
+  }
+  return map
+}
+
+/** 给历史值套文案；没配置映射（数值类指令项 / 已删掉的指令项）时原样返回。 */
+function labelHistoryValue(rawValue, labels) {
+  if (rawValue === null || rawValue === undefined) return rawValue
+  if (!labels) return rawValue
+  const key = String(rawValue).trim()
+  return Object.prototype.hasOwnProperty.call(labels, key) ? labels[key] : rawValue
+}
+
 // ==================== 分页查询 ====================
-// 通过 JOIN t_direct_config 拿操作名称（t_name），改数据库就能适配不同赛题。
+// 通过 JOIN t_direct_config 拿操作名称（t_name）和值含义（f_value），改数据库就能适配不同赛题。
 /**
  * @param {Object} params
  * @param {number} params.currentPage - 当前页码（从1开始）
@@ -192,48 +267,74 @@ async function getOperationHistory({ currentPage = 1, pageSize = 5, startTime = 
 
   const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
 
-  // 查询总数
-  const [[{ total }]] = await promisePool.query(
-    `SELECT COUNT(*) AS total FROM t_operation_history h
-     LEFT JOIN t_direct_config c ON h.config_id = c.id
-     ${whereClause}`,
-    queryParams
-  )
-
-  // 分页查询，JOIN t_direct_config 获取操作名称
+  // 三条查询互不依赖，并发发出：总数、当页数据、开关类指令项的值含义表。
   const offset = (currentPage - 1) * pageSize
-  const [rows] = await promisePool.query(
-    `SELECT h.id, h.d_no AS '设备编号',
-            COALESCE(c.t_name,
+  const [countResult, rowsResult, valueLabels] = await Promise.all([
+    promisePool.query(
+      `SELECT COUNT(*) AS total FROM t_operation_history h
+       LEFT JOIN t_direct_config c ON h.config_id = c.id
+       ${whereClause}`,
+      queryParams
+    ),
+    promisePool.query(
+      `SELECT h.id, h.d_no AS '设备编号',
+              COALESCE(c.t_name,
+                CASE h.source
+                  WHEN 'interlock' THEN '自动联锁'
+                  WHEN 'calibration' THEN '自动校时'
+                  ELSE '未知操作'
+                END
+              ) AS '操作名称',
+              h.old_value AS '旧值',
+              h.new_value AS '新值',
+              -- 来源文案。前 12 个对应当前代码里实际会写入的 source（见各 setSwitch 调用）；
+              -- 最后 3 个是历史遗留 source（当前代码已无写入点，库里还留着少量旧记录），
+              -- 按字面含义给出中文，避免这一列漏出英文。
               CASE h.source
-                WHEN 'interlock' THEN '自动联锁'
-                WHEN 'calibration' THEN '自动校时'
-                ELSE '未知操作'
-              END
-            ) AS '操作名称',
-            h.old_value AS '旧值',
-            h.new_value AS '新值',
-            CASE h.source
-               WHEN 'manual' THEN '软件下发'
-               WHEN 'manual_queued' THEN '离线补发'
-               WHEN 'interlock' THEN '自动联锁'
-               WHEN 'calibration' THEN '自动校时'
-               WHEN 'auto_control' THEN '自动控制'
-               WHEN 'quantity_shutdown' THEN '定量停机'
-               WHEN 'temp_shutdown' THEN '定温停机'
-               WHEN 'schedule' THEN '定时任务'
-               WHEN 'auto' THEN '底层设备'
-               WHEN 'device' THEN '底层设备'
-               ELSE h.source
-            END AS '来源',
-            h.c_time AS '操作时间'
-     FROM t_operation_history h
-     LEFT JOIN t_direct_config c ON h.config_id = c.id
-     ${whereClause}
-     ORDER BY h.c_time DESC
-     LIMIT ? OFFSET ?`,
-    [...queryParams, Number(pageSize), Number(offset)]
-  )
+                 WHEN 'manual' THEN '软件下发'
+                 WHEN 'manual_queued' THEN '离线补发'
+                 WHEN 'interlock' THEN '自动联锁'
+                 WHEN 'calibration' THEN '自动校时'
+                 WHEN 'linkage_rules' THEN '联动控制'
+                 WHEN 'pid_heating' THEN 'PID恒温控制'
+                 WHEN 'pump_velocity_control' THEN '恒流速控制'
+                 WHEN 'quantity_shutdown' THEN '定量停机'
+                 WHEN 'temp_shutdown' THEN '定温停机'
+                 WHEN 'fault_status' THEN '故障断电'
+                 WHEN 'fault_reset' THEN '故障复位'
+                 WHEN 'schedule' THEN '定时任务'
+                 WHEN 'auto' THEN '底层设备'
+                 WHEN 'device' THEN '底层设备'
+                 WHEN 'auto_control' THEN '自动控制'
+                 WHEN 'pid_autotune' THEN 'PID自整定'
+                 WHEN 'auto_tune' THEN 'PID自整定'
+                 WHEN 'layered_control' THEN '分层控制'
+                 ELSE h.source
+              END AS '来源',
+              h.c_time AS '操作时间',
+              h.config_id AS __configId
+       FROM t_operation_history h
+       LEFT JOIN t_direct_config c ON h.config_id = c.id
+       ${whereClause}
+       ORDER BY h.c_time DESC
+       LIMIT ? OFFSET ?`,
+      [...queryParams, Number(pageSize), Number(offset)]
+    ),
+    loadDirectValueLabelMap(),
+  ])
+
+  const total = countResult[0][0]?.total ?? 0
+  const rows = rowsResult[0]
+
+  // 旧值/新值换成指令项配置的文案：'on' 和 '1' 都显示成"开"、'off' 和 '0' 都显示成"关"，
+  // 不再一半 on/off 一半 0/1。__configId 只是查映射用的中间列，返回前删掉——
+  // 否则前端把 data[0] 的 key 当表头，会凭空多出一列。
+  for (const row of rows) {
+    const labels = row.__configId == null ? null : valueLabels[Number(row.__configId)]
+    delete row.__configId
+    row['旧值'] = labelHistoryValue(row['旧值'], labels)
+    row['新值'] = labelHistoryValue(row['新值'], labels)
+  }
 
   return { rows, total }
 }

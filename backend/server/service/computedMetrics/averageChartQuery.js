@@ -7,6 +7,18 @@
  * 平均温度/平均流速的公式跟 service/computedMetrics/computedMetrics.js 里实时计算用的
  * 完全一致，区别是那边是内存里的实时滚动缓冲区（最多 60 点，不认时间范围）；这里改成
  * 按时间范围直接查数据库，供历史图表页面的时间选择器使用。
+ *
+ * 【页面/图表】历史图表页（HistoryCharts.vue）—— 一个接口养 6 张图，前端复用同一份返回：
+ *   GET /api/average-chart → { rows, minuteRows, targetTemp, targetVelocity }
+ *   · 「平均温度与平均流速（秒级）」 ← rows.averageTemp / rows.averageVelocity
+ *   · 「分钟平均温度与平均流速」     ← minuteRows（同一段 SQL，分桶固定 60 秒，见文件末尾）
+ *   · 「温度曲线」                   ← rows.temp1 / rows.temp2（原始读数，不做二次计算）
+ *   · 「瞬时流量与瞬时压力」         ← rows.flow / rows.pressure（原始读数）
+ *   · 「PID 跟踪对比」               ← rows.temp2 + targetTemp（目标温度画成水平参考线）
+ *   · 「恒流速跟踪对比」             ← rows.averageVelocity + targetVelocity（目标流速参考线）
+ *   顶部「计算指标历史明细」表里的"平均温度/流速"和"分钟平均温度/流速"两个页签也吃这同一份数据。
+ *   注意：首页趋势图走的是另一条路径（computedMetrics.js 的内存 series），不是本文件。
+ *
  * 【配置】COMPUTED_METRICS.pipeAreaCm2 用于计算平均流速，
  * PUMP_VELOCITY_CONTROL.defaultTargetVelocity 用作目标流速兜底，每次查询实时读取。
  */
@@ -25,10 +37,12 @@ const { getDefaultDeviceId } = require('../../utils/mappedData')
  * @param {number} [options.limit=300]
  * @param {string} [options.startTime]
  * @param {string} [options.endTime]
+ * @param {number} [options.bucketSeconds] 可选：固定分桶宽度（秒）。传入 >0 时不再按 pointLimit
+ *   自适应，改为用这个固定宽度分桶，供「分钟平均」这类固定粒度聚合复用。
  * @returns {Array<{c_time, averageTemp, averageVelocity, temp1, temp2, flow, pressure}>}
  */
 async function queryAverageChart(options = {}) {
-  const { d_no, limit = 300, startTime, endTime } = options
+  const { d_no, limit = 300, startTime, endTime, bucketSeconds: bucketOverride } = options
   const safeLimit = Math.min(2000, Math.max(1, Number.parseInt(limit, 10) || 300))
 
   const areaCm2 = Number(COMPUTED_METRICS?.pipeAreaCm2)
@@ -51,7 +65,11 @@ async function queryAverageChart(options = {}) {
   // 选多大的时间范围，图表都能展现横跨整个范围的趋势，而不会因为范围内数据量超过
   // safeLimit，被"取最新 N 条"吃成同一批挤在末尾的数据（跟工业监控里 Grafana/InfluxDB
   // 的按时间桶聚合思路一致）。范围内数据本来就稀疏时桶宽度会算得很小，等于不聚合。
-  const bucketSeconds = startTime ? calcBucketSeconds({ startTime, endTime, pointLimit: safeLimit }) : 1
+  // 固定粒度覆盖优先：bucketOverride 传入 >0 时（如「分钟平均」固定 60 秒）直接用它分桶，
+  // 不再按 pointLimit 自适应。否则维持原逻辑——范围内数据稀疏时桶宽最小 1 秒，等于不聚合。
+  const bucketSeconds = Number(bucketOverride) > 0
+    ? Number(bucketOverride)
+    : (startTime ? calcBucketSeconds({ startTime, endTime, pointLimit: safeLimit }) : 1)
   const params = [bucketSeconds, ...whereParams]
 
   const sql = `
@@ -118,4 +136,15 @@ async function getCurrentTargetVelocity(d_no) {
   return getTargetVelocity(resolvedDNo, fallback)
 }
 
-module.exports = { queryAverageChart, getCurrentTargetTemp, getCurrentTargetVelocity }
+/**
+ * 分钟粒度聚合查询：桶宽固定 60 秒（1 分钟），供历史图表页「分钟平均温度与平均流速」独立图使用。
+ * 与 queryAverageChart 共用同一段 SQL 和同样的返回结构，只是把分桶宽度固定为 60 秒，
+ * 不再按 pointLimit 自适应——保证每个点都是真正的一分钟均值，而不是大范围时的粗略抽样。
+ * @param {Object} [options] 同 queryAverageChart（limit 会被忽略，因为桶宽已固定）
+ * @returns {Array<{c_time, averageTemp, averageVelocity, temp1, temp2, flow, pressure}>}
+ */
+async function queryAverageChartMinute(options = {}) {
+  return queryAverageChart({ ...options, bucketSeconds: 60 })
+}
+
+module.exports = { queryAverageChart, queryAverageChartMinute, getCurrentTargetTemp, getCurrentTargetVelocity }

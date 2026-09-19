@@ -6,8 +6,9 @@
  * 公共 query：d_no?（单设备可不传）、limit?、range?('1h'|'6h'|'24h'|'custom')、
  *            startTime?/endTime?（range=custom 时用）。heatingAnalysis 不吃 d_no。
  *
- *  GET /api/average-chart      averageChart     平均温度/流速时间线 + 当前目标温度/目标流速（PID/恒流速跟踪图参考线）
- *     → data:{ rows:[...], targetTemp, targetVelocity }
+ *  GET /api/average-chart      averageChart     平均温度/流速时间线（秒级 rows + 分钟级 minuteRows）
+ *                              + 当前目标温度/目标流速（PID/恒流速跟踪图参考线）
+ *     → data:{ rows:[...], minuteRows:[...], targetTemp, targetVelocity }
  *  GET /api/temp-flow-scatter  scatterChart     温度-流量相关性散点
  *     → data:[ 散点... ]
  *  GET /api/current-temp       currentTemp      首页：最新一条出水温度（读 SENSOR_FIELD_MAP.temp2 对应槽位）
@@ -24,7 +25,7 @@ const promisePool = require('../config/dbPool')
 const { SENSOR_FIELD_MAP } = require('../config/appSettings')
 const { BACKFILL_LABEL } = require('../utils/recencyFilter')
 const { resolveTimeRange } = require('../utils/timeRange')
-const { queryAverageChart, getCurrentTargetTemp, getCurrentTargetVelocity } = require('../service/computedMetrics/averageChartQuery')
+const { queryAverageChart, queryAverageChartMinute, getCurrentTargetTemp, getCurrentTargetVelocity } = require('../service/computedMetrics/averageChartQuery')
 const { queryTempFlowScatter } = require('../service/computedMetrics/scatterChartQuery')
 const { queryDeviceStateTrend } = require('../service/computedMetrics/deviceStateQuery')
 const { queryHeaterEnergy } = require('../service/computedMetrics/heaterEnergyQuery')
@@ -36,12 +37,15 @@ async function averageChart(req, res) {
     const d_no = req.query.d_no || null
     const limit = req.query.limit
     const { startTime, endTime } = resolveTimeRange(req.query)
-    const [rows, targetTemp, targetVelocity] = await Promise.all([
+    // rows 为秒级（按 pointLimit 自适应分桶），minuteRows 为分钟级（固定 60 秒分桶），
+    // 两者结构完全一致，前端各自画成独立图表，秒级与分钟级共存。
+    const [rows, minuteRows, targetTemp, targetVelocity] = await Promise.all([
       queryAverageChart({ d_no, limit, startTime, endTime }),
+      queryAverageChartMinute({ d_no, startTime, endTime }),
       getCurrentTargetTemp(d_no),
       getCurrentTargetVelocity(d_no),
     ])
-    res.json({ success: true, data: { rows, targetTemp, targetVelocity } })
+    res.json({ success: true, data: { rows, minuteRows, targetTemp, targetVelocity } })
   } catch (err) {
     console.error('[AverageChartController] 查询失败:', err)
     res.status(500).json({ success: false, message: err.message })

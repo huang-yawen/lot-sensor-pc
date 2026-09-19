@@ -64,7 +64,8 @@ module.exports = {
     pointLimit: 300,                     // 每张图最多显示多少个数据点
     showCumulative: true,                // 累计统计
     showTimeWindow: true,                // 滑动统计
-    showAverageChart: true,              // 平均温度与平均流速
+    showAverageChart: true,              // 平均温度与平均流速（秒级，按时间范围自适应分桶）
+    showMinuteAverageChart: true,        // 分钟平均温度与平均流速（固定 1 分钟分桶，独立图）
     showTempChart: true,                 // 温度曲线（温度1/温度2 原始读数对比）
     showFlowPressureChart: true,         // 瞬时流量与压力
     showPidTrackingChart: true,          // PID 跟踪对比（目标温度参考线 + 温度2 实际值）

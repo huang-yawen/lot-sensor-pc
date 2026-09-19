@@ -3,6 +3,12 @@
  * 开关状态，供历史图表页面画"设备状态时间线"（阶梯图），直观展示自动控制/安全联锁
  * 的实际动作历史。字段槽位（field1=水泵、field2=加热）跟 safetyInterlock.js/
  * faultStatus.js/pidHeating.js 保持一致。
+ * 【页面/图表】历史图表页 →「设备状态时间线」，接口 GET /api/device-state-trend。
+ *   y 轴只有 开(1) / 关(0) 两档，前端用 step:'end' 画阶梯线，每段宽度=该状态的真实持续时长。
+ *   跟「PID 周期加热开关」那张图的区别：那张按 PID 自己的 PWM 周期边界精确复原（不看上报
+ *   频率），这张按设备实际上报的采样点画，反映的是"设备真实动作历史"。两张图互补。
+ * 【公式】无二次计算：把 t_behavior_data 的开关字段归一成 1 / 0 / null（见 toOnValue），
+ *   兼容 on/open/1/true 与 off/close/0/false 两套写法。
  * 【配置】无直接读取。
  */
 const promisePool = require('../../config/dbPool')

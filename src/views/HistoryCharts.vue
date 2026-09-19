@@ -1,5 +1,5 @@
 <!--
- * 【文件职责】历史图表页面：累计统计、滑动统计、平均温度与平均流速，
+ * 【文件职责】历史图表页面：累计统计、滑动统计、平均温度与平均流速（秒级 + 分钟级两张图），
  * 从首页搬过来，统一接一个时间范围选择器（5分钟~24小时+自定义），
  * 选择不同范围时对应重新查询数据库，保证图表数据跟所选范围一致。
  * 【配置中心关联】图表元数据（名称/单位/颜色/图表类型）读取 CUMULATIVE_METRICS、
@@ -82,11 +82,19 @@
       </div>
     </section>
 
-    <!-- ==================== 平均温度 / 平均流速（合并成一张图） ==================== -->
+    <!-- ==================== 平均温度 / 平均流速（合并成一张图，秒级） ==================== -->
     <section v-if="showAverageChart" class="chart-section">
-      <h2 class="section-title">平均温度与平均流速</h2>
+      <h2 class="section-title">平均温度与平均流速（秒级）</h2>
       <div class="chart-card chart-card-wide">
         <div ref="averageChartRef" class="chart-el chart-el-tall"></div>
+      </div>
+    </section>
+
+    <!-- ==================== 分钟平均温度 / 分钟平均流速（独立一张图） ==================== -->
+    <section v-if="showMinuteAverageChart" class="chart-section">
+      <h2 class="section-title">分钟平均温度与平均流速</h2>
+      <div class="chart-card chart-card-wide">
+        <div ref="minuteAverageChartRef" class="chart-el chart-el-tall"></div>
       </div>
     </section>
 
@@ -229,7 +237,7 @@
     </section>
 
     <el-empty
-      v-if="!loading && !cumulativeEntries.length && !timeWindowEntries.length && !showAverageChart && !showTempFlowScatter && !showTempChart && !showFlowPressureChart && !showPidTrackingChart && !showDeviceStateChart && !showHeaterEnergyChart && !showHeatingAnalysisChart && !cumulativeFlowEntry && !switchDurationEntries.length && !derivedMetricEntries.length"
+      v-if="!loading && !cumulativeEntries.length && !timeWindowEntries.length && !showAverageChart && !showMinuteAverageChart && !showTempFlowScatter && !showTempChart && !showFlowPressureChart && !showPidTrackingChart && !showDeviceStateChart && !showHeaterEnergyChart && !showHeatingAnalysisChart && !cumulativeFlowEntry && !switchDurationEntries.length && !derivedMetricEntries.length"
       description="所选时间范围内暂无数据，或配置中心还没启用相关图表"
     />
   </div>
@@ -265,6 +273,7 @@ const historyChartsConfig = computed(() => ({
   showCumulative: true,
   showTimeWindow: true,
   showAverageChart: true,
+  showMinuteAverageChart: true,
   showTempChart: true,
   showFlowPressureChart: true,
   showPidTrackingChart: true,
@@ -281,6 +290,7 @@ const historyChartsConfig = computed(() => ({
 const cumulativeData = ref({})
 const timeWindowData = ref({})
 const averageChartRows = ref([])
+const minuteAverageChartRows = ref([])
 const targetTemp = ref(null)
 const targetVelocity = ref(null)
 const scatterRows = ref([])
@@ -309,6 +319,27 @@ function formatTimes(rows) {
       })
     : ''))
   _formatTimesCache.set(rows, out)
+  return out
+}
+
+/** 分钟粒度的时间轴格式化：只精确到分钟（"2026/09/18 17:30"），不带秒。
+ *  「分钟平均温度与平均流速」图 / 「分钟平均温度/流速」明细表的数据本来就是后端按 60 秒分桶、
+ *  每分钟一个点，横坐标再带上秒既没有信息量、又把标签拉得很长（24 小时范围下还会挤成一团），
+ *  而且容易让人误以为这是秒级数据。所以这两个地方单独用这个格式化。
+ *  缓存策略与 formatTimes 相同：按 rows 数组引用缓存，loadAll() 换新数组后自然失效。 */
+const _formatTimesMinuteCache = new WeakMap()
+function formatTimesMinute(rows) {
+  if (!Array.isArray(rows)) return []
+  const cached = _formatTimesMinuteCache.get(rows)
+  if (cached) return cached
+  const out = rows.map((r) => (r.c_time
+    ? new Date(r.c_time).toLocaleString('zh-CN', {
+        year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit',
+        hour12: false,
+      })
+    : ''))
+  _formatTimesMinuteCache.set(rows, out)
   return out
 }
 
@@ -362,6 +393,7 @@ async function loadAll() {
     cumulativeData.value = cumRes.status === 'fulfilled' ? (cumRes.value.data?.data || {}) : {}
     timeWindowData.value = twRes.status === 'fulfilled' ? (twRes.value.data?.data || {}) : {}
     averageChartRows.value = avgRes.status === 'fulfilled' ? (avgRes.value.data?.data?.rows || []) : []
+    minuteAverageChartRows.value = avgRes.status === 'fulfilled' ? (avgRes.value.data?.data?.minuteRows || []) : []
     targetTemp.value = avgRes.status === 'fulfilled' ? (avgRes.value.data?.data?.targetTemp ?? null) : null
     targetVelocity.value = avgRes.status === 'fulfilled' ? (avgRes.value.data?.data?.targetVelocity ?? null) : null
     deviceStateRows.value = stateRes.status === 'fulfilled' ? (stateRes.value.data?.data || []) : []
@@ -623,6 +655,77 @@ function renderAverageChart() {
 watch([averageChartRows, averageChartRef], () => {
   nextTick(() => {
     if (averageChartRef.value) queueRender(renderAverageChart)
+  })
+})
+
+// ==================== 分钟平均温度 / 分钟平均流速（独立一张图） ====================
+// 数据来源是 /api/average-chart 返回的 minuteRows（后端固定 60 秒分桶），与秒级图并存：
+// 秒级图看短时抖动，分钟图看长周期趋势，两者共用同一批查询接口、互不影响。
+// 独立开关 HISTORY_CHARTS.showMinuteAverageChart，不跟秒级图绑在一起，赛场可单独关掉。
+const showMinuteAverageChart = computed(() => {
+  if (historyChartsConfig.value.showMinuteAverageChart === false) return false
+  const flags = systemStore.config.COMPUTED_METRICS || {}
+  return (flags.averageTempChart !== false || flags.averageVelocityChart !== false) && minuteAverageChartRows.value.length > 0
+})
+
+const minuteAverageChartRef = ref(null)
+let minuteAverageChartInstance = null
+
+function renderMinuteAverageChart() {
+  const rows = minuteAverageChartRows.value
+  const el = minuteAverageChartRef.value
+  if (!rows.length || !el || el.offsetWidth === 0) {
+    if (el) setTimeout(renderMinuteAverageChart, 50)
+    return
+  }
+  if (minuteAverageChartInstance) minuteAverageChartInstance.dispose()
+  const chart = echarts.init(el)
+  minuteAverageChartInstance = chart
+
+  // 横坐标精确到分钟（不带秒）：这份数据是后端按 60 秒分桶的，每秒的点是同一个值，
+  // 带秒只会把标签拉长、看起来像秒级数据。见 formatTimesMinute 的说明。
+  const times = formatTimesMinute(rows)
+  const flags = systemStore.config.COMPUTED_METRICS || {}
+  const seriesList = []
+  if (flags.averageTempChart !== false) {
+    seriesList.push({
+      name: '分钟平均温度', type: 'line', yAxisIndex: 0, smooth: true,
+      data: rows.map((r) => r.averageTemp),
+      itemStyle: { color: '#3b82f6' }, lineStyle: { color: '#3b82f6', width: 2 },
+    })
+  }
+  if (flags.averageVelocityChart !== false) {
+    seriesList.push({
+      name: '分钟平均流速', type: 'line', yAxisIndex: 1, smooth: true,
+      data: rows.map((r) => r.averageVelocity),
+      itemStyle: { color: '#10b981' }, lineStyle: { color: '#10b981', width: 2 },
+    })
+  }
+
+  const axisFor = (isBar) => [
+    { type: 'value', scale: !isBar, name: '℃', nameTextStyle: { fontSize: 11 } },
+    { type: 'value', scale: !isBar, name: 'm/s', nameTextStyle: { fontSize: 11 } },
+  ]
+
+  chart.setOption({
+    tooltip: { trigger: 'axis' },
+    legend: { data: seriesList.map((s) => s.name), top: 0 },
+    toolbox: {
+      feature: { magicType: { type: ['line', 'bar'] }, saveAsImage: { title: '下载图片' } },
+      right: 10,
+      top: 0,
+    },
+    grid: { left: 14, right: 60, top: 50, bottom: 50 },
+    xAxis: { type: 'category', data: times, axisLabel: { rotate: 15, fontSize: 10 } },
+    yAxis: axisFor(false),
+    series: seriesList,
+  }, true)
+  bindMagicTypeAxis(chart, axisFor)
+}
+
+watch([minuteAverageChartRows, minuteAverageChartRef], () => {
+  nextTick(() => {
+    if (minuteAverageChartRef.value) queueRender(renderMinuteAverageChart)
   })
 })
 
@@ -1699,13 +1802,24 @@ const detailTables = computed(() => {
     tables.push({ key: 'timeWindow', label: '滑动窗口', columns, rows })
   }
 
-  // 平均温度/流速
+  // 平均温度/流速（秒级）
   if (averageChartRows.value.length) {
     const times = formatTimes(averageChartRows.value)
     tables.push({
-      key: 'average', label: '平均温度/流速',
+      key: 'average', label: '平均温度/流速（秒级）',
       columns: [{ prop: '时间', label: '时间' }, { prop: 'averageTemp', label: '平均温度(℃)' }, { prop: 'averageVelocity', label: '平均流速(m/s)' }],
       rows: times.map((t, i) => ({ '时间': t, averageTemp: averageChartRows.value[i].averageTemp, averageVelocity: averageChartRows.value[i].averageVelocity })),
+    })
+  }
+
+  // 分钟平均温度/流速（后端固定 60 秒分桶的 minuteRows，跟上面的秒级表并存）
+  // 时间列同样只到分钟：这一批数据每分钟才一个点，显示到秒没有意义（见 formatTimesMinute）。
+  if (minuteAverageChartRows.value.length) {
+    const times = formatTimesMinute(minuteAverageChartRows.value)
+    tables.push({
+      key: 'minuteAverage', label: '分钟平均温度/流速',
+      columns: [{ prop: '时间', label: '时间' }, { prop: 'averageTemp', label: '分钟平均温度(℃)' }, { prop: 'averageVelocity', label: '分钟平均流速(m/s)' }],
+      rows: times.map((t, i) => ({ '时间': t, averageTemp: minuteAverageChartRows.value[i].averageTemp, averageVelocity: minuteAverageChartRows.value[i].averageVelocity })),
     })
   }
 
@@ -1797,6 +1911,8 @@ function disposeAllCharts() {
   cumulativeChartInstance = null
   averageChartInstance?.dispose()
   averageChartInstance = null
+  minuteAverageChartInstance?.dispose()
+  minuteAverageChartInstance = null
   scatterChartInstance?.dispose()
   scatterChartInstance = null
   tempChartInstance?.dispose()

@@ -3,6 +3,12 @@
  * 单位流量能耗（比能耗 SEC）——四个跟"加热到底花了多少电、换来多少热"相关的
  * 工程指标，供历史图表页面画图。
  *
+ * 【页面/图表】历史图表页 →「加热能耗分析」一节，一个接口 GET /api/heater-energy 出 3 张图：
+ *   · 「瞬时加热功率」            ← actualPowerW（= heater_on ? P_额定 : 0）
+ *   · 「累计耗电量 / 累计换热量」 ← cumulativeEnergyWh / cumulativeHeatWh
+ *   · 「单位流量能耗（SEC）」     ← secWhPerL（= 加热电耗 ÷ 加热时段流量，Wh/L）
+ *   需要 COMPUTED_METRICS.heaterRatedPower > 0，否则三张图都返回空（页面显示"暂无数据"）。
+ *
  * 跟"公式与图表"（DERIVED_METRICS）自定义公式引擎的边界：那套引擎只能对单行
  * t_sensor_data 的原始字段做四则运算，算不出这里的东西——一是要知道"加热这一刻
  * 有没有通电"（来自 t_behavior_data，公式引擎只认 t_sensor_data），二是要按时间

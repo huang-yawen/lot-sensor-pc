@@ -1,5 +1,19 @@
 /**
  * 时间窗口派生指标服务：滑动平均、波动幅度和相邻变化量。
+ *
+ * 【页面/接口】
+ *   · 历史图表页 →「滑动统计」一节（每条指标一张独立卡片），接口 GET /api/time-window。
+ *   · 传感器/行为表格的内联列：mode = 'inline' / 'both' 的指标会被
+ *     service/tableData/getTableData.js 拼进表格查询的 SELECT（表格里多一列滑动值）。
+ *   · 消抖参考：rolling_avg_temp 还会被历史图表页「温度曲线」图当虚线叠加显示。
+ *   配置项见 config/metrics.js 的 TIME_WINDOW_METRICS。
+ *
+ * 【公式】
+ *   avg        滑动平均   = AVG(值) OVER (ROWS (window_size-1) PRECEDING)  含当前行
+ *   volatility 波动幅度   = MAX(值) − MIN(值) OVER (同窗口)                越大说明抖动越厉害
+ *   rate       相邻变化量 = 值 − LAG(值, 1)
+ *   ⚠ rate 的单位是"每采样次"（℃/次、L/min/次），设备 1 秒上报一次时等于"每秒变化量"，
+ *     跟"每分钟变化率"差 60 倍，展示时不要把单位写成 ℃/min。
  */
 const promisePool = require('../../config/dbPool')
 const { TIME_WINDOW_METRICS } = require('../../config/metrics')

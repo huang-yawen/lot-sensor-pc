@@ -34,15 +34,18 @@ const routes=[
                 path:'/behavior-history',
                 component:()=>import('@/views/BehaviorHistory.vue'),
                 meta: { title: '行为数据/汇总数据' }
-            },{
-                path:'/device-management',
-                component:()=>import('@/views/DeviceManagement.vue'),
-                meta: { title: '设备数据/设备管理' }
-            },{
+            }
+            // ,{
+            //     path:'/device-management',
+            //     component:()=>import('@/views/DeviceManagement.vue'),
+            //     meta: { title: '设备数据/设备管理' }
+            // }
+            ,{
                 path:'/device-setting',
                 component:()=>import('@/views/DirectSetting.vue'),
                 meta: { title: '设备数据/设备设置' }
-            },{
+            }
+            ,{
                 path:'/operation-history',
                 component:()=>import('@/views/OperationHistory.vue'),
                 meta: { title: '设备数据/操作历史' }

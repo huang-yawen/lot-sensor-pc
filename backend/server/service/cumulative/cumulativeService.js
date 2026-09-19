@@ -4,6 +4,18 @@
  * 根据 systemConfig 中的 CUMULATIVE_METRICS 配置，使用 MySQL 窗口函数
  * 计算累计值或累计平均值。
  *
+ * 【页面/接口】
+ *   · 历史图表页 →「累计统计」合并图 /「累计流量」图 /「累计运行时长」图，接口 GET /api/cumulative
+ *     配置见 config/metrics.js 的 CUMULATIVE_METRICS（mode 决定进图表页还是内联进表格）。
+ *   · 首页「累计流量」卡片的总量：routes/sensorRoutes.js 里调本文件的 queryFlowIntegralTotal()。
+ *     ⚠ 跟历史图表页是"同一套增量算法、不同统计范围"，别误以为是同一个数：
+ *         · 首页不传 startTime → 从库里第一条数据累计到现在的【全量总量】（工业累计器语义，
+ *           后端重启不归零）。实测库里是 3600 L 量级。
+ *         · 历史图表页会带上所选时间范围 → 只累加范围内的数据，且从范围起点从 0 开始累加。
+ *       所以首页卡片的值 ≠ 历史图表页曲线的最后一个点（除非所选范围覆盖了全部历史）。
+ *       这是刻意设计：首页要的是"这块水表总共走了多少"，图表页要的是"这段区间内走了多少"。
+ *   · 传感器/行为表格的内联列：service/tableData/getTableData.js 调 buildCumulativeSelect()。
+ *
  * 支持的聚合方式（metric.aggregation）：
  *   - sum：累加（流量、功耗等连续量，默认）
  *   - avg：累计平均（从第一条数据开始逐点求平均）

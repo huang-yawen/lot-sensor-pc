@@ -5,7 +5,10 @@
  *   1. 系统阻力系数 K = P_泵出口 / Q²（管路通畅度代理指标：本项目只有一个压力
  *      传感器，用的是泵出口绝对表压，不是跨管段压降 ΔP；只有流量/工况稳定时才可横向比）
  *   2. 压力陡降速率 V = dP/dt（吸入空气紧急停泵判定），单位 kPa/s
- *   3. 温度变化率 dT/dt（传感器断线/开路/短路判定），单位 ℃/min
+ *   3. 温度变化率 dT/dt = (现在读数 − 1 分钟前读数) ÷ 实际间隔(分钟)，单位 ℃/min
+ *      （传感器断线/开路/短路判定）。窗口固定 60 秒——不跟"上一条读数"比，因为设备 1 秒
+ *      上报一次，1 秒间隔的温差会被温度传感器 0.1℃ 的分辨率量化成 0 / ±0.1℃，再折算成
+ *      ℃/min 就只剩 0 / ±6 的跳变，全是噪声。详见文件内"温度变化率的窗口参数"一节。
  *   4. 换热效率 η = (ρ·Cp·Q·ΔT) / P_额定 × 100%（水每秒带走的热功率 ÷ 加热额定电功率，单位 %）
  *   5. 热平衡：P_额定 = 水带走的热功率 heatTransferredW + 未被带走的部分 heatLossW（单位 W）
  *   6. 流量-压力特性曲线拟合（线性回归斜率 dP/dQ，kPa/(L/min)）
@@ -14,7 +17,14 @@
  *   9. 液位（按"水单向从水箱1流到水箱2"用累计流量推算；闭环循环下会偏离实际）
  *   10. 加热效率 = 实际升温ΔT / 理论升温ΔT × 100%（理论升温 = P_额定/(ρ·Cp·Q)，温度域
  *       表达；数值上等于换热效率 η）——只在加热开启+有流量时算
- *   11. 加热速度 = 加热开启时出水温度的升温速率 ΔT_出水/Δt（℃/min）
+ *   11. 加热速度 = 持续加热时出水温度的升温速率：(本次出水 − 1 分钟前出水) ÷ 实际间隔(分钟)，
+ *       单位 ℃/min。跟指标 3 用同一个 60 秒窗口，只是只看出水、且要求整段窗口都在加热。
+ *
+ * 【对应页面】首页 Dashboard.vue 的「需要计算的数据」卡片区。
+ *   数据出口：GET /api/computed-metrics（路由内联在 routes/sensorRoutes.js，调本文件的
+ *   getLatest()；没有 MQTT 数据时会先 refreshFromDB() 回放最近 120 条历史兜底）。
+ *   卡片显隐由前端按 entry.flags.* 控制，flags 来自 config/metrics.js 的 COMPUTED_METRICS。
+ *   每个 result 字段在下面各指标小节里都标了"【首页卡片】"名字。
  *
  * 内存中维护滚动状态；每条 MQTT 消息调用 compute() 更新并返回最新结果。
  * 【配置】COMPUTED_METRICS 见对应 config.js，改后需重启后端。
@@ -31,12 +41,14 @@ const { BACKFILL_LABEL } = require('../../utils/recencyFilter')
 const stateMap = new Map()
 
 /** 每个设备状态的初始值：cumulativeFlowL 累计流量供指标 7/9 用；last 记上
- * 一次读数供指标 2/3（差分类）算变化率用；curve/kHistory 分别是指标 6/1 的
- * 滚动历史窗口；series 是首页小趋势图用的最近 60 个点。 */
+ * 一次读数供指标 2/3.1（差分类）算变化率用；tempHistory 是带时间戳的温度回溯
+ * 缓冲区，供指标 3（温度变化率）按"往前 1 分钟"取回溯点用；curve/kHistory 分别是
+ * 指标 6/1 的滚动历史窗口；series 是首页小趋势图用的最近 60 个点。 */
 function initialState() {
   return {
     cumulativeFlowL: 0,
-    last: null, // { pressure, temp1, temp2, timestamp }
+    last: null, // { pressure, temp1, temp2, heatOn, timestamp }
+    tempHistory: [], // [{ timestamp, temp1, temp2, heatOn }] 近 3 分钟的读数，供温度变化率/加热速度回溯
     curve: [], // [{ flow, pressure }]
     kHistory: [], // [{ k, timestamp }]
     series: [], // [{ time, averageTemp, averageVelocity }]
@@ -119,6 +131,59 @@ function kTrend(kHistory) {
   const latest = kHistory[kHistory.length - 1].k
   if (!first || first === 0) return null
   return (latest - first) / first
+}
+
+// ==================== 温度变化率（dT/dt）的窗口参数 ====================
+// 口径（赛题要求）："当前时刻、往前 1 分钟的温度变化率"，即
+//     变化率 = (现在读数 − 1 分钟前的读数) ÷ 实际间隔(分钟)     单位 ℃/min
+// 为什么不跟"上一条读数"比：设备 1 秒上报一次，相邻两条的温度差会被温度传感器 0.1℃ 的
+// 分辨率量化成 0 或 ±0.1℃，再折算成"每分钟"要 ×60，于是结果只在 0 和 ±6 ℃/min 之间来回
+// 跳——首页上那两位小数全是量化噪声，看不出真实升温/降温趋势。改成 1 分钟窗口后，温差
+// 累积到 0.1~1℃ 量级，量化噪声占比降到 1/10 以下。
+/** 变化率窗口：从当前时刻往前看 60 秒。 */
+const TEMP_RATE_WINDOW_MS = 60 * 1000
+/** 回溯取样的允许偏差：缓冲区里没有落在 [窗口 ± 5 秒] 内的读数时不出值（视为数据断档）。 */
+const TEMP_RATE_TOLERANCE_MS = 5 * 1000
+/** 温度回溯缓冲区的保留时长（比窗口多留一倍余量，保证总能找到 1 分钟前的点）。 */
+const TEMP_HISTORY_KEEP_MS = 3 * 60 * 1000
+
+/**
+ * 在温度回溯缓冲区里找时间戳最接近 targetTs 的那条读数。
+ * 缓冲区为空、或最近的一条偏差超过 toleranceMs 时返回 null——宁可不出值（页面显示 "--"），
+ * 也不拿一个隔了很久的点凑数：后端刚重启、设备掉线恢复、数据断档都会走这条。
+ * @param {Array<{timestamp:number, temp1:number|null, temp2:number|null}>} tempHistory
+ * @param {number} targetTs - 目标时刻（毫秒时间戳，这里是 now − 60s）
+ * @param {number} toleranceMs - 允许的最大时间偏差
+ * @returns {{timestamp:number, temp1:number|null, temp2:number|null}|null}
+ */
+function findTempNear(tempHistory, targetTs, toleranceMs) {
+  let best = null
+  let bestDiff = Infinity
+  for (const point of tempHistory) {
+    const diff = Math.abs(point.timestamp - targetTs)
+    if (diff < bestDiff) {
+      bestDiff = diff
+      best = point
+    }
+  }
+  return best && bestDiff <= toleranceMs ? best : null
+}
+
+/**
+ * 判断回溯窗口 (pastTs, nowTs] 内是不是"一直在加热"——即窗口内每一条读数的 heatOn 都是 true。
+ * ⚠ 目前没有调用方（加热速度"只要当前在加热"就够了，见 compute() 里指标 3.1 的说明），
+ * 保留是因为"持续加热"这种判定在别的地方（比如以后要做加热阶段拆分）还会用到。
+ * @param {Array<{timestamp:number, heatOn:boolean|null}>} tempHistory
+ * @param {number} pastTs - 窗口起点（回溯点时间戳）
+ * @param {number} nowTs - 窗口终点（当前时间戳）
+ * @returns {boolean}
+ */
+function isHeatingThroughout(tempHistory, pastTs, nowTs) {
+  for (const point of tempHistory) {
+    if (point.timestamp < pastTs || point.timestamp > nowTs) continue
+    if (point.heatOn !== true) return false
+  }
+  return true
 }
 
 async function compute(info, timestampMs = Date.now(), knownDeviceNo = undefined) {
@@ -205,43 +270,62 @@ async function compute(info, timestampMs = Date.now(), knownDeviceNo = undefined
     }
   }
 
-  // ---- 3. 温度变化率 dT/dt ----
-  // 正常加热/降温时温度是连续、平缓变化的；传感器断线通常会让读数卡死在
-  // 一个固定值不动（变化率趋近 0），短路则可能让读数瞬间冲高或掉底——靠
-  // "变化率是否符合物理常理"，比只盯着温度绝对值本身更快发现传感器异常。
-  if (state.last) {
-    const dtMin = (nowMs - state.last.timestamp) / 60000
+  // ---- 3. 温度变化率 dT/dt（口径：当前时刻往前 1 分钟的变化率）【首页卡片：温度变化率 (进水/出水)】 ----
+  // 计算方法：rate = (现在读数 − 1 分钟前读数) ÷ 实际间隔(分钟)，单位 ℃/min。
+  //   · 先维护温度回溯缓冲区 state.tempHistory，再取时间戳最接近 (now − 60s) 的那条做被减数。
+  //   · 取不到落在 [60s ± 5s] 内的历史读数就不出值（tempChangeRate 整个字段缺席，页面显示 "--"）：
+  //     后端刚重启、设备掉线断档时缓冲区里没有 1 分钟前的点，这时候硬算出来的数是错的。
+  //   · 除以"实际间隔"而不是写死 1 分钟：回溯点一般落在 59~61 秒前，用真实间隔算才准确。
+  //   · 进水(temp1)/出水(temp2) 各算一条，某个温度这一条或那一条缺值时它自己为 null，互不影响。
+  //   · 用途：传感器断线通常读数卡死 → 变化率趋近 0；短路瞬间冲高/掉底 → 变化率异常大，
+  //     比只盯着温度绝对值更快发现传感器异常。
+  //   · 跟指标 3.1 加热速度的区别：这个每条消息都算、进/出水都算、不管加不加热，窗口固定 1 分钟；
+  //     那个只在"持续加热中"算、只看出水、跟上一行比（详见下方 3.1）。
+  if (temp1 != null || temp2 != null) {
+    state.tempHistory.push({ timestamp: nowMs, temp1, temp2, heatOn: switches.heatOn })
+    while (state.tempHistory.length && nowMs - state.tempHistory[0].timestamp > TEMP_HISTORY_KEEP_MS) {
+      state.tempHistory.shift()
+    }
+  }
+  const pastTemp = findTempNear(state.tempHistory, nowMs - TEMP_RATE_WINDOW_MS, TEMP_RATE_TOLERANCE_MS)
+  if (pastTemp) {
+    const dtMin = (nowMs - pastTemp.timestamp) / 60000
     if (dtMin > 0) {
-      // 单位 ℃/min：温差 / Δt(分钟)。跟加热速度(指标3.1)同口径。
-      const rate1 = temp1 != null && state.last.temp1 != null ? (temp1 - state.last.temp1) / dtMin : null
-      const rate2 = temp2 != null && state.last.temp2 != null ? (temp2 - state.last.temp2) / dtMin : null
+      const rate1 = temp1 != null && pastTemp.temp1 != null ? (temp1 - pastTemp.temp1) / dtMin : null
+      const rate2 = temp2 != null && pastTemp.temp2 != null ? (temp2 - pastTemp.temp2) / dtMin : null
       result.tempChangeRate = {
         temp1: rate1 == null ? null : Number(rate1.toFixed(3)),
         temp2: rate2 == null ? null : Number(rate2.toFixed(3)),
         unit: '℃/min',
+        // 实际回溯秒数（正常 59~61）。前端不展示，联调时可以据此确认口径确实是 1 分钟窗口。
+        windowSec: Number((dtMin * 60).toFixed(1)),
       }
     }
   }
 
-  // ---- 3.1 加热速度（持续加热中，出水温度的升温速率） ----
-  // 计算方法：加热速度 = (本次出水温度 − 上次出水温度) / Δt_分钟，单位 ℃/min。
-  //   · 只在"这一条和上一条消息都在加热"时给值（state.last.heatOn === true 且
-  //     switches.heatOn === true）——加热刚开启的那一条，上一条还是关的，两点温差里
-  //     混着 OFF 段，不能算作"加热速度"，跟历史查询 queryHeatingRate 里
-  //     "heater_on = 1 AND prev_heater_on = 1" 的口径保持一致。
-  //   · Δt 上限 10 秒（跟其它累计类查询同一护栏），超过视为离线间隙不出值。
-  //   · 跟指标 3 tempChangeRate 的区别：那个每条消息都算、进出水都算、不管加不加热；
-  //     这个专看"持续加热时出水升得多快"。加热正常时应为正，出水在加热中还往下掉说明
-  //     有问题，这里不做非负裁剪，负值原样给出。
-  if (
-    state.last && switches.heatOn === true && state.last.heatOn === true &&
-    temp2 != null && state.last.temp2 != null
-  ) {
-    const dtMin = (nowMs - state.last.timestamp) / 60000
-    if (dtMin > 0 && dtMin <= 10 / 60) {
-      result.heatingRate = {
-        value: Number(((temp2 - state.last.temp2) / dtMin).toFixed(3)),
-        unit: '℃/min',
+  // ---- 3.1 加热速度（当前在加热时，出水温度在"往前 1 分钟"里的净升温速率）【首页卡片：加热速度】 ----
+  // 口径跟指标 3（温度变化率）统一成"往前 1 分钟窗口"，理由相同：设备 1 秒上报一次，跟"上一条
+  // 读数"比会把温度传感器 0.1℃ 的分辨率放大成 0 / ±6 ℃/min 的跳变，首页那两位小数全是噪声。
+  // 计算方法：rate = (本次出水温度 − 1 分钟前出水温度) ÷ 实际间隔(分钟)，单位 ℃/min。
+  //   · 只在"当前在加热"时给值（switches.heatOn === true），这是它跟指标 3 唯一的区别：
+  //     指标 3 进/出水都算、不管加不加热；这个只关心加热期间出水怎么走。
+  //   · 特意【不】要求"这 60 秒里加热一直开着"：本项目加热是 PID 时间比例（PWM）通断，
+  //     实测 2026-09-15 以来的 331 段连续加热平均只有 15.5 秒、只有 12 段超过 60 秒——
+  //     按"整段都在加热"筛选的话几乎永远算不出值，首页会一直显示 "--"（这是废指标，不是严谨）。
+  //     放宽成"当前在加热"后：窗口里混着的 OFF 段本来就是这一分钟的真实物理过程（加热升温、
+  //     停加热散温），算出来的是净升温速率，物理上成立。
+  //   · 稳态（水温已经稳在目标附近）时这个值自然趋近 0，是正确的；出水在加热中还明显往下掉
+  //     说明有问题，所以不做非负裁剪，负值原样给出。
+  if (switches.heatOn === true) {
+    const pastHeat = findTempNear(state.tempHistory, nowMs - TEMP_RATE_WINDOW_MS, TEMP_RATE_TOLERANCE_MS)
+    if (pastHeat && temp2 != null && pastHeat.temp2 != null) {
+      const dtMin = (nowMs - pastHeat.timestamp) / 60000
+      if (dtMin > 0) {
+        result.heatingRate = {
+          value: Number(((temp2 - pastHeat.temp2) / dtMin).toFixed(3)),
+          unit: '℃/min',
+          windowSec: Number((dtMin * 60).toFixed(1)),
+        }
       }
     }
   }

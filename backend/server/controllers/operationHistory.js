@@ -6,6 +6,8 @@
  *    query { currentPage?=1, pageSize?, config_id?（按指令项筛选）, startTime?, endTime? }
  *    → { success:true, data:{ list:[{ id, 设备编号, 操作名称, 旧值, 新值, 来源, 操作时间 }...],
  *                             total, currentPage, pageSize } }
+ *    旧值/新值在 service 层已按 t_direct_config.f_value 转成「关/开」这类文案——
+ *    设备上报路径存的是 0/1、软件下发路径存的是 on/off，这里返回时已经是统一的展示值。
  *  GET /api/operation-history/configs  getConfigOptions 指令项下拉选项（筛选用）
  *    → { success:true, data:[{ value:config_id, label:t_name }...] }
  *
