@@ -1,16 +1,21 @@
 /** 【文件职责】统一处理单条同时包含传感器字段和行为字段的 MQTT 消息。
  * 【配置】当 MQTT_TOPICS.sensor 与 MQTT_TOPICS.behavior 配置为同一个主题时，
- * mqtt/index.js 会用本处理器替代分开的 sensorRealtimeHandler/behaviorRealtimeHandler，
- * 两张表各自按自己的字段映射表（t_sensor_field_mapper/t_behavior_field_mapper）从同一条
- * 消息中挑出需要的字段落库，不需要设备分两条消息上报。
- * 
+ * mqtt/index.js 会用本处理器替代分开的 sensorRealtimeHandler/behaviorRealtimeHandler。
+ *
+ * 【合并版落库】一条消息写三张表（统一走 utils/mappedData.js 的 saveSceneData）：
+ *   ① t_scene_data      合并表，一条消息一行：传感器字段 field1~field10、
+ *                       行为字段 field11~field20（+10 偏移）、has_sensor / has_behavior 标记；
+ *   ② t_sensor_data     传感器侧旧真表（分开版的所有旧代码读它）；
+ *   ③ t_behavior_data   行为侧旧真表（同上）。
+ *   写三份是为了让"任何一版代码都能直接用同一套库"，切回分开版代码不用动数据库。
+ *
  * 【智能判定（方式③ 消息即触发）】本处理器在每条消息处理末尾调用
  * triggerRealtimeJudgment()（见文件底部），把原始报文映射成 field1..field4 后交给
  * service/intelligent/intelligentJudgment.js 的 runRealtimeJudgment 异步判定，
  * 复用手动/自动同一条 judgeAndSave 链路。开关在 config.js 的 REALTIME_JUDGMENT.enabled。
  */
-const { saveSensorData } = require('../sensorRealtime/sensorRealtimeRepository')
-const { saveBehaviorData } = require('../behaviorRealtime/behaviorRealtimeRepository')
+const { saveSceneData, resolveDeviceNo } = require('../../utils/mappedData')
+const { withControlModeDefaults, detectAndRecordChanges } = require('../behaviorRealtime/behaviorRealtimeRepository')
 const { getReportedTime } = require('../../utils/protocol')
 const { evaluateRules } = require('../../service/alarm/evaluateRules')
 const { evaluateSafety } = require('../../service/safety/safetyInterlock')
@@ -101,12 +106,45 @@ async function handleMessage(topic, payload) {
     // 下发失败）只打一行"xxx出错，本步跳过"日志，后面的步骤照常执行——不能因为存库或
     // 写记录失败，就让同一条消息里的安全联锁、故障保护跳过。排查"控制逻辑好像没生效"时，
     // 先搜日志里有没有"出错，本步跳过"。
-    // 同一条消息里既有传感器字段又有行为字段，两张表各自按字段映射表挑选自己需要的字段。
+    // 同一条消息里既有传感器字段又有行为字段：【合并版】两者写进 t_scene_data 的同一行。
     // 数据质量（跳变/毛刺过滤）：只过滤传感器数值，行为数据（开关状态）照常入库。
     // 过滤本身出错时按"不过滤"处理（跟数据质量开关关着一样），这条数据原样入库。
     const spike = await runStep(TAG, '数据质量-跳变过滤', () => evaluateSpikeFilter(info), { flush: [info], blocked: false, triggers: [] })
-    for (const row of spike.flush) await runStep(TAG, '保存传感器数据', () => saveSensorData(row), null)
     if (spike.triggers.length) info._spikeTriggers = spike.triggers
+    // ── 一次消息 = 一行 ──────────────────────────────────────────────────────
+    // 跳变过滤有三种结果，落库方式各不相同（合并后仍然保持「分开版」的语义）：
+    //   ① flush = [..., info]：本条数值已确认入库（可能连带补写之前缓冲的几条）→
+    //      最后那条（=本条）同时写行为槽位，缓冲行只写传感器槽位。
+    //   ② flush = []：本条被拦下不入库 → 另起一行只写行为槽位，行为数据不丢。
+    //   ③ flush = [缓冲行...] 但本条仍被判为毛刺 → 同 ②：缓冲行只写传感器槽位。
+    const infoFlushed = spike.flush.length > 0 && spike.flush[spike.flush.length - 1] === info
+    /** 本次真正写成功的表，消息末尾汇总日志用（三写方案下正常是 3 张表）。 */
+    const writtenTables = new Set()
+    // 本条要写行为槽位时，先补上 PC 侧逻辑开关（控制模式 mode / PID恒温 pidMode）；
+    // 这两个值设备不上报，得从指令中心查。判②③ 时本条不写传感器槽位，也要补。
+    const behaviorInfo = await runStep(TAG, '行为字段补值', async () => {
+        const dNo = await resolveDeviceNo(info)
+        return dNo ? withControlModeDefaults(info, dNo) : null
+    }, null)
+
+    for (const row of spike.flush) {
+        const isCurrent = row === info && behaviorInfo != null
+        const saved = await runStep(TAG, '保存场景数据', () => saveSceneData({
+            info: isCurrent ? behaviorInfo : row,
+            dateTime: row.c_time ?? null,
+            withBehavior: isCurrent,
+        }), null)
+        if (saved?.written) saved.written.forEach(table => writtenTables.add(table))
+    }
+    if (!infoFlushed && behaviorInfo != null) {
+        const saved = await runStep(TAG, '保存场景数据（仅行为）', () => saveSceneData({
+            info: behaviorInfo,
+            dateTime: info.c_time ?? null,
+            withSensor: false,
+            withBehavior: true,
+        }), null)
+        if (saved?.written) saved.written.forEach(table => writtenTables.add(table))
+    }
     // 数据质量规则二：继电器触点粘连/控制失效——指令已关但传感器显示仍在工作时，
     // 自动重发关闭指令尝试恢复，重试无效则判定硬件故障、提示人工断电检修。
     const relayTriggers = await runStep(TAG, '数据质量-继电器粘连', () => evaluateRelayStuck(info), [])
@@ -115,7 +153,13 @@ async function handleMessage(topic, payload) {
     // 提示检查硬件拓扑并暂停自动恒温控制（PID 被控量方向反了会正反馈超温）。
     const invertedTriggers = await runStep(TAG, '数据质量-传感器装反', () => evaluateSensorInverted(info), [])
     if (invertedTriggers.length) info._sensorInvertedTriggers = invertedTriggers
-    await runStep(TAG, '保存行为数据', () => saveBehaviorData(info), null)
+    // 行为数据已在上面随行写入（has_behavior=1），这里不再单独写一次。
+    // 但「分开版」里 saveBehaviorData 末尾还会做一次状态变化检测、把设备侧的实际状态变化
+    // 记进操作历史（t_operation_history）。合并版把行为写入搬到了本文件，这一步必须跟着搬，
+    // 否则操作历史会静默丢记录（设备手动开关泵/加热后页面上看不到）。
+    if (behaviorInfo != null) {
+        await runStep(TAG, '行为状态变化检测', () => detectAndRecordChanges(info, behaviorInfo.d_no), null)
+    }
     // 两类字段都已到齐，一次性评估告警规则即可，不必再分开各评估一次。
     const alarms = await runStep(TAG, '安全告警', () => evaluateRules(info), [])
     if (alarms.length) info._alarms = alarms
@@ -156,6 +200,20 @@ async function handleMessage(topic, payload) {
     // 方式③：消息即触发智能判定——每条消息都异步判定一次（复用手动/自动同一条 judgeAndSave 链路），
     // 不等回复、不阻塞上面的本地规则与存库。只有 REALTIME_JUDGMENT.enabled=true 时才真正发请求。
     // triggerRealtimeJudgment(info)
+    //
+    // ── 每条消息末尾打一行汇总 ──────────────────────────────────────────────
+    // 现场排查"数据有没有落库""控制逻辑有没有跑"搜这行最快，不用去翻数据库：
+    //   写入 = 本次真正写成功的表（三写方案下正常 3 张：合并表 + 传感器表 + 行为表；
+    //          跳变过滤拦下传感器数值时是这个消息的 2 张：合并表 + 行为表）
+    //   后面几个数字 = 控制链各环节本轮触发了几条（0 = 跑了但没命中，不代表没跑）
+    //   任何一步抛异常都会另打一行"xxx出错，本步跳过"，有那行才是真出问题。
+    console.log(
+        `${TAG} 本轮完成 d_no=${behaviorInfo?.d_no ?? '-'} c_time=${info.c_time ?? '-'}` +
+        ` | 写入 ${[...writtenTables].join(' + ') || '无'}` +
+        ` | 告警${alarms.length} 安全${safetyTriggers.length} 故障${faultTriggers.length}` +
+        ` 联动${linkageActions.length} PID${pidActions.length} 恒流速${pumpVelocityActions.length}` +
+        (qtyResult ? ' 定量停机✓' : '') + (tempResult ? ' 定温停机✓' : '')
+    )
     return info
 }
 

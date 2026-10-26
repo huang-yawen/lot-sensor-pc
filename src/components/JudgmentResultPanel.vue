@@ -1,8 +1,23 @@
 <!--
- * 【文件职责】
- * 智能判定结果的可视化展示：结论 + 置信度做成简洁的结果区块，
- * 原始 JSON 响应折叠在下面留作详情/调试，供 SensorHistory/BehaviorHistory 共用。
+ * 【文件职责】判定结果弹窗里的内容区（结论 + 置信度 + 原始响应）。
+ *   调用链：页面点「智能判定」→ POST /api/intelligent/judge → 拿 data
+ *          → <JudgmentResultDialog :result> → 本组件渲染。
+ *   供 CombinedHistory.vue（当前生效）与 SensorHistory.vue / BehaviorHistory.vue（分开版，已停用）共用。
+ *
+ * 【渲染规则】（想改展示效果改这几处）
+ *   · result 为 null 时整体不渲染（弹窗打开但没数据时是空白，属正常）；
+ *   · result.mock === true → 顶部黄色提示条「本地占位判定（服务未启用，不是真实结果）」
+ *     —— 出现它说明后端 config.js 的 INTELLIGENT_JUDGMENT.enabled 还是 false；
+ *   · 结论取 result.conclusion；取不到时显示提示文字，引导去查"结果解析配置"
+ *     （config.js 的 resultPath / conclusionPath 与服务真实响应不匹配）；
+ *   · 置信度兼容两种约定：≤1 当 0~1 小数乘 100，>1 当已经是百分比（见 confidencePercent）；
+ *     取不到（null）时整行不显示；
+ *   · 红/绿小圆点按结论文字里的负面关键词判断（见 NEGATIVE_KEYWORDS），
+ *     不命中就按"正常"色显示（结论可能是任何分类标签，不猜测语义）；
+ *   · 「查看原始响应数据」折叠区打印整个 result（含 results 数组），对齐服务格式时看这里最快。
+ *
  * 【配置中心关联】无直接读取；展示内容完全来自调用方传入的判定结果。
+ * 【详细手册】项目根目录 JUDGMENT_GUIDE.md 第 7.2 节。
  * -->
 <template>
   <div v-if="result" class="judgment-result">

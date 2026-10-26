@@ -1,41 +1,81 @@
 /**
- * 【一句话版】这个文件负责「把数据交给 AI 判定，再存结果、按结果做动作」。
+ * 【一句话版】这个文件负责「把数据交给判定服务，再存结果、按结果做动作」。
  *
  * 具体干三件事：
- *   1. 把数据发给「智能判定服务」（一个会判断"数据正不正常"的外部接口）
- *   2. 把 AI 回的结果（正常 / 异常）存进数据库 t_judgment_record
- *   3. 如果 AI 说"干烧 / 漏水"了，交给 service/judgmentAction 去关泵关加热
+ *   1. 把数据发给「智能判定服务」（一个会判断"数据正不正常"的外部 HTTP 接口）
+ *   2. 把它回的结果（正常 / 异常 / 干烧…）存进数据库 t_judgment_record
+ *   3. 如果结论命中关键词（如"干烧 / 漏水"），交给 service/judgmentAction 去关泵关加热
  *
  * ═════════════════════════════════════════════════════════════════════
- * 【三种触发方式】差别只在"谁、什么时候发起判定"，判定本身完全一样：
+ * 【三条触发链路】差别只在"谁、什么时候发起判定"，判定本身完全一样：
  *
- *   手动 runManualJudgment   —— 你在历史页勾几条，点"智能判定"按钮，判一次
+ *   手动 runManualJudgment   —— 你在汇总页勾几条，点「智能判定」按钮，判一次
  *   自动 runAutoOnce         —— 后端自己每隔几秒取最新几条去判，不用你管
  *   实时 runRealtimeJudgment —— 每条 MQTT 消息一到就立刻判一次，最快
  *
- *   三种方式最后都汇到同一个 judgeAndSave()：
- *      judgeAndSave ── callService  把数据发给 AI
- *                  ├─ summarize    从 AI 的回复里挑出结论
- *                  └─ saveRecord   存一条记录
+ *   三条链路最后都汇到同一个 judgeAndSave()：
+ *      judgeAndSave ── callService  把数据发给判定服务（组装 { [requestField]: records }）
+ *                  ├─ summarize    从响应里按点路径挑出 结论 / 置信度
+ *                  └─ saveRecord   存一条记录（成功、占位、失败都存）
+ *
+ *   三条链路各自读哪张表、发给服务什么字段（★ 合并显示 / 分开显示的关键差异）：
+ *     type='sensor'    → t_sensor_data（真表，与合并表同时写入）     → 只有传感器，字段是裸槽位名 field1~field10
+ *     type='behavior'  → t_behavior_data（真表，同上）               → 只有行为，字段是裸槽位名 field1~field10
+ *     type='combined'  → t_scene_data 整行（传感器+行为在同一行）     → 两侧都有，字段还原成设备上报语义名
+ *                         还原逻辑见同目录 combinedJudgment.js（temp_in / pump / heater / mode …）
+ *     自动判定 runAutoOnce 目前**写死**走 t_sensor_data + type='sensor'；
+ *     实时判定目前只映射传感器侧，且调用点被注释（见文件底部与 combinedRealtimeHandler.js）。
+ *     要让这两条也带行为数据 → 见项目根目录 JUDGMENT_GUIDE.md 第 9.1 节。
  *
  * ═════════════════════════════════════════════════════════════════════
- * 【结果存哪】都存 t_judgment_record，用 status 字段区分是哪种模式、成功还是失败：
- *   手动成功 'success' / 自动成功 'auto' / 实时成功 'realtime'
- *   本地占位 'mock' / 'auto_mock' / 'realtime_mock'，失败 'failed'
+ * 【发给判定服务的报文长什么样】（config.js 的 requestField = 'data'）
+ *   组合判定（带行为）：
+ *     { "data": [ { "d_no":"202606", "c_time":"2005-01-01 00:14:47",
+ *                   "temp_in":"24.6", "temp_out":"25.9", "flow":"0", "pressure":"1.4",
+ *                   "mode":"0", "heater":"0", "pump":"0" } ] }
+ *   传感器判定 / 自动判定（只有传感器，且是数据库整行）：
+ *     { "data": [ { "id":113331, "d_no":"202606", "field1":"37.7", "field2":"38.1", "field3":"0",
+ *                   "field4":"1.3", "field5":null, …, "c_time":"2026-09-18 17:34:01",
+ *                   "online":"保存数据" } ] }
  *
  * ═════════════════════════════════════════════════════════════════════
- * 【赛场要改什么 → 去哪改】（都在 config.js，改完重启后端）：
- *   AI 服务地址 / 超时 / 请求体字段名 / 响应字段路径 → config.js 的 INTELLIGENT_JUDGMENT
+ * 【结果存哪】都存 t_judgment_record，用 status + data_type 两个字段区分：
+ *   status：  手动 success / mock  自动 auto / auto_mock  实时 realtime / realtime_mock  失败 failed
+ *   data_type：sensor / behavior / combined
+ *   排查时最有用的是 request_body（真正发出去的请求体）和 response_body（服务原样返回）。
+ *
+ * ═════════════════════════════════════════════════════════════════════
+ * 【文件里各部分在哪】
+ *   第 1 部分  判定记录表：ensureTable（建表）+ saveRecord（存一条记录）
+ *   第 2 部分  调服务与解析：readPath / toConfidence / mockResult / callService / summarize
+ *   第 3 部分  手动判定：TYPE_TABLES + MANUAL_STATUS + runManualJudgment
+ *   第 4 部分  自动判定：AUTO_STATUS + startAutoJudgment（定时器）+ runAutoOnce（★取样 SQL 在这里）
+ *   第 5 部分  实时判定：REALTIME_STATUS + runRealtimeJudgment + triggerJudgmentAction（判定联动）
+ *   文件末尾    对外导出的函数清单（谁在调一目了然）
+ *
+ * ═════════════════════════════════════════════════════════════════════
+ * 【赛场要改什么 → 去哪改】（参数都在 config.js，改完重启后端）：
+ *   判定服务地址 / 超时 / 请求体字段名 / 响应字段路径 → config.js 的 INTELLIGENT_JUDGMENT
  *   自动判定开不开、多久判一次、每次取几条            → config.js 的 AUTO_JUDGMENT
  *   实时判定开不开（每条消息判一次）                  → config.js 的 REALTIME_JUDGMENT
- *   自动判定改成判"行为数据"（默认只判传感器）        → 第 4 部分 runAutoOnce 里的表名
- *   没接 AI 时本地"瞎猜"的异常标准                    → 第 2 部分 mockResult 里的 > 10000
- *   AI 接口要 GET / 表单 / 回复不是 JSON 而是中文      → 第 2 部分 callService / summarize
+ *   自动判定改成判"行为"或"行为+传感器"（默认只判传感器）→ 第 4 部分 runAutoOnce 里的 SQL 与 type
+ *   没接服务时本地"瞎猜"的异常标准                    → 第 2 部分 mockResult 里的 > 10000
+ *   服务要 GET / 表单 / 响应不是 JSON 而是纯文本       → 第 2 部分 callService / summarize
+ *
+ * 【排查入口】
+ *   日志：`[Judgment] 判定失败:`（每次失败都打）、`[AutoJudgment] …`（自动判定节奏与跳过）
+ *   数据库：SELECT id, data_type, status, conclusion, request_body, response_body
+ *           FROM t_judgment_record ORDER BY id DESC LIMIT 5;
+ *   接口：POST /api/intelligent/judge（手动）、GET /api/intelligent/records（记录）、
+ *         GET /api/intelligent/auto-recent（自动判定内存缓冲）
  *
  * 【术语小抄】
- *   mock / 占位判定：没接真实 AI 服务时，程序在本地瞎猜一个"正常 / 数据异常"，用来跑通流程
- *   field1~field4：数据库里测量值的列（field1=进水温度，field2=出水温度，field3=流量，field4=压力）
- *   status：这条判定记录是哪来的、成功还是失败
+ *   mock / 占位判定：没接真实服务时，程序在本地瞎猜一个"正常 / 数据异常"，用来跑通流程
+ *   field1~field10：数据库里测量值的槽位列。传感器表：field1=进水温度、field2=出水温度、
+ *                   field3=瞬时流量、field4=瞬时压力；行为表：field1=水泵、field2=加热、
+ *                   field3=控制模式、field4=PID恒温（具体以 t_*_field_mapper 配置为准）
+ *   t_scene_data：合并表，一条上报消息一行；field1~10 传感器、field11~20 行为
+ *   status / data_type：这条判定记录是哪条链路、判的哪类数据、成功还是失败
  */
 
 const { EventEmitter } = require('events')
@@ -43,6 +83,7 @@ const promisePool = require('../../config/dbPool')
 const { getDeviceNo } = require('../../utils/protocol')
 const { nowLocalDateTime } = require('../../utils/helper')
 const { INTELLIGENT_JUDGMENT, AUTO_JUDGMENT } = require('./config')
+const { toCombinedPayloadRecords } = require('./combinedJudgment')
 
 
 // #####################################################################
@@ -67,7 +108,23 @@ async function ensureTable() {
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8`)
 }
 
-/** 往 t_judgment_record 存一条判定记录。成功、占位、失败都走这里。 */
+/**
+ * 往 t_judgment_record 存一条判定记录。成功 / 占位 / 失败三种情况都走这里。
+ *
+ * 各字段怎么填：
+ *   d_no         本批第一条记录的设备号（由 utils/protocol.js 的 getDeviceNo 从 DEVICE_ID_FIELDS
+ *                候选字段里取；合并判定的记录带 d_no，传感器判定带 id 字段——它是行主键不是设备号，
+ *                所以能对上的靠 d_no）
+ *   data_type    传入的 type：'sensor' / 'behavior' / 'combined'
+ *   source_ids   判了哪几条的 id，逗号拼接；**实时判定传 null**（那一刻消息还没入库、没有自增 id）。
+ *                字段是 varchar(1000)，一次最多 100 个 id（recognize.js 的 MAX_IDS）≈700 字符，
+ *                所以别把 MAX_IDS 调太大。
+ *   request_body 真正发出去的请求体（占位判定时存本地记录）；response_body 服务原样返回。
+ *                这两个字段是排查"判定服务到底收到了什么"的关键。
+ *   status       见文件头 status 对照表；失败时 error_message 存原因（截断到 1000 字）。
+ *
+ * 每次写之前都会 ensureTable()：表不存在就建（CREATE TABLE IF NOT EXISTS，已存在时无副作用）。
+ */
 async function saveRecord({ type, ids, records, requestBody, responseBody, conclusion, confidence, status, error }) {
   await ensureTable()
   await promisePool.execute(
@@ -114,15 +171,20 @@ function toConfidence(value) {
 
 /**
  * 【本地占位判定】没接真实 AI 服务时的"兜底"：程序在本地自己猜一个结果。
- * 猜法：每条记录里，只要有一个测量值（field1~field4）的绝对值超过 10000，就判"数据异常"。
- * 想改猜法就改下面函数里的 `> 10000`（比如改成 > 5000，或只看 field1 这一个字段）。
- * 只检查 field* 开头的字段是故意的：id/d_no/c_time 这些系统字段不参与判定，否则 id 涨过 10000 会误判。
+ * 猜法：每条记录里，只要有一个测量值的绝对值超过 10000，就判"数据异常"。
+ * 想改猜法就改下面函数里的 `> 10000`（比如改成 > 5000，或只看 temp_in 这一个字段）。
+ * 跳过的是系统字段（id / 设备号 / 时间 / 在线标记 / 合并表的两侧标记）：
+ *   旧版这里用 `/^field\d+$/` 只认裸槽位名，但组合判定的记录是按映射表 p_name
+ *   还原过的语义名（temp_in / pump ...），那样会一个字段都匹配不到、永远判"正常"，
+ *   所以改成"排除系统字段"的黑名单写法，两种记录的测量字段都能覆盖。
  */
+const MOCK_SKIP_KEYS = new Set(['id', 'd_no', 'c_time', 'online', 'has_sensor', 'has_behavior', 'trace_id'])
+
 function mockResult(records) {
   return records.map(record => {
     let abnormal = false
     for (const [key, value] of Object.entries(record)) {
-      if (!/^field\d+$/.test(key)) continue      // 只看 field1、field2... 这样的测量字段，其他都跳过
+      if (MOCK_SKIP_KEYS.has(String(key).toLowerCase())) continue
       const num = Number(value)
       if (Number.isFinite(num) && Math.abs(num) > 10000) abnormal = true  // 👈 要改阈值就改这里 > 10000
     }
@@ -238,8 +300,9 @@ async function judgeAndSave({ type, records, statusPair, ids }) {
 // 第 3 部分：手动判定（用户在历史页勾选几条，点"智能判定"按钮）
 // #####################################################################
 
-/** 前端传的 type → 去哪张表查记录。控制器也拿它校验 type 合不合法。 */
-const TYPE_TABLES = { sensor: 't_sensor_data', behavior: 't_behavior_data' }
+/** 前端传的 type → 去哪张表查记录。控制器也拿它校验 type 合不合法。
+ *  combined = 合并版的组合判定：t_scene_data 一行就是"一条消息"（传感器 + 行为）。 */
+const TYPE_TABLES = { sensor: 't_sensor_data', behavior: 't_behavior_data', combined: 't_scene_data' }
 
 /** 手动判定存库用的 status。 */
 const MANUAL_STATUS = { ok: 'success', mock: 'mock' }
@@ -262,9 +325,15 @@ async function runManualJudgment({ type, ids }) {
     throw error
   }
 
-  // 2. 判定 + 存库；出错时给错误贴上 code
+  // 2. 组合判定：库里一行就是"一条消息"，但判定服务要的是设备上报时的语义字段名，
+  //    所以先按两张映射表的 p_name 把槽位还原（temp_in / pump ...），再统一走 judgeAndSave。
+  //    ids 显式传进去：还原后的记录里故意不带 id（见 combinedJudgment.js 头部说明），
+  //    不传的话 judgeAndSave 会取 records.map(r => r.id) 得到一堆 undefined。
+  const payloadRecords = type === 'combined' ? await toCombinedPayloadRecords(records) : records
+
+  // 3. 判定 + 存库；出错时给错误贴上 code
   try {
-    return await judgeAndSave({ type, records, statusPair: MANUAL_STATUS })
+    return await judgeAndSave({ type, records: payloadRecords, statusPair: MANUAL_STATUS, ids })
   } catch (error) {
     const timeout = error.name === 'AbortError'
     const wrapped = new Error(timeout ? '智能判定服务请求超时' : error.message)
@@ -314,7 +383,23 @@ function pushResult(entry) {
   return entry
 }
 
-/** 自动判定跑一轮：取最新几条传感器数据 → 判定 → 结果推给前端。 */
+/**
+ * 自动判定跑一轮：取最新几条**传感器数据** → 判定 → 结果推给前端。
+ *
+ * ★ 取样 SQL 就在下面这一句，是"自动判定只判传感器"的唯一原因，改判定数据源就改这里：
+ *   · 只判传感器（现状）：'SELECT * FROM t_sensor_data ORDER BY c_time DESC, id DESC LIMIT ?'
+ *                         + 下面 judgeAndSave({ type: 'sensor' })
+ *   · 改成只判行为     ：表名换 t_behavior_data、type 换 'behavior'、字段含义以行为映射表为准
+ *   · 改成"行为+传感器" ：表名换 t_scene_data，条件加 has_sensor = 1 AND has_behavior = 1，
+ *                         再用 toCombinedPayloadRecords() 还原字段名、type 用 'combined'，
+ *                         并**显式把 ids 传给 judgeAndSave**（还原后的记录故意不带 id）。
+ *                         完整示例见项目根目录 JUDGMENT_GUIDE.md 第 9.1 节。
+ *
+ * ⚠ 两个已知影响：
+ *   1) 这里按 c_time DESC 取"最新"，设备时钟不准（例如上报 2005 年）时会取到旧数据；
+ *      设备 RTC 校准，或把 config/protocol.js 的 TIME_FIELDS 里的 Time 去掉改用服务器时间。
+ *   2) 查出来是"新 → 旧"，所以要 reverse 成"旧 → 新"再提交（判定服务按时间顺序看更直观）。
+ */
 async function runAutoOnce() {
   // 1. 取最新 N 条传感器数据（要判行为数据就把表名改成 t_behavior_data，下面 type 也改成 'behavior'）
   const [rows] = await promisePool.query(
@@ -437,8 +522,16 @@ function triggerJudgmentAction(result, record) {
 
 
 // #####################################################################
-// 对外提供的函数
+// 对外提供的函数（谁在调用一目了然）
 // #####################################################################
+//   ensureTable             controllers/intelligent/records.js 查记录前建表
+//   TYPE_TABLES             controllers/intelligent/recognize.js 校验 type（sensor/behavior/combined）
+//   runManualJudgment       controllers/intelligent/recognize.js 手动判定（页面点按钮）
+//   startAutoJudgment       app.js 启动时拉起自动判定定时器
+//   onAutoJudgment          app.js 监听每轮结果 → WebSocket 'auto_judgment' → 自动判定页
+//   getAutoJudgmentRecent   routes/sensorRoutes.js 的 GET /api/intelligent/auto-recent（补历史）
+//   runRealtimeJudgment     mqtt/combinedRealtime/combinedRealtimeHandler.js 消息即触发判定
+//   onRealtimeJudgment      app.js 监听 → WebSocket 'realtime_judgment'（当前前端无页面订阅）
 module.exports = {
   ensureTable,                                                     // controllers/intelligent/records.js 查记录前建表
   TYPE_TABLES,                                                     // controllers/intelligent/recognize.js 校验 type

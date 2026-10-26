@@ -1,7 +1,7 @@
 /** 【文件职责】行为实时数据仓储层。
  * 【配置】无直接读取。 */
 const promisePool = require('../../config/dbPool')
-const { saveMappedData, resolveDeviceNo } = require('../../utils/mappedData')
+const { saveSceneData, resolveDeviceNo } = require('../../utils/mappedData')
 const { saveOperationHistory } = require('../../service/operationHistory')
 const { saveDirectData, getDirectValue } = require('../../service/directData/saveDirectConfig')
 const { getReportedTime } = require('../../utils/protocol')
@@ -152,7 +152,7 @@ async function detectAndRecordChanges(info, d_no) {
    * 这些开关（控制模式 mode、PID恒温 pidMode）是上位机自己维护的状态，
    * 硬件不会通过 MQTT 上报，所以 info 里没有。这里在落库前从「指令中心」补进来：
    *   preffix ──resolveConfigIdByPrefix──▶ config_id ──getDirectValue──▶ t_direct 最新下发值
-   * 再归一化成 0 / 1 塞进 mappedInfo，交给 saveMappedData 按 mapper 表写进 t_behavior_data。
+   * 再归一化成 0 / 1 塞进 mappedInfo，交给 saveSceneData 按 mapper 表写进 t_scene_data 的行为槽位。
    * 用 preffix 而不是写死 config_id：场景编辑 / 主键重排会让 config_id 变，只有 preffix 稳定。
    * 只在 info 没带该字段时才补（hasOwnProperty 判断），设备真上报了就以上报值为准。
    *
@@ -160,8 +160,10 @@ async function detectAndRecordChanges(info, d_no) {
    *   1. t_behavior_field_mapper 加一行：
    *        f_name    = 页面中文列名，如「阀门」
    *        p_name    = 逻辑名，如 valveMode（要和第 3 步 mappedInfo.<p_name> 完全一致）
-   *        db_name   = t_behavior_data 里「空闲的」物理列，如 field5
-   *                    （field1~field4 已被占用；没有多余 fieldN 时先 ALTER TABLE 加列）
+   *        db_name   = t_behavior_field_mapper 的槽位，如 field5
+   *                    （【合并版】这里仍然写 field1~field10，写入时后端会自动 +10 偏移，
+   *                      落到 t_scene_data.field11~field20；field1=水泵、field2=加热、
+   *                      field3=控制模式、field4=PID恒温 已被占用，空闲的是 field5~field10）
    *        type      = '1'（开关）
    *        visible   = '1'
    *        value_map = {"0":"关","1":"开"}
@@ -169,7 +171,7 @@ async function detectAndRecordChanges(info, d_no) {
    *      否则 resolveConfigIdByPrefix 返回 null，这列恒为 0。
    *   3. 在下面照抄一个 if 块，改成对应的 preffix 和 mappedInfo.<p_name>。
    *   4. 重启后端生效。
-   *   ⚠ 只加 if 不加 mapper 行：值会被 saveMappedData 忽略，存不进；
+   *   ⚠ 只加 if 不加 mapper 行：值会被映射写入忽略，存不进；
    *     只加 mapper 行不加 if：列会出现但恒为空。
    *
    * ── 想「去掉」一个开关显示 ──────────────────────────────────────────────
@@ -181,18 +183,51 @@ async function detectAndRecordChanges(info, d_no) {
    *     但「只注释 if、不动 mapper」不行：列还在，只是恒为空。
    *
    * ── 改了 mapper 的 p_name 会怎样（不会让项目报错）───────────────────────
-   *   saveMappedData 是纯数据驱动：拿不到匹配的 p_name 就跳过这一列，不抛异常，
+   *   saveSceneData 是纯数据驱动：拿不到匹配的 p_name 就跳过这一列，不抛异常，
    *   顶多该列存不进值、页面显示空。前端只认 f_name（读取时 SELECT fieldN AS f_name），
    *   看不到 p_name，改 p_name 对页面渲染没有影响。
    *   全项目唯一写死了 mapper p_name 字面量的地方，就是下面这两个 if：
    *   'mode'（对应「控制模式」那行）、'pidMode'（对应「PID恒温」那行）。
    *   把这两行 mapper 的 p_name 改名时必须同步其一，否则补值写旧 key、mapper 找新 key，
    *   这两列会变空：
-   *     · 在 p_name 里保留别名，如 '控制模式新名|mode'（| 分隔，saveMappedData 支持多别名）；
+   *     · 在 p_name 里保留别名，如 '控制模式新名|mode'（| 分隔，saveSceneData 支持多别名）；
    *     · 或把下面 if 里的 'mode' / mappedInfo.mode（pidMode 同理）一起改名。
    *   其余普通传感器/执行器字段的 p_name 可随意改，只要新名字能和设备上报 JSON 的
    *   key 对上（或把旧名留作别名）即可。
    */
+/**
+ * 补上「PC 侧逻辑开关」：控制模式(mode)、PID恒温(pidMode) 是上位机自己维护的状态，
+ * 硬件不会通过 MQTT 上报，所以 info 里没有。这里在落库前从「指令中心」补进来：
+ *   preffix ──resolveConfigIdByPrefix──▶ config_id ──getDirectValue──▶ t_direct 最新下发值
+ * 再归一化成 0 / 1 塞进返回的 info 副本，写入时由字段映射表写进行槽位。
+ * 用 preffix 而不是写死 config_id：场景编辑 / 主键重排会让 config_id 变，只有 preffix 稳定。
+ * 只在 info 没带该字段时才补（hasOwnProperty 判断），设备真上报了就以上报值为准。
+ *
+ * 【合并版】导出给 mqtt/combinedRealtime/combinedRealtimeHandler.js 用：那个文件负责
+ * "一条消息写一行"，行为槽位由它一起写，所以这两个补值也必须在那里发生。
+ */
+async function withControlModeDefaults(info, d_no) {
+    const mappedInfo = { ...info, d_no }
+
+    if (!Object.prototype.hasOwnProperty.call(mappedInfo, 'mode')) {
+        const controlModeConfigId = await resolveConfigIdByPrefix('auto_control_enabled')
+        if (controlModeConfigId != null) {
+            const rawMode = await getDirectValue({ config_id: controlModeConfigId, d_no })
+            const modeStr = String(rawMode ?? '').trim().toLowerCase()
+            mappedInfo.mode = ['on', 'auto', 'open', '1', 'true'].includes(modeStr) ? 1 : 0
+        }
+    }
+    if (!Object.prototype.hasOwnProperty.call(mappedInfo, 'pidMode')) {
+        const pidModeConfigId = await resolveConfigIdByPrefix('pid_enabled')
+        if (pidModeConfigId != null) {
+            const rawPidMode = await getDirectValue({ config_id: pidModeConfigId, d_no })
+            const pidModeStr = String(rawPidMode ?? '').trim().toLowerCase()
+            mappedInfo.pidMode = ['on', 'auto', 'open', '1', 'true'].includes(pidModeStr) ? 1 : 0
+        }
+    }
+    return mappedInfo
+}
+
 async function saveBehaviorData(info) {
     // 设备编号必须能在 t_device.number 匹配上（见 utils/mappedData.js resolveDeviceNo），
     // 匹配不上就跳过保存，不再兜底成数据库里第一个设备或 'default_device'。
@@ -203,38 +238,23 @@ async function saveBehaviorData(info) {
     }
 
     try {
-        const mappedInfo = { ...info, d_no }
-        // 控制模式(mode)、PID恒温(pidMode)是 PC 端逻辑状态，设备不上报；这里在落库前
-        // 从指令中心(t_direct)按 preffix 查当前值补进来。完整原理、「增删一个开关显示」
-        // 的步骤、以及改 mapper p_name 的注意事项，见上方 saveBehaviorData 前的大段注释。
-
-        if (!Object.prototype.hasOwnProperty.call(mappedInfo, 'mode')) {
-            const controlModeConfigId = await resolveConfigIdByPrefix('auto_control_enabled')
-            if (controlModeConfigId != null) {
-                const rawMode = await getDirectValue({ config_id: controlModeConfigId, d_no })
-                const modeStr = String(rawMode ?? '').trim().toLowerCase()
-                mappedInfo.mode = ['on', 'auto', 'open', '1', 'true'].includes(modeStr) ? 1 : 0
-            }
-        }
-        if (!Object.prototype.hasOwnProperty.call(mappedInfo, 'pidMode')) {
-            const pidModeConfigId = await resolveConfigIdByPrefix('pid_enabled')
-            if (pidModeConfigId != null) {
-                const rawPidMode = await getDirectValue({ config_id: pidModeConfigId, d_no })
-                const pidModeStr = String(rawPidMode ?? '').trim().toLowerCase()
-                mappedInfo.pidMode = ['on', 'auto', 'open', '1', 'true'].includes(pidModeStr) ? 1 : 0
-            }
-        }
-        await saveMappedData({
-            table: 't_behavior_data',
-            mapperTable: 't_behavior_field_mapper',
+        const mappedInfo = await withControlModeDefaults(info, d_no)
+        // 走 saveSceneData（三表同时写），本函数只处理行为侧：
+        //   合并表 t_scene_data → 行为槽位 field11~field20（has_sensor = 0）；
+        //   旧真表 t_behavior_data → field1~field10（由 saveSceneData 内部 -10 还原来写）。
+        // dateTime 用 info.c_time（与传感器侧同一份规范化后的时间），不要用未规范化的
+        // 上报原值——两侧不同步会让"同一条消息"在两张表里的时间对不上。
+        await saveSceneData({
             info: mappedInfo,
-            dateTime: getReportedTime(info) ?? null,
+            dateTime: info.c_time ?? null,
+            withSensor: false,
+            withBehavior: true,
         })
         console.log('[BehaviorRealtime] Data saved to database successfully, d_no:', d_no)
-        
+
         // 保存成功后，检测状态变化并记录操作历史
         await detectAndRecordChanges(info, d_no)
-        
+
         return true
     } catch (err) {
         console.error('[BehaviorRealtime] Failed to save data:', err.message)
@@ -257,5 +277,8 @@ async function getBehaviorDataByDevice(limit = 100) {
 
 module.exports = {
     saveBehaviorData,
+    withControlModeDefaults,
+    detectAndRecordChanges,
     getBehaviorDataByDevice
 }
+

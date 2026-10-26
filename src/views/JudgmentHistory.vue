@@ -1,8 +1,29 @@
 <!--
- * 【文件职责】
- * 业务页面，负责组合数据、状态和用户操作，呈现完整功能界面。
- * 【配置中心关联】
- * 页面通过状态仓库读取配置中心；场景开关保存后，相关显示与交互按最新配置更新。
+ * 【文件职责】智能判定记录页（菜单「智能判定记录」，路由 /judgment-history）。
+ *   展示 t_judgment_record 的分页列表：ID / 设备编号 / 数据类型 / 原数据ID / 判定结论 /
+ *   置信度 / 状态 / 错误信息 / 判定时间；支持按设备编号、状态、时间范围筛选。
+ *
+ * 【接口】GET /api/intelligent/records?page&pageSize&d_no&status&startTime&endTime
+ *   （控制器 controllers/intelligent/records.js；查询前会自动建表）
+ *
+ * 【「状态」下拉里的值是什么意思】（就是落库的 status）
+ *   success        手动判定 + 真实判定服务成功
+ *   mock           手动判定 + 本地占位判定（服务未启用，结论是本地猜的）
+ *   auto           自动判定（后端定时器）成功
+ *   auto_mock      自动判定 + 本地占位
+ *   realtime       实时判定（每条消息）成功 —— 调用点默认注释，一般看不到
+ *   realtime_mock  实时判定 + 本地占位
+ *   failed         这一轮失败（超时 / 服务报错 / 响应不是 JSON），原因看「错误信息」列
+ *
+ * 【「数据类型」列】sensor / behavior / combined —— 区分这条记录是哪条链路判的
+ *   （combined 是组合判定，带传感器 + 行为两侧字段；详见 JUDGMENT_GUIDE.md 第 4 节）。
+ *
+ * 【想看"判定服务到底收到了什么"】本页不展示请求/响应体（列表接口没返回），直接查库：
+ *   SELECT data_type, status, conclusion, request_body, response_body
+ *   FROM t_judgment_record ORDER BY id DESC LIMIT 5;
+ *
+ * 【配置中心关联】页面通过状态仓库读取配置中心；显示开关见
+ *   INTELLIGENT_JUDGMENT.showHistoryMenu（菜单显隐）、HIDE_ID_FIELDS / HIDE_NUMBER_FIELDS（列显隐）。
  * -->
 <template>
   <div>

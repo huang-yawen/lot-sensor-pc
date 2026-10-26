@@ -1,5 +1,48 @@
--- competition.t_behavior_data definition
+-- ============================================================================
+-- 【合并版·三表方案】传感器 / 行为 / 合并表三张**真表**同时写入，任何一版代码都能直接用这套库
+--   ① t_scene_data      合并表：「一条消息一行」——传感器槽位 field1~field10 +
+--                       行为槽位 field11~field20（写入时 +10 偏移）+ has_sensor / has_behavior 标记。
+--                       组合数据页面（/api/dataByType?type=combined）读这张表。
+--   ② t_behavior_data    行为侧，结构原样（分开版的所有旧代码读它）
+--   ③ t_sensor_data      传感器侧，结构原样（同上）
+--   写入统一走 backend/server/utils/mappedData.js 的 saveSceneData（每条消息 3 次 INSERT）。
+--   已有库升级见 init/migrate_scene_data_20260919.sql；全新建库跑本文件即可。
+-- ROW_FORMAT 必须是 DYNAMIC：20 个 varchar(255) 在 utf8mb3 下超过 InnoDB 8126 字节行上限。
+-- ============================================================================
 
+CREATE TABLE `t_scene_data` (
+  `id` bigint NOT NULL AUTO_INCREMENT,
+  `d_no` varchar(64) CHARACTER SET utf8mb3 COLLATE utf8mb3_general_ci DEFAULT NULL COMMENT '设备编码',
+  `field1` varchar(255) CHARACTER SET utf8mb3 COLLATE utf8mb3_general_ci DEFAULT NULL COMMENT '传感器槽位1',
+  `field2` varchar(255) CHARACTER SET utf8mb3 COLLATE utf8mb3_general_ci DEFAULT NULL COMMENT '传感器槽位2',
+  `field3` varchar(255) CHARACTER SET utf8mb3 COLLATE utf8mb3_general_ci DEFAULT NULL COMMENT '传感器槽位3',
+  `field4` varchar(255) CHARACTER SET utf8mb3 COLLATE utf8mb3_general_ci DEFAULT NULL COMMENT '传感器槽位4',
+  `field5` varchar(255) CHARACTER SET utf8mb3 COLLATE utf8mb3_general_ci DEFAULT NULL COMMENT '传感器槽位5',
+  `field6` varchar(255) CHARACTER SET utf8mb3 COLLATE utf8mb3_general_ci DEFAULT NULL COMMENT '传感器槽位6',
+  `field7` varchar(255) CHARACTER SET utf8mb3 COLLATE utf8mb3_general_ci DEFAULT NULL COMMENT '传感器槽位7',
+  `field8` varchar(255) CHARACTER SET utf8mb3 COLLATE utf8mb3_general_ci DEFAULT NULL COMMENT '传感器槽位8',
+  `field9` varchar(255) CHARACTER SET utf8mb3 COLLATE utf8mb3_general_ci DEFAULT NULL COMMENT '传感器槽位9',
+  `field10` varchar(255) CHARACTER SET utf8mb3 COLLATE utf8mb3_general_ci DEFAULT NULL COMMENT '传感器槽位10',
+  `field11` varchar(255) CHARACTER SET utf8mb3 COLLATE utf8mb3_general_ci DEFAULT NULL COMMENT '行为槽位1（t_behavior_data.field1）',
+  `field12` varchar(255) CHARACTER SET utf8mb3 COLLATE utf8mb3_general_ci DEFAULT NULL COMMENT '行为槽位2',
+  `field13` varchar(255) CHARACTER SET utf8mb3 COLLATE utf8mb3_general_ci DEFAULT NULL COMMENT '行为槽位3',
+  `field14` varchar(255) CHARACTER SET utf8mb3 COLLATE utf8mb3_general_ci DEFAULT NULL COMMENT '行为槽位4',
+  `field15` varchar(255) CHARACTER SET utf8mb3 COLLATE utf8mb3_general_ci DEFAULT NULL COMMENT '行为槽位5',
+  `field16` varchar(255) CHARACTER SET utf8mb3 COLLATE utf8mb3_general_ci DEFAULT NULL COMMENT '行为槽位6',
+  `field17` varchar(255) CHARACTER SET utf8mb3 COLLATE utf8mb3_general_ci DEFAULT NULL COMMENT '行为槽位7',
+  `field18` varchar(255) CHARACTER SET utf8mb3 COLLATE utf8mb3_general_ci DEFAULT NULL COMMENT '行为槽位8',
+  `field19` varchar(255) CHARACTER SET utf8mb3 COLLATE utf8mb3_general_ci DEFAULT NULL COMMENT '行为槽位9',
+  `field20` varchar(255) CHARACTER SET utf8mb3 COLLATE utf8mb3_general_ci DEFAULT NULL COMMENT '行为槽位10',
+  `has_sensor` tinyint(1) NOT NULL DEFAULT '0' COMMENT '本条上报是否含传感器字段',
+  `has_behavior` tinyint(1) NOT NULL DEFAULT '0' COMMENT '本条上报是否含行为字段',
+  `c_time` datetime DEFAULT NULL COMMENT '数据更新时间。从底层获取，如果没有，则取服务端时间。跟底层约定好名称，不做字段的映射\n',
+  `online` varchar(4) CHARACTER SET utf8mb3 COLLATE utf8mb3_general_ci DEFAULT NULL COMMENT '是否在线数据',
+  PRIMARY KEY (`id`) USING BTREE,
+  KEY `idx_c_time` (`c_time`),
+  KEY `idx_complete_recent` (`has_sensor`,`has_behavior`,`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb3 ROW_FORMAT=DYNAMIC COMMENT='一条上报消息一行：传感器槽位 field1~10 + 行为槽位 field11~20';
+
+-- competition.t_behavior_data definition（真表，结构原样；与合并表同时写入）
 CREATE TABLE `t_behavior_data` (
   `id` int NOT NULL AUTO_INCREMENT COMMENT '主键，自动生成',
   `d_no` varchar(64) CHARACTER SET utf8mb3 COLLATE utf8mb3_general_ci DEFAULT NULL COMMENT '设备编码，有设备场景才填充。\r\n跟底层约定好名称，不做字段的映射',
@@ -192,8 +235,7 @@ CREATE TABLE `t_pid_heating_cycle` (
 ) ENGINE=InnoDB AUTO_INCREMENT=2131 DEFAULT CHARSET=utf8mb3;
 
 
--- competition.t_sensor_data definition
-
+-- competition.t_sensor_data definition（真表，结构原样；与合并表同时写入）
 CREATE TABLE `t_sensor_data` (
   `id` int NOT NULL AUTO_INCREMENT COMMENT '主键，自动生成',
   `d_no` varchar(64) CHARACTER SET utf8mb3 COLLATE utf8mb3_general_ci DEFAULT NULL COMMENT '设备编码，有设备场景才填充。\r\n跟底层约定好名称，不做字段的映射',

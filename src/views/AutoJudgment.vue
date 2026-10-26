@@ -1,15 +1,29 @@
 <!--
- * 【文件职责】
- * 业务页面："自动判定"。后端每隔几秒自己提交最新几条传感器数据给判定服务，
- * 本页面订阅结果，实时渲染成表格 + 三张图（置信度折线、结论时间轴、结论分布饼图）。
- * 页面只负责展示，不发起判定——判定节奏由后端定时器控制，关掉本页面后端照跑。
+ * 【文件职责】"自动判定"页（路由 /auto-judgment）。
+ *   后端定时器每 intervalMs 秒取最新 N 条数据判一次，本页面只负责展示：
+ *   状态条 + 两张趋势图 + 结论分布饼图 + 明细表。**页面不发起判定**（关掉它后端照跑）。
+ *
+ * ══════════════ 数据从哪来（两条来源，都要知道） ══════════════
+ *   1) 打开页面时补历史：GET /api/intelligent/auto-recent（读后端内存缓冲，最多 bufferSize 条）
+ *   2) 之后实时增量：WebSocket 消息类型 'auto_judgment'（app.js 把每轮结果广播出来）
+ *
+ * ⚠ 这条链路**只判传感器数据**（后端 intelligentJudgment.js 的 runAutoOnce 里取样 SQL 写死
+ *   读 t_sensor_data），不管你页面上是"合并显示"还是"分开显示"。
+ *   要让它也带行为数据（组合判定），见项目根目录 JUDGMENT_GUIDE.md 第 9.1 节。
+ *   另外它按 c_time 取"最新"，设备时钟不准（例如上报 2005 年）时会取到旧数据。
+ *
+ * 【想看某一轮到底发了什么】本页只展示结论/置信度，请求体在数据库里：
+ *   SELECT status, conclusion, request_body FROM t_judgment_record
+ *   WHERE data_type = 'sensor' ORDER BY id DESC LIMIT 3;
+ *
  * 【配置中心关联】
- * 读配置中心 AUTO_JUDGMENT（service/autoJudgment/config.js）：enabled 决定是否提示
- * "未启用"，intervalMs 显示当前节奏，bufferSize 决定本页最多留多少条。
+ *   读配置中心 AUTO_JUDGMENT（后端 service/intelligent/config.js）：
+ *   enabled 决定"未启用"提示、intervalMs 显示当前节奏、recentCount 显示每次几条、bufferSize 决定本页最多留多少条。
  *
  * ══════════════ 赛场要改什么，改哪里 ══════════════
  * 先分清改前端还是改后端：
- *   判定跑多快、每次取几条、留多少条  → 后端 service/autoJudgment/config.js，改完重启后端
+ *   判定跑多快、每次取几条、留多少条  → 后端 service/intelligent/config.js，改完重启后端
+ *   判哪类数据（只传感器 / 行为+传感器）→ 后端 service/intelligent/intelligentJudgment.js 的 runAutoOnce
  *   页面上显示什么、怎么排版          → 本文件，改完 npm run build 重新打包
  *
  * | 赛题/现场要求                     | 改这里                                         |
@@ -29,7 +43,7 @@
   <div>
     <div class="status-bar">
       <el-tag v-if="!autoEnabled" type="info" size="large">
-        自动判定未启用（service/autoJudgment/config.js 的 enabled 改成 true 并重启后端）
+        自动判定未启用（service/intelligent/config.js 的 AUTO_JUDGMENT.enabled 改成 true 并重启后端）
       </el-tag>
       <template v-else>
         <el-tag type="success" size="large">自动判定运行中</el-tag>
@@ -101,10 +115,11 @@ const systemStore = useSystemConfigStore()
 /**
  * 判定结果，按时间正序（新的在后）——图表要的就是这个顺序，表格自己再倒过来。
  *
- * 每一项是后端 service/autoJudgment/autoJudgment.js 发过来的，字段固定是这些
+ * 每一项是后端 service/intelligent/intelligentJudgment.js 的 runAutoOnce 每轮 emit 出来的
+ * （经 app.js 广播成 WebSocket 'auto_judgment'），字段固定是这些
  * （赛场要给表格加列时，prop 只能用这里有的名字）：
  *   time       '2026-09-12 14:30:05'，后端判定那一刻的时间
- *   ids        这一轮提交的原始数据 id 数组，如 [1201,1202,1203]
+ *   ids        这一轮提交的原始数据 id 数组，如 [1201,1202,1203]（t_sensor_data.id）
  *   conclusion 判定结论字符串；失败或服务没给结论时是 null
  *   confidence 置信度数字；取不到是 null（注意 0 是合法值，不是"没取到"）
  *   results    判定服务返回的完整结果（原样透传，要展示原始响应就用它）

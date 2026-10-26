@@ -1,16 +1,40 @@
 /**
- * 【文件职责】智能判定联动：智能判定服务返回的结论文字里，如果命中 config.js 里
- *   某条规则的关键词，就按那条规则的 actions 关泵/关加热，并写一条故障记录。
+ * 【文件职责】智能判定联动：判定服务返回的结论文字里，如果命中 config.js 里某条规则的
+ *   关键词，就按那条规则的 actions 关泵/关加热，并写一条故障记录 + 推前端弹窗。
  *
  * ★★ 赛场上要改判定逻辑（加/删/改规则），改同目录 config.js 的 RULES 就够了 ★★
  *   本文件的 checkRules 是通用循环，一般不需要改。
  *
- * 整条链路（写法照搬安全联锁 safetyInterlock.js）：
- *   intelligentJudgment.js 判定出结论 → evaluateJudgmentAction(结论, 记录)
- *        └─→ checkRules 按关键词匹配规则
- *              └─→ fire ─→ setSwitch（下发 MQTT + 落库 + 操作历史）+ recordEvent（写故障记录）
+ * ══════════════ 整条链路（写法照搬安全联锁 safetyInterlock.js） ══════════════
+ *   intelligentJudgment.js 判定出结论
+ *     └─ triggerJudgmentAction(result, record)     ← 只在自动判定 / 实时判定里调用
+ *          └─ evaluateJudgmentAction(结论, 记录)     ← 本文件唯一入口
+ *               ├─ resolveDeviceNoStr(record)       → 定位是哪台设备（为了按设备冷却/锁定）
+ *               ├─ checkRules(结论)                 → 结论文字包含 keywords 任意一个就命中
+ *               └─ fire(规则, 设备, 详情, 动作)
+ *                    ├─ 冷却检查（同一"设备+规则"在 alarmCooldownMs 内只触发一次）
+ *                    ├─ 复位锁定检查（requireReset=true 且该设备已锁定 → 跳过）
+ *                    ├─ setSwitch(prefix, 标签, 值, 设备, 'interlock')
+ *                    │    → 写 t_direct + 下发 MQTT + 写 t_operation_history
+ *                    ├─ recordEvent(...)         → 写 t_error_msg（type='智能判定联动'，e_no=规则 id）
+ *                    └─ events.emit('judgment_action') → app.js 广播 WebSocket
+ *                                                      judgment_action_triggered → 全局弹窗
+ *
+ * ══════════════ 四种"不动作"的情况（排查时按这个顺序对） ══════════════
+ *   1. config.enabled !== true            —— 总开关没开（默认 false）
+ *   2. config.executeActions !== true     —— 只记录、不下发开关
+ *   3. 结论没命中任何 RULES.keywords      —— 记录里会看到没有这条规则
+ *   4. 处于故障锁定 / 冷却期内 / 已锁定待复位 —— 日志会明确写"跳过开关动作"
+ *   另外：手动判定根本不会走到这里（它只是追溯历史），mock 占位结论也不会（本地猜的不算数）。
+ *
+ * ══════════════ 复位（requireReset=true 时启用） ══════════════
+ *   触发并真下发了动作后锁定该设备，复位前同一规则不再重复触发。
+ *   复位接口：POST /api/judgmentAction/reset（routes/sensorRoutes.js → resetJudgmentAction）
+ *   查询状态：GET  /api/judgmentAction/state
  *
  * 【配置】见同目录 config.js，改后需重启后端。
+ * 【排查】日志 `[JudgmentAction] ...`；数据 t_error_msg / t_operation_history / t_direct。
+ * 【详细手册】项目根目录 JUDGMENT_GUIDE.md 第 8 节。
  */
 const EventEmitter = require('events')
 const CONFIG = require('./config')

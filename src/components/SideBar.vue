@@ -21,34 +21,21 @@
                         <el-icon><DataBoard /></el-icon>
                         <span>首页概览</span>
                     </el-menu-item>
-                    <el-sub-menu index="1">
+                    <!-- 「合并版」：传感器与行为永远是同一条消息里的数据，合并成一整套数据页面。
+                         一条上报消息 = 数据库一行 = 页面上的一行，不再分"传感器数据/行为数据"两套页面。
+                         分开版的 4 个旧地址在 router/index.js 里保留重定向，老链接点了不会 404。 -->
+                    <el-sub-menu v-if="config.SHOW_COMBINED_PAGE !== false" index="1">
                         <template #title>
                             <el-icon>
-                                <Odometer />
+                                <Connection />
                             </el-icon>
-                            <span>{{ terms.sensor }}</span>
+                            <span>{{ terms.combined }}</span>
                         </template>
-                        <el-menu-item index="/sensor-realtime" to="/sensor-realtime">
+                        <el-menu-item index="/combined-realtime" to="/combined-realtime">
                             <el-icon><Promotion /></el-icon>
                             <span>实时数据</span>
                         </el-menu-item>
-                        <el-menu-item index="/sensor-history" to="/sensor-history">
-                            <el-icon><Histogram /></el-icon>
-                            <span>汇总数据</span>
-                        </el-menu-item>
-                    </el-sub-menu>
-                    <el-sub-menu index="2">
-                        <template #title>
-                            <el-icon>
-                                <Location />
-                            </el-icon>
-                            <span>{{ terms.behavior }}</span>
-                        </template>
-                        <el-menu-item index="/behavior-realtime" to="/behavior-realtime">
-                            <el-icon><Promotion /></el-icon>
-                            <span>实时数据</span>
-                        </el-menu-item>
-                        <el-menu-item index="/behavior-history" to="/behavior-history">
+                        <el-menu-item index="/combined-history" to="/combined-history">
                             <el-icon><Histogram /></el-icon>
                             <span>汇总数据</span>
                         </el-menu-item>
@@ -109,10 +96,8 @@ const terms = computed(() => systemStore.config.TERMINOLOGY || {})
 onMounted(() => systemStore.load().catch(error => console.error('[SideBar] 配置加载失败:', error)))
 
 const menuParents = {
-    '/sensor-realtime': '1',
-    '/sensor-history': '1',
-    '/behavior-realtime': '2',
-    '/behavior-history': '2',
+    '/combined-realtime': '1',
+    '/combined-history': '1',
     '/device-management': '3',
     '/device-setting': '3',
     '/operation-history': '3',

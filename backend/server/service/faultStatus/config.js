@@ -26,14 +26,14 @@
  * 当前状态：总开关开着（enabled=true），②⑤⑥三条生效，④未启用。
  */     
 module.exports = {
-  enabled: false,            // 故障状态总开关
+  enabled: true,            // 故障状态总开关
 
   // 六种故障各自的开关：只有写 true 才开；写 false、整行注释掉、删掉都算关
-  pipeBlockage: true,       // 故障①：进水口/管道堵塞
-  outletBlockage: true,     // 故障②：出水口堵塞
-  dryBurn: true,            // 故障③：干烧
-  pumpIdle: true,           // 故障④：水泵空转
-  pumpFault: true,           // 故障⑤：水泵故障
+  pipeBlockage: false,       // 故障①：进水口/管道堵塞
+  outletBlockage: false,     // 故障②：出水口堵塞
+  dryBurn: false,            // 故障③：干烧
+  pumpIdle: false,           // 故障④：水泵空转
+  pumpFault: false,           // 故障⑤：水泵故障
   pipeLeak: true,           // 故障⑥：管道漏水（流量>上限 且 压力<下限或=0）
 
   dryBurnDurationMs: 60000, // 加热开启后判定"温度不上升"所需的持续时长（毫秒）

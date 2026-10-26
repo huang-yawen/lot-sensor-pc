@@ -1,4 +1,8 @@
 <!--
+ * ⚠ 【已停用 / 仅作回退参考】合并版（第二部分）之后，传感器与行为恒为同一条上报消息里的数据，
+ *   本页面已不在路由和菜单里；/sensor-realtime 已重定向到 /combined-realtime（见 src/router/index.js）。
+ *   当前生效的页面是 views/CombinedRealtime.vue（组合数据/实时数据）。
+ *   需要退回"分开版"演示时才把路由改回本文件，平时不要在这里加功能。
  * 【文件职责】传感器实时数据页面。
  * 跟传感器汇总数据（SensorHistory）、行为实时/汇总数据页面统一使用 PaginationStore
  * 和 /api/dataByType 接口，通过 metricScope='realtime' 区分实时模式：

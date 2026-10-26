@@ -21,7 +21,7 @@
  * 【配置】主题名见 config/mqtt.js 的 MQTT_TOPICS.offlineData；设备靠 PC 心跳判断上位机
  * 在不在线、从而决定要不要缓存数据，心跳下发见 mqtt/pcHeartbeat.js。
  */
-const { saveMappedData } = require('../../utils/mappedData')
+const { saveSceneData } = require('../../utils/mappedData')
 const { getReportedTime } = require('../../utils/protocol')
 const { normalizeDateTime, nowLocalDateTime } = require('../../utils/helper')
 const { BACKFILL_LABEL } = require('../../utils/recencyFilter')
@@ -54,24 +54,19 @@ async function handleMessage(topic, payload) {
 
     console.log('[OfflineData] Received backfill message:', { topic, data: info })
 
-    // 两张表各自按自己的字段映射表从同一条报文里挑字段，跟实时数据走的是同一套映射，
-    // 区别只有 online 列打上"补传数据"标记。行为表里的控制模式(mode)/PID恒温(pidMode)
-    // 是 PC 侧的逻辑状态，报文里没有，也不该拿"现在"的值去补断线时刻的历史，这两列留空。
-    await saveMappedData({
-        table: 't_sensor_data',
-        mapperTable: 't_sensor_field_mapper',
+    // 合并版：走 saveSceneData（三表同时写）——合并表 t_scene_data 一行（一条消息一行）
+    // + 旧真表 t_sensor_data / t_behavior_data 各一份，传感器字段与行为字段各进自己的槽位，
+    // 跟实时上报走同一套字段映射，区别只有 online 列打上"补传数据"标记。
+    // 行为表里的控制模式(mode)/PID恒温(pidMode)是 PC 侧的逻辑状态，报文里没有，
+    // 也不该拿"现在"的值去补断线时刻的历史，所以补传不写这两个字段。
+    const saved = await saveSceneData({
         info,
         dateTime: info.c_time,
         dataLabel: BACKFILL_LABEL,
+        withSensor: true,
+        withBehavior: true,
     })
-    await saveMappedData({
-        table: 't_behavior_data',
-        mapperTable: 't_behavior_field_mapper',
-        info,
-        dateTime: info.c_time,
-        dataLabel: BACKFILL_LABEL,
-    })
-    console.log('[OfflineData] 补传数据已入库（标记为补传数据，只在汇总数据页展示）:', info.c_time)
+    console.log('[OfflineData] 补传数据已入库（一条消息一行，标记为补传数据，只在汇总数据页展示）:', saved, info.c_time)
     return info
 }
 

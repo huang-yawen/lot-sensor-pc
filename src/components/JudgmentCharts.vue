@@ -1,10 +1,10 @@
 <!--
- * 【文件职责】
- * 自动判定结果的两张趋势图：上面是置信度随判定时间的折线，下面是结论随时间的
+ * 【文件职责】自动判定结果的两张趋势图：上面是置信度随判定时间的折线，下面是结论随时间的
  * 分色柱状。结论分布饼图不在这里，复用现成的 PieChart.vue，由页面直接摆。
+ *   数据由父组件 AutoJudgment.vue 传入（就是 WebSocket 'auto_judgment' / GET auto-recent 的条目数组）。
  * 【配置中心关联】
- * 不读配置中心；画多少条、多久来一条由 service/autoJudgment/config.js 的
- * bufferSize / intervalMs 决定，数据由父组件传入。
+ * 不读配置中心；画多少条、多久来一条由后端 service/intelligent/config.js 的
+ * AUTO_JUDGMENT.bufferSize / intervalMs 决定（本组件只是把父组件给的数据画出来）。
  *
  * ══════════════ 赛场要改什么，改哪里 ══════════════
  * | 赛题/现场情况                      | 改这里                                      |

@@ -1,18 +1,29 @@
 /**
- * 【干什么】"故障记录"页的数据源。同一个页面有 5 个互相独立的表格 + 饼图：
+ * 【干什么】"告警记录"页的数据源。同一个页面有 5 个互相独立的表格 + 饼图：
  * 故障(fault) / 安全联锁(safety) / 联动控制(linkage) / 阈值告警(alarm) / 数据质量(spike)，
  * 另外还有一组 all：页面下拉框选"全部"时，五类记录合在一张表格 + 一个按类别分的饼图里。
  * 5 组各有一套 data/total/loading/typeStats/typeStatsAll 状态和一对 fetch 方法，
  * 都复用后端同一个 /errData + /errTypeStats 接口，靠 category 参数区分，各自分页互不影响。
  *
+ * 【顶部三个筛选怎么传】keyword（设备编号/记录信息）、时间范围、**type（具体类型）**：
+ *   · 表格请求（fetch<组>Data）和饼图"当前筛选"范围（scope='filtered'）都会带上这三个；
+ *   · 饼图"全部"范围（scope='all'）**一律不带筛选**（它的语义就是"该类别的全部记录"），
+ *     所以下面那些 `scope === "all" ? {...} : {...}` 的 type 只加在 else 分支里。
+ *
+ * 【本 store 的 type= 是什么】不是"记录类别"，而是 t_error_msg 的具体类型（如"传感器掉线""干烧"），
+ * 取值口径与后端列表的"类型"列一致（COALESCE(error_type, type, '未知类型')）；
+ * 下拉框选项由 fetchTypeOptions() 拉（GET /api/errTypes，按来源给全部可选类型 + 条数）。
+ *
  * 【导出】useErrorStore()
  * 【状态】每组 4 个：<组>Data、<组>Total、<组>Loading、<组>TypeStats、<组>TypeStatsAll
  *        （组 = err(即fault) / safety / linkage / alarm / spike / all）
+ *        另有全局一份 typeOptions（"类型"下拉框选项，跟着当前"信息来源"变）
  * 【方法】
- *   fetch<组>Data(params)                 → GET /api/errData?category=...     表格数据（关键字+时间+分页）
+ *   fetch<组>Data(params)                 → GET /api/errData?category=...     表格数据（关键字+时间+类型+分页）
  *   fetch<组>TypeStats(params, scope)      → GET /api/errTypeStats?category=... 饼图统计
  *        scope='filtered'（默认）跟表格同一批筛选；scope='all' 不带筛选，统计全部（另存一份）
- * 【调的接口】GET /api/errData、GET /api/errTypeStats
+ *   fetchTypeOptions(category)             → GET /api/errTypes?category=...     "类型"下拉框的选项
+ * 【调的接口】GET /api/errData、GET /api/errTypeStats、GET /api/errTypes
  * 【谁在用】ErrorInfo.vue（唯一）
  * 【依赖】DisplayStore.formatTime（格式化"报警时间"列）
  */
@@ -56,6 +67,10 @@ export const useErrorStore = defineStore('errorStore', () => {
   const allLoading = ref(false);
   const allTypeStats = ref([]);
   const allTypeStatsAll = ref([]);
+  // "类型"下拉框的选项：按当前"信息来源"（all/system/intelligent）列出全部可选类型 + 各自条数。
+  // 由 fetchTypeOptions() 每次查数据前刷新；它**不受**关键字/时间/已选类型影响，
+  // 所以选了一个类型之后还能切到别的（详见后端 service/errorHistory.js 的 getErrorTypes）。
+  const typeOptions = ref([]);
 
   const formatDateTime = (value) => {
     if (!value) return "";
@@ -78,6 +93,7 @@ export const useErrorStore = defineStore('errorStore', () => {
       const response = await api.get("/api/errData", {
         params: {
           page: params.currentPage || 1,
+          type: params.type || "",
           keyword: params.keyword || "",
           pageSize: params.pageSize || 5,
           startTime: formatDateTime(params.startTime),
@@ -114,6 +130,7 @@ export const useErrorStore = defineStore('errorStore', () => {
         params: {
           category: "safety",
           page: params.currentPage || 1,
+          type: params.type || "",
           keyword: params.keyword || "",
           pageSize: params.pageSize || 5,
           startTime: formatDateTime(params.startTime),
@@ -147,6 +164,7 @@ export const useErrorStore = defineStore('errorStore', () => {
         params: {
           category: "linkage",
           page: params.currentPage || 1,
+          type: params.type || "",
           keyword: params.keyword || "",
           pageSize: params.pageSize || 5,
           startTime: formatDateTime(params.startTime),
@@ -181,6 +199,7 @@ export const useErrorStore = defineStore('errorStore', () => {
         params: {
           category: "alarm",
           page: params.currentPage || 1,
+          type: params.type || "",
           keyword: params.keyword || "",
           pageSize: params.pageSize || 5,
           startTime: formatDateTime(params.startTime),
@@ -214,6 +233,7 @@ export const useErrorStore = defineStore('errorStore', () => {
         params: {
           category: "spike",
           page: params.currentPage || 1,
+          type: params.type || "",
           keyword: params.keyword || "",
           pageSize: params.pageSize || 5,
           startTime: formatDateTime(params.startTime),
@@ -243,6 +263,7 @@ export const useErrorStore = defineStore('errorStore', () => {
   const fetchErrTypeStats = async (params = {}, scope = "filtered") => {
     try {
       const query = scope === "all" ? {} : {
+        type: params.type || "",
         keyword: params.keyword || "",
         startTime: formatDateTime(params.startTime),
         endTime: formatDateTime(params.endTime),
@@ -265,6 +286,7 @@ export const useErrorStore = defineStore('errorStore', () => {
     try {
       const query = scope === "all" ? { category: "safety" } : {
         category: "safety",
+        type: params.type || "",
         keyword: params.keyword || "",
         startTime: formatDateTime(params.startTime),
         endTime: formatDateTime(params.endTime),
@@ -287,6 +309,7 @@ export const useErrorStore = defineStore('errorStore', () => {
     try {
       const query = scope === "all" ? { category: "linkage" } : {
         category: "linkage",
+        type: params.type || "",
         keyword: params.keyword || "",
         startTime: formatDateTime(params.startTime),
         endTime: formatDateTime(params.endTime),
@@ -309,6 +332,7 @@ export const useErrorStore = defineStore('errorStore', () => {
     try {
       const query = scope === "all" ? { category: "alarm" } : {
         category: "alarm",
+        type: params.type || "",
         keyword: params.keyword || "",
         startTime: formatDateTime(params.startTime),
         endTime: formatDateTime(params.endTime),
@@ -331,6 +355,7 @@ export const useErrorStore = defineStore('errorStore', () => {
     try {
       const query = scope === "all" ? { category: "spike" } : {
         category: "spike",
+        type: params.type || "",
         keyword: params.keyword || "",
         startTime: formatDateTime(params.startTime),
         endTime: formatDateTime(params.endTime),
@@ -356,6 +381,7 @@ export const useErrorStore = defineStore('errorStore', () => {
         params: {
           category: params.category || "all",
           page: params.currentPage || 1,
+          type: params.type || "",
           keyword: params.keyword || "",
           pageSize: params.pageSize || 5,
           startTime: formatDateTime(params.startTime),
@@ -387,6 +413,7 @@ export const useErrorStore = defineStore('errorStore', () => {
       const categoryValue = params.category || "all";
       const query = scope === "all" ? { category: categoryValue } : {
         category: categoryValue,
+        type: params.type || "",
         keyword: params.keyword || "",
         startTime: formatDateTime(params.startTime),
         endTime: formatDateTime(params.endTime),
@@ -403,9 +430,27 @@ export const useErrorStore = defineStore('errorStore', () => {
     }
   };
 
+  /**
+   * 拉"类型"下拉框的选项（GET /api/errTypes?category=...）。
+   * 只按"信息来源"取，**不带**关键字/时间/已选类型 —— 所以下拉框里始终能看到该来源下的所有类型，
+   * 选了一个还能切到别的；选项里带 count，前端在下拉框里显示成"传感器掉线（3395）"。
+   * @param {string} category 'all' | 'system' | 'intelligent'
+   */
+  const fetchTypeOptions = async (category = "all") => {
+    try {
+      const response = await api.get("/api/errTypes", { params: { category } });
+      const res = response.data;
+      if (res.success) typeOptions.value = res.data || [];
+    } catch (error) {
+      console.error("typeOptions 请求失败:", error);
+    }
+  };
+
   return {
     fetchAllData,
     fetchAllTypeStats,
+    fetchTypeOptions,
+    typeOptions,
     allData,
     allTotal,
     allLoading,

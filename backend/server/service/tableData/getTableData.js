@@ -17,7 +17,8 @@ const { getEnabledMetrics, compileMetricSql, chartSettings } = require('../deriv
 const { DEFAULT_PAGE_SIZE } = require('../../config/appSettings')
 const { buildInlineCumulativeSql } = require('../cumulative/cumulativeService')
 const { buildInlineTimeWindowSql } = require('../timeWindow/timeWindowService')
-const { buildRecencyFilter, REALTIME_LABEL, HISTORY_LABEL } = require('../../utils/recencyFilter')
+const { buildRecencyFilter, REALTIME_LABEL, HISTORY_LABEL, BACKFILL_LABEL, REALTIME_WINDOW } = require('../../utils/recencyFilter')
+
 
 // 校验时间字符串格式：支持 "YYYY-MM-DD"、"YYYY-MM-DD HH:MM"、"YYYY-MM-DD HH:MM:SS"
 // 三种精度，空值直接放行（代表用户没填这个时间条件，不参与过滤）。
@@ -70,6 +71,127 @@ const validateDateRange = (startTime, endTime) => {
  * @param {Object} query - 请求参数（type/dataScope/metricScope/page/pageSize/keyword/startTime/endTime）
  * @returns {Promise<Object>} { success, data: { list, fieldUnits, chartSettings, total, page, size } }
  */
+/**
+ * 组合数据查询（type='combined'）：把「一条上报消息」读成一行。
+ *
+ * 【合并版】传感器与行为物理上同处 t_scene_data 一行（field1~10 传感器 / field11~20 行为），
+ * 所以这里是纯单表查询：不需要 JOIN，不需要 trace_id 配对，也不会出现"同秒重复把行为行复制到
+ * 多条记录"或"两表同名列（field1）歧义"的问题。
+ *
+ * 列名规则：中文列名统一加前缀——`传感器·进水温度` / `行为·水泵开关`。
+ * 两张映射表可能出现同名中文列（比如都叫"流量"），不加前缀会互相覆盖。
+ *
+ * 实时/保存口径：以「两侧字段都有的最近 REALTIME_WINDOW 条」为实时窗口。
+ * 用 has_sensor = 1 AND has_behavior = 1 而不是照搬 buildRecencyFilter，是因为合并表里
+ * 还可能存在「只有行为字段」的行（传感器数值被跳变过滤拦下时写的那种），
+ * 这种行不该占掉"最新 5 条完整消息"的名额。
+ *
+ * 与 sensor/behavior 分支的差异：不拼「累计统计 / 滑动统计」的内嵌列
+ * （那两个 builder 生成的 SQL 里是裸列名，且依赖单表全量聚合语义，组合页先不展示；
+ *  需要的话在"历史图表"页看，那里的查询不受影响）。
+ */
+async function queryCombinedData({ dataScope, isRealtimeMode, metricVisibility, page, pageSize, offset, keyword, keywordLike, startTime, endTime }) {
+    // 1) 两张字段映射表各读一遍，各自加前缀
+    const [sensorMappers] = await promisePool.query(
+        'SELECT f_name, db_name, unit, value_map FROM t_sensor_field_mapper WHERE visible = 1 ORDER BY id'
+    )
+    const [behaviorMappers] = await promisePool.query(
+        'SELECT f_name, db_name, unit, value_map FROM t_behavior_field_mapper WHERE visible = 1 ORDER BY id'
+    )
+
+    /** 行为槽位在 t_scene_data 里的列名：field1 → field11（+10 偏移，与写入侧规则一致）。 */
+    const shiftSlot = (dbName) => {
+        const matched = /^field(\d+)$/.exec(String(dbName || '').trim())
+        return matched ? `field${Number(matched[1]) + 10}` : null
+    }
+
+    // 合成 key（s_field1 / b_field1）只给 helper 工具当索引，行里的列名是带前缀的中文名
+    const fieldMapping = {}
+    const fieldUnit = {}
+    const valueMaps = {}
+    const columns = ['d.id AS id', 'd.d_no AS 设备编号']
+
+    const collect = (mappers, prefix, keyPrefix, slotOf) => {
+        for (const item of mappers) {
+            const label = `${prefix}·${item.f_name}`
+            const key = `${keyPrefix}_${item.db_name}`
+            fieldMapping[key] = label
+            fieldUnit[key] = item.unit
+            const map = parseValueMap(item.value_map)
+            if (map) valueMaps[key] = map
+            const slot = slotOf(item.db_name)
+            if (!slot) continue
+            columns.push(`d.\`${slot}\` AS \`${String(label).replace(/`/g, '``')}\``)
+        }
+    }
+    collect(sensorMappers, '传感器', 's', (dbName) => dbName)
+    collect(behaviorMappers, '行为', 'b', shiftSlot)
+
+    // 2) 自定义公式指标：compileMetricSql 支持表别名（第二个参数），直接挂到 d 上，
+    //    否则 JOIN/别名场景下裸 field1 会歧义。
+    const derivedMetrics = metricVisibility ? await getEnabledMetrics(metricVisibility) : []
+    for (const metric of derivedMetrics) {
+        const alias = String(metric.metric_name).replace(/`/g, '``')
+        columns.push(`${compileMetricSql(metric, 'd')} AS \`${alias}\``)
+        fieldMapping[metric.metric_key] = metric.metric_name
+        fieldUnit[metric.metric_key] = metric.unit || ''
+    }
+
+    columns.push('d.c_time AS 创立时间')
+
+    // 3) 实时/保存口径
+    const latestWindow = `(SELECT id FROM (SELECT id FROM t_scene_data WHERE COALESCE(online, '') <> '${BACKFILL_LABEL}' AND has_sensor = 1 AND has_behavior = 1 ORDER BY id DESC LIMIT ${REALTIME_WINDOW}) AS recent_scene)`
+    const isLatest = `d.id IN ${latestWindow}`
+    columns.push(`IF(${isLatest}, '${REALTIME_LABEL}', '${HISTORY_LABEL}') AS 数据类型`)
+
+    let scopeCondition = '1=1'
+    if (dataScope === REALTIME_LABEL) scopeCondition = isLatest
+    else if (dataScope === HISTORY_LABEL) scopeCondition = `NOT (${isLatest})`
+
+    const whereSql = `
+        WHERE 1=1
+          AND (? IS NULL OR d.c_time >= ?)
+          AND (? IS NULL OR d.c_time <= ?)
+          AND (? IS NULL OR d.id = ? OR d.d_no LIKE ?)
+          AND (${scopeCondition})
+    `
+    const params = [startTime, startTime, endTime, endTime, keyword, keyword, keywordLike]
+
+    const [rows] = await promisePool.query(
+        `SELECT ${columns.join(',')} FROM t_scene_data d ${whereSql} ORDER BY d.id DESC LIMIT ? OFFSET ?`,
+        [...params, pageSize, offset]
+    )
+    const [countResult] = await promisePool.query(
+        `SELECT COUNT(*) AS total FROM t_scene_data d ${whereSql}`,
+        params
+    )
+
+    const labeledRows = applyValueLabels(rows, fieldMapping, valueMaps)
+    const processedData = isRealtimeMode
+        ? labeledRows
+        : formatDataWithUnit(labeledRows, fieldMapping, fieldUnit)
+
+    // 行为列（水泵/加热/控制模式）是开关状态，画成折线没有意义，
+    // 统一标 visible: false 让 LineBarCharts 跳过它们，只保留传感器曲线和自定义指标。
+    const behaviorChartSettings = Object.fromEntries(
+        behaviorMappers
+            .filter(item => shiftSlot(item.db_name))
+            .map(item => [`行为·${item.f_name}`, { visible: false }])
+    )
+
+    return {
+        success: true,
+        data: {
+            list: processedData,
+            fieldUnits: buildDisplayFieldUnits(fieldMapping, fieldUnit),
+            chartSettings: { ...behaviorChartSettings, ...chartSettings(derivedMetrics) },
+            total: countResult[0].total,
+            page,
+            size: pageSize,
+        },
+    }
+}
+
 module.exports = async function getTableData(query) {
     const type = query.type || 'sensor'
     // dataScope 是数据范围筛选值（'实时数据' | '保存数据' | 空），只决定查哪段数据，
@@ -86,6 +208,12 @@ module.exports = async function getTableData(query) {
     if (type === 'sensor') {
         dataTable = 't_sensor_data'
         fieldMappingTable = 't_sensor_field_mapper'
+    } else if (type === 'combined') {
+        // 「合并版」组合查询：数据物理上就在一张表里（传感器槽位 field1~10 + 行为槽位 field11~20），
+        // 不需要 JOIN 两张表，也不会出现"同秒重复导致行数放大"和"两表列名歧义"的问题。
+        // 列名与字段映射由下面的 queryCombinedData 自己从两张映射表拼，所以这里不设 fieldMappingTable。
+        dataTable = 't_scene_data'
+        fieldMappingTable = ''
     } else {
         dataTable = 't_behavior_data'
         fieldMappingTable = 't_behavior_field_mapper'
@@ -108,6 +236,15 @@ module.exports = async function getTableData(query) {
     }
     if (!validateDateRange(startTime, endTime)) {
         throw new Error('开始时间不能大于结束时间')
+    }
+
+    // 组合数据走独立的单表查询路径（见文件底部 queryCombinedData），
+    // 下面那套"按一张映射表拼 SELECT"的逻辑完全不适用。
+    if (type === 'combined') {
+        return queryCombinedData({
+            dataScope, isRealtimeMode, metricVisibility,
+            page, pageSize, offset, keyword, keywordLike, startTime, endTime,
+        })
     }
 
     // 让前端字段名和数据库字段映射保持同步。

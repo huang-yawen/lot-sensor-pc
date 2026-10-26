@@ -4,16 +4,28 @@
  * 请求 query：
  *   page       可选  默认 1
  *   pageSize   可选  默认 DEFAULT_PAGE_SIZE，最大 100
- *   d_no       可选  设备编号模糊匹配
- *   status     可选  'success' | 'failed' | 'mock' 精确匹配
- *   startTime / endTime  可选  按 c_time 闭区间
+ *   d_no       可选  设备编号模糊匹配（LIKE %值%）
+ *   status     可选  精确匹配。能取的值就是判定落库时写的那些：
+ *                   成功类 success / auto / realtime
+ *                   占位类 mock / auto_mock / realtime_mock（本地占位判定，非真实结论）
+ *                   失败类 failed（原因在 error_message 列）
+ *   startTime / endTime  可选  按判定时间 c_time 的闭区间（前端是精确到秒的 datetime 选择器）
  *
  * 响应 200：{ success:true, data:{ list:[{ id, d_no, data_type, source_ids, conclusion,
  *                                        confidence, status, error_message, c_time }...],
  *                                  total, page, pageSize } }
  * 出错 500：{ success:false, message }
  *
- * 直接读 t_judgment_record（判定记录在 service/intelligent/intelligentJudgment.js 里写入）。
+ * 说明：
+ *   · 直接读 t_judgment_record（记录在 service/intelligent/intelligentJudgment.js 的 saveRecord 里写入）；
+ *   · 查询前先 ensureTable()，表不存在时自动建（首次部署不用手动建表）；
+ *   · data_type 列区分这条记录是哪种判定：sensor / behavior / combined；
+ *   · 想排查"判定服务到底收到了什么"，直接查 t_judgment_record 的 request_body / response_body
+ *     （本接口为了列表轻量，没有把它们返回给前端）。
+ *
+ * 前端调用：src/views/JudgmentHistory.vue（菜单「智能判定记录」，显隐由
+ * INTELLIGENT_JUDGMENT.showHistoryMenu 控制）；自测：
+ *   curl "http://127.0.0.1:3000/api/intelligent/records?page=1&pageSize=5&status=mock"
  */
 const promisePool = require('../../config/dbPool')
 const { ensureTable } = require('../../service/intelligent/intelligentJudgment')

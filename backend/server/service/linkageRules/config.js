@@ -15,7 +15,7 @@ module.exports = {
   alarmCooldownMs: 30000,            // 同一个设备+执行器在冷却期内只触发一次（毫秒）
 
   // 下面各条规则的开关：只有写 true 才开；写 false、整行注释掉、删掉都算关
-  pumpAlwaysOn: false,             // 水泵常开：无故障、读数没顶到异常哨兵就保持运行
+  pumpAlwaysOn: true,             // 水泵常开：无故障、读数没顶到异常哨兵就保持运行
 
   // 加热滞回带通断这条规则的参数。（这条规则本身是否生效由指令中心 preffix=heater_hysteresis_enabled
   // 决定，不在这里勾；和 pid_enabled 各自独立，两个都开时 PID 优先。）
@@ -26,7 +26,7 @@ module.exports = {
 
   flowSingle: false,               // 流量单层：区间内/低于下限开泵，高于上限关泵保护
   pressureSingle: false,           // 压力单层：低于下限开泵，高于上限关泵、关加热
-  tempSingle: true,               // 温度单层（带滞回）：低于温度下限开加热，高于温度上限关加热（不再参考目标温度）
+  tempSingle: false,               // 温度单层（带滞回）：低于温度下限开加热，高于温度上限关加热（不再参考目标温度）
   tempSingleHysteresis: 1,         // 温度单层滞回回差（℃）
   dualTemp: false,                  // 双温度融合：温差超过阈值开泵
   dualTempDiffThreshold: 0.8,        // 双温度融合温差阈值（℃），建议比安全联锁的温差阈值小

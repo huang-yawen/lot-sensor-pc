@@ -113,14 +113,20 @@ const validateDateRange = (startTime, endTime) => {
 
 /**
  * 按查询参数拼出 WHERE 子句和参数数组。
- * 支持的筛选：category（fault/safety/linkage/alarm，决定 type 取值范围）、keyword
- * （设备编号或记录信息模糊匹配）、startTime/endTime（按 c_time 闭区间过滤）。只为
- * 实际传入的条件拼片段。
+ * 支持的筛选：
+ *   category  all / system / intelligent（决定 source 范围；旧值 fault/safety/linkage/alarm/spike 一律归 system）
+ *   type      **具体类型**（"传感器掉线""干烧""管路堵塞"这类），前端"类型"下拉框的值；
+ *             比较口径与列表/饼图的"类型"列完全一致：COALESCE(error_type, type, '未知类型')
+ *   keyword   设备编号或记录信息模糊匹配
+ *   startTime / endTime  按 c_time 闭区间过滤
+ * 只为实际传入的条件拼片段。
  */
 const buildWhere = (query = {}) => {
     const keyword = query.keyword?.trim() || ''
     const startTime = query.startTime || ''
     const endTime = query.endTime || ''
+    // error_type 是 varchar(128)，这里顺手截断，避免超长值进 SQL 参数。
+    const type = query.type?.trim().slice(0, 128) || ''
     const category = resolveCategory(query)
     const conditions = []
     const params = []
@@ -148,6 +154,12 @@ const buildWhere = (query = {}) => {
     if (keyword) {
         conditions.push('(d_no LIKE ? OR e_msg LIKE ?)')
         params.push(`%${keyword}%`, `%${keyword}%`)
+    }
+    // 具体类型筛选（"传感器掉线""干烧"…）：口径与列表/饼图的"类型"列一致。
+    // 选项列表由下面的 getErrorTypes() 提供（GET /api/errTypes）。
+    if (type) {
+        conditions.push("COALESCE(error_type, type, '未知类型') = ?")
+        params.push(type)
     }
     if (startTime) {
         conditions.push('c_time >= ?')
@@ -253,4 +265,49 @@ async function getErrorTypeStats(query) {
   }
 }
 
-module.exports = { getErrorHistory, getErrorTypeStats }
+/* ==================== 类型选项（前端"类型"下拉框用） ==================== */
+
+/**
+ * 查某一来源下的**全部具体类型**及条数，供前端"类型"下拉框做选项：
+ *   category=system       → 系统检测下的全部类型（如 传感器掉线 / 干烧 / 管路堵塞 …）
+ *   category=intelligent  → 智能判定下的全部类型
+ *   category=all / 不传    → 两类来源合在一起的全部类型
+ *
+ * 【与列表/饼图的关键区别】本查询**不带** keyword / startTime / endTime / type 这些筛选：
+ *   不管当前筛成什么样，"类型"下拉框永远列出该来源下所有可选的类型 + 各自条数，
+ *   这样用户选了 A 类型之后还能切到 B（否则下拉框只剩 A 自己，切不出去）。
+ *
+ * @param {Object} query - { category?: 'all' | 'system' | 'intelligent' }
+ * @returns {Promise<{success: true, data: Array<{type: string, count: number}>, total: number}>}
+ *   按条数从多到少排序；"未知类型"是历史脏数据（error_type 与 type 都为空）的兜底。
+ */
+async function getErrorTypes(query = {}) {
+    const category = resolveCategory(query)
+    const conditions = []
+    const params = []
+    if (category === 'system' || category === 'intelligent') {
+        conditions.push('source = ?')
+        params.push(category)
+    }
+    const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''
+
+    // GROUP BY 里必须把 COALESCE 表达式原样再写一遍：SELECT 里的别名 type 与表里真实存在的
+    // 列名 type 撞名，写 `GROUP BY type` 会被解析成真实列，触发 only_full_group_by 报错（ERROR 1055）。
+    const [rows] = await promisePool.query(
+        `SELECT COALESCE(error_type, type, '未知类型') AS type, COUNT(*) AS count
+         FROM t_error_msg
+         ${whereClause}
+         GROUP BY COALESCE(error_type, type, '未知类型')
+         ORDER BY count DESC, type ASC`,
+        params
+    )
+
+    const data = rows.map((row) => ({ type: row.type, count: Number(row.count) }))
+    return {
+        success: true,
+        data,
+        total: data.reduce((sum, item) => sum + item.count, 0),
+    }
+}
+
+module.exports = { getErrorHistory, getErrorTypeStats, getErrorTypes }

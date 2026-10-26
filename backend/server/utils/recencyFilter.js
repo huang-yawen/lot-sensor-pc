@@ -19,14 +19,17 @@ const REALTIME_WINDOW = 5
  * @param {string} table - 数据表名（调用方传入的固定字符串，不接受外部输入，避免拼接注入）
  * @param {string} [dataScope] - 前端传入的数据范围筛选值：'实时数据' | '保存数据' | 其他/空。
  *   注意跟设备在线状态无关——历史遗留参数名 online 已改名为 dataScope。
+ * @param {string} [alias] - 表别名（如 's'）。查询里这张表带别名时必须传，否则 `id` 在
+ *   多表查询里会引起 "Column 'id' ... is ambiguous"；不传则是裸列名，行为与旧版一致。
  * @returns {{ whereClause: string, dataTypeExpr: string, isLatest: string }}
  *   whereClause  - 拼在 SQL 里的 WHERE 片段（可能为空字符串，表示不筛选）
  *   dataTypeExpr - 可作为查询列使用的表达式，给每行打上"实时数据/保存数据"类型标签
  *   isLatest     - 判断某一行是否落在最新 N 条窗口内的裸条件，供需要自定义拼接的调用方使用
  */
-function buildRecencyFilter(table, dataScope) {
+function buildRecencyFilter(table, dataScope, alias = '') {
+    const prefix = alias ? `${alias}.` : ''
     const latestIdsExpr = `(SELECT id FROM (SELECT id FROM ${table} WHERE COALESCE(online, '') <> '${BACKFILL_LABEL}' ORDER BY id DESC LIMIT ${REALTIME_WINDOW}) AS recent_${table})`
-    const isLatest = `id IN ${latestIdsExpr}`
+    const isLatest = `${prefix}id IN ${latestIdsExpr}`
     const dataTypeExpr = `IF(${isLatest}, '${REALTIME_LABEL}', '${HISTORY_LABEL}')`
 
     let whereClause = ''

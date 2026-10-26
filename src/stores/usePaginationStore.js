@@ -1,6 +1,12 @@
 /**
- * 【干什么】传感器/行为 4 个页面（实时、汇总各一份传感器和行为）共用的分页表格数据源。
+ * 【干什么】传感器/行为 4 个"分开版"页面（实时、汇总各一份传感器和行为）共用的分页表格数据源。
  * 一个 store 实例被这 4 个页面共用，靠 type 参数切数据表。
+ *
+ * ⚠ 【已停用 / 仅作回退参考】合并版（第二部分）之后这 4 个页面已不在路由里
+ *   （/sensor-realtime 等已重定向到 /combined-realtime、/combined-history），
+ *   当前生效的数据页数据源是 stores/useCombinedStore.js（type 固定为 'combined'，
+ *   一行同时含传感器列与行为列）。本文件保留只为退回"分开版"时能直接复用，
+ *   新功能请加到 useCombinedStore.js。
  *
  * 【导出】usePaginationStore()
  * 【状态】paginationData（当前页行）、total、currentPage、pageSize、fieldUnits、chartSettings、

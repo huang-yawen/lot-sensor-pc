@@ -19,21 +19,26 @@ const routes=[
                 component:()=>import('@/views/Dashboard.vue'),
                 meta: { title: '首页概览' }
             },{
-                path:'/sensor-realtime',
-                component:()=>import('@/views/SensorRealtime.vue'),
-                meta: { title: '传感器数据/实时数据' }
+                // 「合并版」数据页：传感器与行为永远是同一条上报消息里的数据，合成一整套页面。
+                // 一条消息 = 数据库一行 = 页面一行，不再分"传感器数据/行为数据"两套。
+                path:'/combined-realtime',
+                component:()=>import('@/views/CombinedRealtime.vue'),
+                meta: { title: '实时数据' }
             },{
-                path:'/sensor-history',
-                component:()=>import('@/views/SensorHistory.vue'),
-                meta: { title: '传感器数据/汇总数据' }
+                path:'/combined-history',
+                component:()=>import('@/views/CombinedHistory.vue'),
+                meta: { title: '汇总数据' }
+            }
+            // 分开版的 4 个旧地址保留重定向：老书签 / 老文档 / 老演示链接点了不会 404，
+            // 统一落到合并后的页面上（与旧页面是同一份数据，只是列多了行为那几列）。
+            ,{
+                path:'/sensor-realtime', redirect:'/combined-realtime'
             },{
-                path:'/behavior-realtime',
-                component:()=>import('@/views/BehaviorRealtime.vue'),
-                meta: { title: '行为数据/实时数据' }
+                path:'/sensor-history', redirect:'/combined-history'
             },{
-                path:'/behavior-history',
-                component:()=>import('@/views/BehaviorHistory.vue'),
-                meta: { title: '行为数据/汇总数据' }
+                path:'/behavior-realtime', redirect:'/combined-realtime'
+            },{
+                path:'/behavior-history', redirect:'/combined-history'
             }
             // ,{
             //     path:'/device-management',

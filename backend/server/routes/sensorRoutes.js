@@ -91,6 +91,9 @@ router.post('/api/deviceData/update', device.updateDevice)
 // ---------- 故障记录 ----------
 router.get('/api/errData', error.getErrorHistory)
 router.get('/api/errTypeStats', error.getErrorTypeStats)
+// 告警记录页"类型"下拉框的选项列表（按来源返回全部可选类型 + 各自条数，不带其它筛选）。
+// 与 /api/errData 是同一套类型口径（COALESCE(error_type, type, '未知类型')），见 service/errorHistory.js。
+router.get('/api/errTypes', error.getErrorTypes)
 
 // ---------- 智能判定 ----------
 // 前端用的是 /judge；/recognize 是旧别名，保留兼容，两个指向同一个处理器。

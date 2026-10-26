@@ -6,12 +6,20 @@
  * -->
 <template>
   <div class="error-info-page">
-    <!-- 顶部搜索框：最左边的"信息来源"下拉框按系统检测 / 智能判定 / 全部筛选，
-         下面统一走"全部记录"列表和按来源统计的饼图。 -->
+    <!-- 顶部搜索框：最左边"信息来源"下拉框按 系统检测 / 智能判定 / 全部 筛选，
+         紧跟的"类型"下拉框按具体告警类型筛选（传感器掉线 / 干烧 / 管路堵塞 …），
+         下面统一走"全部记录"列表和对应的饼图。 -->
     <div class="search-form">
       <div class="search-form-inner">
         <el-select v-model="category" style="width: 140px; flex-shrink: 0;" @change="handleCategoryChange">
           <el-option v-for="opt in categoryOptions" :key="opt.value" :label="opt.label" :value="opt.value" />
+        </el-select>
+        <!-- 类型筛选：选项跟着左边的"信息来源"变（不同来源的类型不同），
+             标签里的条数来自 /api/errTypes，方便一眼看出哪类最多；可清空、可输入搜索。 -->
+        <el-select v-model="typeFilter" style="width: 200px; flex-shrink: 0;" clearable filterable
+          placeholder="全部类型" @change="handleSearch(1)">
+          <el-option v-for="opt in typeOptions" :key="opt.type" :label="`${opt.type}（${opt.count}）`"
+            :value="opt.type" />
         </el-select>
         <el-input v-model="keyword" style="width: 240px; flex-shrink: 0;" placeholder="输入设备编号" :suffix-icon="Search"
           clearable />
@@ -357,6 +365,13 @@ const categoryOptions = computed(() => [
   { value: "system", label: "系统检测" },
   { value: "intelligent", label: "智能判定" },
 ]);
+// "类型"筛选：具体告警类型（"传感器掉线""干烧""管路堵塞"…）。
+// 取值口径与后端列表的"类型"列完全一致（COALESCE(error_type, type, '未知类型')），
+// 所以按它筛出来的条数与饼图里该类型的条数一致；选项（含条数）来自 store.fetchTypeOptions()
+// → GET /api/errTypes，按当前"信息来源"给全部可选类型，不受关键字/时间/已选类型影响。
+// 切换"信息来源"时会被清空（不同来源的可选类型不一样）。
+const typeFilter = ref("");
+const typeOptions = computed(() => store.typeOptions);
 /** 当前保留的旧分块逻辑不再作为筛选入口；"全部/系统检测/智能判定"统一走合并视图。 */
 const isShown = (key) => category.value === key;
 const allCurrentPage = ref(1);
@@ -460,6 +475,8 @@ const spikeHeaders = computed(() => {
 
 const getSearchParams = () => ({
   keyword: keyword.value,
+  // 具体类型筛选（下拉框；空串=不按类型筛），后端按 COALESCE(error_type, type) 精确匹配。
+  type: typeFilter.value || "",
   startTime: dateRange.value?.[0] || null,
   endTime: dateRange.value?.[1] || null,
 });
@@ -478,6 +495,9 @@ const handleSearch = async (page = 1, showLoading = true) => {
     // "当前页"范围直接用表格数据聚合，不占请求。
     // 下拉框没选中的块不显示，也就不发请求。选"全部"时只拉合并视图那一组，page 就是它的页码。
     const tasks = [];
+    // "类型"下拉框的选项跟着"信息来源"变：每次查询顺手刷一遍（它不带关键字/时间/类型筛选，
+    // 保证选项列表始终完整，选了 A 类型之后还能切到 B）。
+    tasks.push(store.fetchTypeOptions(category.value));
     if (category.value === "all" || category.value === "system" || category.value === "intelligent") {
       allCurrentPage.value = page;
       tasks.push(store.fetchAllData({
@@ -541,9 +561,12 @@ const handleAllPageSizeChange = (size) => {
   });
 };
 
-// 切换记录类别：沿用顶部的设备编号和时间筛选，各块回到第 1 页重新查。
+// 切换记录类别（信息来源）：沿用顶部的设备编号/时间筛选，各块回到第 1 页重新查。
+// 同时清空已选的"类型"——不同来源的可选类型不一样，留着旧的会筛出空列表；
+// 下拉框选项由 handleSearch 里的 fetchTypeOptions() 按新来源重新拉。
 const handleCategoryChange = () => {
   currentPage.value = 1;
+  typeFilter.value = "";
   handleSearch(1);
 };
 

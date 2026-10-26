@@ -38,6 +38,11 @@ module.exports = {
 
   // ==================== 页面功能开关 ====================
   ENABLE_CHARTS: true, // 是否显示历史/实时数据图表，关闭后只保留表格或卡片
+  // 「合并版」数据菜单组（实时数据 / 汇总数据）的显示开关。
+  // 合并后传感器与行为不再分成两套页面，左侧只有这一组数据页面
+  //（旧地址 /sensor-realtime 等已重定向到合并页，见 src/router/index.js）。
+  // 赛题不需要时改成 false，菜单立即隐藏（页面路由仍可直接访问）。
+  SHOW_COMBINED_PAGE: true,
 
   // ==================== 分页与刷新 ====================
   DEFAULT_PAGE_SIZE: 5,             // 历史表格默认每页条数，允许 1-100
@@ -47,6 +52,7 @@ module.exports = {
   TERMINOLOGY: {
     sensor: '传感器数据',
     behavior: '行为数据',
+    combined: '组合数据',
     device: '设备中心',
     alarm: '告警记录',
     judgment: '智能判定',
